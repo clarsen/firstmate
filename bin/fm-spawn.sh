@@ -239,6 +239,24 @@
 #   containment test reads local refs only and never fetches, so this gate stays
 #   usable offline; a stale remote-tracking ref can therefore make an unpushed
 #   commit look contained, which is exactly why no remedy command is printed.
+# Project setup hook (config/project-setup/<project>.sh):
+#   <project> is the basename of the spawning project directory. When present,
+#   a fresh ship or scout spawn runs it after the clean worktree's base refresh
+#   above and before any harness wiring or launch, with cwd = the task worktree,
+#   stdin detached, output on stderr, and FM_TASK_ID, FM_TASK_KIND, FM_PROJECT,
+#   FM_PROJECT_DIR, and FM_WORKTREE exported. It is bounded by
+#   FM_PROJECT_SETUP_TIMEOUT seconds (default 600). A path that is not an
+#   executable regular file or a bad timeout refuses before any endpoint or
+#   worktree exists; a nonzero exit, a timeout, or setup output git can see
+#   refuses the launch and leaves the worktree for inspection, as every other
+#   post-allocation refusal does. The Treehouse project lock is released while
+#   the hook runs and waited for again afterwards, so a slow hook does not make
+#   an ordinary return of the project refuse; the home's task-set lock stays
+#   held, so another spawn from this home (any project) and a forced secondmate
+#   teardown of the home refuse until the hook finishes and should be retried.
+#   --relaunch reuses its worktree untouched and never reruns the hook;
+#   --secondmate spawns never run it.
+#   docs/configuration.md owns the operator contract.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -2727,6 +2745,35 @@ else
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
+# Project setup hook (header above): validated here, before any lock, endpoint,
+# or worktree exists, so a malformed hook or timeout refuses without side
+# effects; it runs later, once the fresh task worktree is clean and current.
+PROJECT_SETUP_NAME=""
+PROJECT_SETUP_SCRIPT=""
+PROJECT_SETUP_TIMEOUT=""
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  PROJECT_SETUP_NAME=$(basename "$PROJ_ABS")
+  if ! project_setup_present=$(fm_config_source_present "$CONFIG/project-setup/$PROJECT_SETUP_NAME.sh"); then
+    exit 1
+  fi
+  if [ "$project_setup_present" = 1 ]; then
+    PROJECT_SETUP_SCRIPT="$CONFIG/project-setup/$PROJECT_SETUP_NAME.sh"
+    if [ ! -f "$PROJECT_SETUP_SCRIPT" ] || [ ! -x "$PROJECT_SETUP_SCRIPT" ]; then
+      echo "error: project setup script $PROJECT_SETUP_SCRIPT must be an executable regular file; refusing to launch without the setup it declares" >&2
+      exit 1
+    fi
+    PROJECT_SETUP_TIMEOUT=${FM_PROJECT_SETUP_TIMEOUT:-600}
+    # A zero bound disables the deadline (fm-timeout-lib.sh), so reject it.
+    case "$PROJECT_SETUP_TIMEOUT" in
+    '' | *[!0-9]*) PROJECT_SETUP_TIMEOUT=0 ;;
+    *) PROJECT_SETUP_TIMEOUT=$((10#$PROJECT_SETUP_TIMEOUT)) ;;
+    esac
+    if [ "$PROJECT_SETUP_TIMEOUT" -le 0 ]; then
+      echo "error: FM_PROJECT_SETUP_TIMEOUT must be a positive whole number of seconds (got '${FM_PROJECT_SETUP_TIMEOUT:-}')" >&2
+      exit 1
+    fi
+  fi
+fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ_ABS") || {
     echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
@@ -2986,6 +3033,38 @@ spawn_worktree_has_origin_config() { # <worktree>
     awk '/^[[:space:]]*\[[[:space:]]*[Rr][Ee][Mm][Oo][Tt][Ee][[:space:]]+"origin"[[:space:]]*\][[:space:]]*([#;].*)?$/ || /^[[:space:]]*\[[[:space:]]*[Rr][Ee][Mm][Oo][Tt][Ee]\.origin[[:space:]]*\][[:space:]]*([#;].*)?$/ { found=1 } END { exit !found }' "$config" && return 0
   done < <(git -C "$worktree" config --list --show-origin 2>/dev/null || true)
   return 1
+}
+
+# Runs config/project-setup/<project>.sh (header above) in the fresh task
+# worktree. Its output goes to stderr so the success line stays the only stdout.
+run_project_setup() {
+  local rc=0 status
+  echo "project setup: running $PROJECT_SETUP_SCRIPT in $WT (timeout ${PROJECT_SETUP_TIMEOUT}s)" >&2
+  (
+    cd "$WT" || exit 1
+    export FM_TASK_ID="$ID" FM_TASK_KIND="$KIND" FM_PROJECT="$PROJECT_SETUP_NAME" \
+      FM_PROJECT_DIR="$PROJ_ABS" FM_WORKTREE="$WT"
+    fm_run_timed "$PROJECT_SETUP_TIMEOUT" "$PROJECT_SETUP_SCRIPT" </dev/null >&2
+  ) || rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "error: project setup script $PROJECT_SETUP_SCRIPT timed out after ${PROJECT_SETUP_TIMEOUT}s in $WT (FM_PROJECT_SETUP_TIMEOUT); refusing to launch the agent; inspect window ${T:-}" >&2
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "error: project setup script $PROJECT_SETUP_SCRIPT exited with status $rc in $WT; refusing to launch the agent; inspect window ${T:-}" >&2
+    return 1
+  fi
+  # Setup output git can see would later read as the worker's uncommitted work
+  # and block cleanup, so it must be kept out of git's view.
+  if ! status=$(git -C "$WT" status --porcelain 2>/dev/null); then
+    echo "error: could not inspect $WT after project setup script $PROJECT_SETUP_SCRIPT; refusing to launch the agent" >&2
+    return 1
+  fi
+  if [ -n "$status" ]; then
+    echo "error: project setup script $PROJECT_SETUP_SCRIPT left changes git can see in $WT; exclude its output (for example in \$(git rev-parse --git-path info/exclude)) so it cannot be committed or block cleanup; refusing to launch the agent; inspect window ${T:-}:" >&2
+    printf '%s\n' "$status" | head -5 >&2
+    return 1
+  fi
 }
 
 freshen_spawn_worktree_base() { # <worktree>
@@ -3934,7 +4013,8 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # than launching a worker whose slot teardown could later release out from
   # under its successor.
   # Written under the Treehouse project lock held from before slot allocation
-  # through metadata publication, so no other spawn or return sees a half-claim.
+  # through metadata publication (released only while the project setup hook
+  # runs), so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
@@ -3945,6 +4025,26 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+  if [ -n "$PROJECT_SETUP_SCRIPT" ]; then
+    # The hook can run for minutes, and holding the Treehouse project lock that
+    # long would make every other spawn or return of this project refuse. The
+    # pane's Treehouse lease and the slot claim above already keep this slot
+    # ours, so the lock is released for the hook and waited for again before
+    # anything else, including an abort's claim release, relies on it.
+    project_setup_rc=0
+    project_setup_relock=0
+    if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
+      SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+      fm_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK"
+      project_setup_relock=1
+    fi
+    run_project_setup || project_setup_rc=$?
+    if [ "$project_setup_relock" = 1 ]; then
+      fm_lock_acquire_wait "$SPAWN_TREEHOUSE_PROJECT_LOCK"
+      SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+    fi
+    [ "$project_setup_rc" -eq 0 ] || exit 1
+  fi
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
