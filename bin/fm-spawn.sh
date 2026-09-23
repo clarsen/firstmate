@@ -249,7 +249,9 @@
 #   executable regular file or a bad timeout refuses before any endpoint or
 #   worktree exists; a nonzero exit, a timeout, or setup output git can see
 #   refuses the launch and leaves the worktree for inspection, as every other
-#   post-allocation refusal does. --relaunch reuses its worktree untouched and
+#   post-allocation refusal does. The Treehouse project lock is released while
+#   the hook runs and waited for again afterwards, so a slow hook never makes
+#   another spawn or return of the project refuse. --relaunch reuses its worktree untouched and
 #   never reruns the hook; --secondmate spawns never run it.
 #   docs/configuration.md owns the operator contract.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
@@ -4008,7 +4010,8 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # than launching a worker whose slot teardown could later release out from
   # under its successor.
   # Written under the Treehouse project lock held from before slot allocation
-  # through metadata publication, so no other spawn or return sees a half-claim.
+  # through metadata publication (released only while the project setup hook
+  # runs), so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
@@ -4020,7 +4023,24 @@ fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
   if [ -n "$PROJECT_SETUP_SCRIPT" ]; then
-    run_project_setup || exit 1
+    # The hook can run for minutes, and holding the Treehouse project lock that
+    # long would make every other spawn or return of this project refuse. The
+    # pane's Treehouse lease and the slot claim above already keep this slot
+    # ours, so the lock is released for the hook and waited for again before
+    # anything else, including an abort's claim release, relies on it.
+    project_setup_rc=0
+    project_setup_relock=0
+    if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
+      SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+      fm_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK"
+      project_setup_relock=1
+    fi
+    run_project_setup || project_setup_rc=$?
+    if [ "$project_setup_relock" = 1 ]; then
+      fm_lock_acquire_wait "$SPAWN_TREEHOUSE_PROJECT_LOCK"
+      SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+    fi
+    [ "$project_setup_rc" -eq 0 ] || exit 1
   fi
 fi
 

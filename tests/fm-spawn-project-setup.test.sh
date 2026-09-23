@@ -4,8 +4,9 @@
 #
 # These tests drive the real spawn path with a fake terminal and prove the hook
 # runs inside the fresh task worktree before the agent launch is sent, that a
-# failing, hung, invalid, or git-visible hook refuses the launch, and that an
-# absent hook changes nothing.
+# failing, hung, invalid, or git-visible hook refuses the launch, that the
+# shared Treehouse project lock is free while it runs, and that an absent hook
+# changes nothing.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -175,11 +176,40 @@ test_invalid_hook_refuses_before_allocation() {
   pass "an invalid project setup script or timeout refuses before any terminal or worktree work"
 }
 
+test_hook_does_not_hold_project_lock() {
+  local id=setup-unlocked-r1 out status lock
+  make_case unlocked "$id"
+  # The hook stands in for a concurrent return or spawn of the same project:
+  # it takes and drops the shared Treehouse project lock the way they do.
+  install_hook '
+. "$FM_TEST_WAKE_LIB"
+lock=$(fm_treehouse_project_lock_path "$FM_PROJECT_DIR") || exit 3
+if fm_lock_try_acquire "$lock"; then
+  fm_lock_release "$lock"
+  echo "LOCK acquired" >> "$FM_TEST_SETUP_LOG"
+else
+  echo "LOCK refused" >> "$FM_TEST_SETUP_LOG"
+fi'
+  out=$(FM_TEST_WAKE_LIB="$ROOT/bin/fm-wake-lib.sh" FM_TEST_SETUP_LOG="$CASE_DIR/lock.log" \
+    run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a spawn whose setup script took the project lock should still launch"$'\n'"$out"
+  assert_grep "LOCK acquired" "$CASE_DIR/lock.log" \
+    "a concurrent holder of the Treehouse project lock was refused while the setup script ran"
+  launched "$id" || fail "the spawn never sent the agent launch after its setup script"
+  assert_grep "kind=ship" "$HOME_DIR/state/$id.meta" "the spawn did not publish its task record"
+  lock=$(FM_HOME="$HOME_DIR" bash -c '. "$1"; fm_treehouse_project_lock_path "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$PROJECT_DIR")
+  FM_HOME="$HOME_DIR" bash -c '. "$1"; fm_lock_try_acquire "$2" && fm_lock_release "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" \
+    || fail "the spawn left the Treehouse project lock held after publishing"
+  pass "the project setup script runs without the Treehouse project lock held"
+}
+
 test_absent_hook_changes_nothing
 test_hook_runs_in_worktree_before_launch
 test_failing_hook_refuses_launch
 test_hung_hook_times_out
 test_git_visible_setup_output_refuses_launch
 test_invalid_hook_refuses_before_allocation
+test_hook_does_not_hold_project_lock
 
 echo "# all fm-spawn-project-setup tests passed"
