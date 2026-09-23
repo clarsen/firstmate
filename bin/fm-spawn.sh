@@ -216,6 +216,12 @@
 #   itself a linked worktree of the project repository still launches. A pane
 #   that never reaches an isolated worktree refuses at the end of that wait,
 #   naming the last path seen and why it was rejected.
+#   Each home draws Treehouse copies only of its own clone: a secondmate home
+#   sends `treehouse --root <its own pool root> get`, a main home sends plain
+#   `treehouse get` (bin/fm-wake-lib.sh's fm_treehouse_home_root owns the pool
+#   location), and a home whose root cannot be resolved refuses before any
+#   endpoint exists. That same wait also screens out a copy that is not a
+#   worktree of the spawning project's own clone.
 #   That placement is proven only at launch. Every ship or scout pane therefore
 #   also receives `export FM_TASK_ID=<task-id>` before the launch command, on
 #   the same channel as GOTMPDIR, and bin/fm-test-run.sh refuses to execute the
@@ -2774,7 +2780,12 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
     fi
   fi
 fi
+SPAWN_TREEHOUSE_ROOT=
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  SPAWN_TREEHOUSE_ROOT=$(fm_treehouse_home_root "$FM_HOME") || {
+    echo "error: could not resolve this home's own Treehouse pool root for $FM_HOME (unusable .fm-secondmate-home marker, or no absolute HOME); refusing rather than draw a copy from a pool other homes share" >&2
+    exit 1
+  }
   SPAWN_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ_ABS") || {
     echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
     exit 1
@@ -2967,6 +2978,30 @@ spawn_worktree_isolated() { # <path>
   fi
   if [ "$wt_git_dir" = "$proj_common" ]; then
     SPAWN_WT_REASON="it is the repository's primary checkout (its git dir is the spawning project's common git dir)"
+    return 1
+  fi
+  return 0
+}
+
+# A Treehouse copy must also be a worktree of the spawning project's own clone.
+# The isolation test above cannot see this: a worktree of another clone of the
+# same origin (a pool another home shares) is a real, distinct, non-primary
+# worktree, yet a worker there commits into, pushes from, and returns to that
+# other home's clone. Screened only on the Treehouse path; Orca's worktree
+# shape is unverified (bin/fm-claude-trust.sh) and relaunch reuses its record.
+spawn_worktree_of_project() { # <path>
+  local path=$1 wt_common proj_common
+  SPAWN_WT_REASON=
+  wt_common=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
+    wt_common=$(cd "$wt_common" 2>/dev/null && pwd -P) || wt_common=
+  proj_common=$(git -C "$PROJ_ABS" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
+    proj_common=$(cd "$proj_common" 2>/dev/null && pwd -P) || proj_common=
+  if [ -z "$wt_common" ] || [ -z "$proj_common" ]; then
+    SPAWN_WT_REASON="its git directory could not be resolved"
+    return 1
+  fi
+  if [ "$wt_common" != "$proj_common" ]; then
+    SPAWN_WT_REASON="it is a worktree of another clone (common git dir '$wt_common'), not of the spawning project's clone '$proj_common'"
     return 1
   fi
   return 0
@@ -3941,7 +3976,13 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  # A secondmate home draws from its own pool root (fm_treehouse_home_root);
+  # a main home keeps Treehouse's configured root.
+  if [ -n "$SPAWN_TREEHOUSE_ROOT" ]; then
+    spawn_send_text_line "$WT_TARGET" "treehouse --root '${SPAWN_TREEHOUSE_ROOT//\'/\'\\\'\'}' get"
+  else
+    spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  fi
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -3968,7 +4009,9 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Every candidate is screened with the isolation guard's own predicate, so a
   # read of the project itself or of the repository primary checkout is treated
   # as the transient it is and the wait continues, instead of being adopted and
-  # then refused by the guard.
+  # then refused by the guard. It must also be a worktree of this project's own
+  # clone (spawn_worktree_of_project), so a copy of another home's clone is
+  # never adopted.
   # A candidate the screen rejects is never adopted, so a host where the pane
   # never reaches an isolated worktree spends the whole window before refusing.
   # That wait is deliberate - telling a transient apart from a terminal
@@ -3981,7 +4024,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   for _ in $(seq 1 60); do
     p=$(spawn_current_path "$WT_TARGET" || true)
     [ -z "$p" ] || last_seen="$p"
-    if [ -n "$p" ] && spawn_worktree_isolated "$p"; then
+    if [ -n "$p" ] && spawn_worktree_isolated "$p" && spawn_worktree_of_project "$p"; then
       p_real=$(real_path_or_raw "$p")
       last_reason="it is an isolated worktree, but no second read agreed with it"
       if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then

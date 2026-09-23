@@ -269,6 +269,18 @@ Crewmates never intentionally touch your project clone; [treehouse](https://gith
 The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns ship/scout worktree isolation and fresh-base refusal rules, including spawns from linked homes.
 Portable regressions live in [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh) for spawn isolation and base freshness, and [`tests/fm-control-relaunch.test.sh`](../tests/fm-control-relaunch.test.sh) for preserving the recorded copy on relaunch.
 
+Treehouse pools are per Firstmate home, because Treehouse keys a pool only by a clone's directory name and origin, and every home clones a project into the same `projects/<name>`.
+A shared pool would hand one home's spawn a worktree of another home's clone, so a worker would commit into, push from, and be returned to the wrong clone.
+A main home keeps Treehouse's own configured root, so its existing pools and live copies are unchanged.
+Each secondmate home draws from a root of its own, outside every Firstmate home, because Claude Code loads `CLAUDE.md` from a worker's ancestor directories.
+`fm_treehouse_home_root` in [`bin/fm-wake-lib.sh`](../bin/fm-wake-lib.sh) owns that location, and a home whose root cannot be resolved refuses to spawn rather than fall back to the shared pool.
+The spawn also never adopts a copy that is not a worktree of its own clone.
+Two separate main homes on one machine that clone one origin under one name still share Treehouse's default pool, so that screen is what makes such a spawn refuse rather than launch in the other home's clone.
+Teardown returns each copy by its own path, so a copy taken from a shared pool before per-home roots existed still goes back to the pool it came from.
+Retiring a secondmate, or rolling back its seed, removes that home's own pool root before the home and its clones go, so a secondmate re-seeded with the same id at the same path never inherits copies of a deleted clone.
+It uses only Treehouse's safe `treehouse destroy <pool> --all --yes`; a leased, dirty, unlanded, or in-use copy is skipped rather than forced, and retirement then stops with Treehouse's output, like a failed lease return.
+[`tests/fm-spawn-home-pool-isolation.test.sh`](../tests/fm-spawn-home-pool-isolation.test.sh) pins two homes cloning one origin, and retiring and re-seeding a secondmate at the same id and path, including real-Treehouse passes where Treehouse is installed.
+
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
 Its operating checkout (`FM_ROOT`) and the disposable crewmate worktrees are all linked git worktrees of the same repository, so the valid discriminator is branch state, not whether the checkout is linked.
 The primary checkout is healthy on its default branch, and linked worktrees or secondmate homes are healthy at detached HEAD.
