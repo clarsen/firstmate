@@ -1220,14 +1220,51 @@ fm_firstmate_root_home() {
   printf '%s\n' "$home"
 }
 
+# The Treehouse root a home's project spawns draw their pooled copies from.
+#
+# Treehouse keys a pool only by the clone's directory name and its origin
+# (<root>/.treehouse/<name>-<origin-hash>), so every home that clones one origin
+# into projects/<name> would otherwise share one pool and be handed worktrees of
+# another home's clone. A secondmate home (a .fm-secondmate-home marker) therefore
+# gets a root of its own, $HOME/.treehouse/home-pools/<mate-id>-<home-hash>,
+# where <home-hash> is the first 12 hex digits of the git blob hash of the home's
+# physical path: outside every home, because Claude Code loads CLAUDE.md from a
+# worker's ancestor directories, and never reused by a home at another path.
+# A main home (no marker) prints nothing and keeps Treehouse's own configured
+# root, so its existing pools and live copies are untouched. Returns 2 for an
+# unusable marker (fm-parent-channel-lib.sh's fm_parent_channel_home_id) and 1
+# when the home or an absolute $HOME cannot be resolved; a caller must refuse
+# rather than fall back to the shared root.
+fm_treehouse_home_root() {  # <home>
+  local home id rc=0 hash
+  home=$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P) || return 1
+  if ! command -v fm_parent_channel_home_id >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-parent-channel-lib.sh
+    . "$FM_WAKE_LIB_DIR/fm-parent-channel-lib.sh"
+  fi
+  id=$(fm_parent_channel_home_id "$home") || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 0 ;;
+    *) return 2 ;;
+  esac
+  case "${HOME:-}" in /*) ;; *) return 1 ;; esac
+  hash=$(printf '%s' "$home" | git hash-object --stdin 2>/dev/null) || return 1
+  printf '%s/.treehouse/home-pools/%s-%s\n' "${HOME%/}" "$id" "${hash:0:12}"
+}
+
 # The one lock serializing Treehouse slot allocation and return for a project.
 #
 # It is anchored in the local root home's state directory so that every home on
-# this machine that can reach the same pool - the root, and each secondmate home
-# below it, including a remote-seeded home and its own local descendants -
-# derives the identical path. Its identity is the project's resolved origin, so
-# separate clones of one origin share a single lock; an origin-less local-only
-# project falls back to its own worktree top instead of failing to resolve.
+# this machine that can reach the same repository - the root, and each
+# secondmate home below it, including a remote-seeded home and its own local
+# descendants - derives the identical path. Pools are per home
+# (fm_treehouse_home_root), but a project-less secondmate's copies are worktrees
+# of the main home's own firstmate repository, and a secondmate's copy taken
+# before per-home roots existed still lives in the shared pool. Its identity is
+# the project's resolved origin, so separate clones of one origin share a
+# single lock; an origin-less local-only project falls back to its own worktree
+# top instead of failing to resolve.
 fm_treehouse_project_lock_path() {  # <project-dir>
   local project=$1 root origin identity hash top
   [ -d "$project" ] || return 1
