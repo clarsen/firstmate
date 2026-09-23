@@ -5,8 +5,8 @@
 # These tests drive the real spawn path with a fake terminal and prove the hook
 # runs inside the fresh task worktree before the agent launch is sent, that a
 # failing, hung, invalid, or git-visible hook refuses the launch, that the
-# shared Treehouse project lock is free while it runs, and that an absent hook
-# changes nothing.
+# return of another task of the same project is not refused while it runs, and
+# that an absent hook changes nothing.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -176,32 +176,33 @@ test_invalid_hook_refuses_before_allocation() {
   pass "an invalid project setup script or timeout refuses before any terminal or worktree work"
 }
 
-test_hook_does_not_hold_project_lock() {
-  local id=setup-unlocked-r1 out status lock
-  make_case unlocked "$id"
-  # The hook stands in for a concurrent return or spawn of the same project:
-  # it takes and drops the shared Treehouse project lock the way they do.
+test_hook_does_not_block_same_project_teardown() {
+  local id=setup-return-r1 other=setup-other-r1 out status slot
+  make_case return "$id"
+  # Another finished task of the same project holds a real Treehouse pool slot,
+  # so its return takes the shared project lock.
+  slot="$CASE_DIR/tpool/1/taskbase"
+  mkdir -p "$CASE_DIR/tpool/1"
+  git -C "$PROJECT_DIR" worktree add --quiet --detach "$slot" HEAD
+  printf '{"worktrees":[{"name":"1","path":"%s"}]}\n' "$slot" > "$CASE_DIR/tpool/treehouse-state.json"
+  printf 'task=%s\nhome=%s\n' "$other" "$HOME_DIR" > "$CASE_DIR/tpool/1/.fm-slot-owner"
+  fm_write_meta "$HOME_DIR/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$slot" "project=$PROJECT_DIR" "kind=scout"
+  # The hook returns that task while this spawn's setup is still running.
   install_hook '
-. "$FM_TEST_WAKE_LIB"
-lock=$(fm_treehouse_project_lock_path "$FM_PROJECT_DIR") || exit 3
-if fm_lock_try_acquire "$lock"; then
-  fm_lock_release "$lock"
-  echo "LOCK acquired" >> "$FM_TEST_SETUP_LOG"
-else
-  echo "LOCK refused" >> "$FM_TEST_SETUP_LOG"
-fi'
-  out=$(FM_TEST_WAKE_LIB="$ROOT/bin/fm-wake-lib.sh" FM_TEST_SETUP_LOG="$CASE_DIR/lock.log" \
-    run_spawn "$id" --mode no-mistakes --yolo off)
+"$FM_TEST_TEARDOWN" "$FM_TEST_OTHER_TASK" --force > "$FM_TEST_SETUP_LOG" 2>&1
+echo "TEARDOWN rc=$?" >> "$FM_TEST_SETUP_LOG"'
+  out=$(FM_TEST_TEARDOWN="$ROOT/bin/fm-teardown.sh" FM_TEST_OTHER_TASK="$other" \
+    FM_TEST_SETUP_LOG="$CASE_DIR/teardown.log" run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "a spawn whose setup script took the project lock should still launch"$'\n'"$out"
-  assert_grep "LOCK acquired" "$CASE_DIR/lock.log" \
-    "a concurrent holder of the Treehouse project lock was refused while the setup script ran"
+  expect_code 0 "$status" "a spawn whose setup script returned another task should still launch"$'\n'"$out"
+  assert_grep "TEARDOWN rc=0" "$CASE_DIR/teardown.log" \
+    "a return of another task of the same project was refused while the setup script ran"$'\n'"$(cat "$CASE_DIR/teardown.log")"
+  [ ! -e "$HOME_DIR/state/$other.meta" ] || fail "the concurrent return left the other task's record in place"
   launched "$id" || fail "the spawn never sent the agent launch after its setup script"
   assert_grep "kind=ship" "$HOME_DIR/state/$id.meta" "the spawn did not publish its task record"
-  lock=$(FM_HOME="$HOME_DIR" bash -c '. "$1"; fm_treehouse_project_lock_path "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$PROJECT_DIR")
-  FM_HOME="$HOME_DIR" bash -c '. "$1"; fm_lock_try_acquire "$2" && fm_lock_release "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" \
-    || fail "the spawn left the Treehouse project lock held after publishing"
-  pass "the project setup script runs without the Treehouse project lock held"
+  pass "a return of another task of the same project is not refused while the project setup script runs"
 }
 
 test_absent_hook_changes_nothing
@@ -210,6 +211,6 @@ test_failing_hook_refuses_launch
 test_hung_hook_times_out
 test_git_visible_setup_output_refuses_launch
 test_invalid_hook_refuses_before_allocation
-test_hook_does_not_hold_project_lock
+test_hook_does_not_block_same_project_teardown
 
 echo "# all fm-spawn-project-setup tests passed"

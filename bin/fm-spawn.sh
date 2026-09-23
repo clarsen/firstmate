@@ -250,9 +250,12 @@
 #   worktree exists; a nonzero exit, a timeout, or setup output git can see
 #   refuses the launch and leaves the worktree for inspection, as every other
 #   post-allocation refusal does. The Treehouse project lock is released while
-#   the hook runs and waited for again afterwards, so a slow hook never makes
-#   another spawn or return of the project refuse. --relaunch reuses its worktree untouched and
-#   never reruns the hook; --secondmate spawns never run it.
+#   the hook runs and waited for again afterwards, so a slow hook does not make
+#   an ordinary return of the project refuse; the home's task-set lock stays
+#   held, so another spawn from this home (any project) and a forced secondmate
+#   teardown of the home refuse until the hook finishes and should be retried.
+#   --relaunch reuses its worktree untouched and never reruns the hook;
+#   --secondmate spawns never run it.
 #   docs/configuration.md owns the operator contract.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]

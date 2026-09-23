@@ -412,7 +412,8 @@ The script must be an executable regular file, and a script that is not, or a ti
 A nonzero exit, a timeout, or setup output that git can see refuses the launch with the script path and exit status, leaves the worktree in place for inspection, and publishes no task record.
 Keep everything the script creates out of git's view, for example by appending its paths to the file `git rev-parse --git-path info/exclude` names, because visible setup output would otherwise be committable by the worker and would make cleanup refuse the worktree as uncommitted work.
 Pooled worktrees are reused, so the script must also succeed when its earlier output is already present.
-The spawn releases the project's slot-allocation lock while the script runs and waits to take it back afterwards, so a slow script never makes another spawn or a return of the same project refuse; the task's claimed worktree slot stays its own throughout.
+The spawn releases the project's slot-allocation lock while the script runs and waits to take it back afterwards, so an ordinary return of another task of the project is not refused during a slow script; the task's claimed worktree slot stays its own throughout.
+The spawn still holds its home's task-set lock, so another spawn from the same home, of any project, and a forced teardown of that secondmate home refuse until the script finishes; retry them once the spawn completes.
 A relaunch reuses its worktree untouched and never reruns the script, and secondmate spawns never run it.
 The directory is local to each home and is not part of secondmate inherited configuration, because that contract copies single files, not executable directories, and a secondmate's projects are its own clones; install a script into a secondmate home's own `config/project-setup/` when that home spawns the project.
 
