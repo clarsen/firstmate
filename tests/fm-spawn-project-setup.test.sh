@@ -80,6 +80,7 @@ test_hook_runs_in_worktree_before_launch() {
     make_case "runs-$kind" "$id"
     # The hook records its view into the same log the fake terminal appends
     # launch lines to, so line order proves it ran before the launch was sent.
+    # shellcheck disable=SC2016 # The hook body expands inside the hook, not here.
     install_hook '
 exclude=$(git rev-parse --git-path info/exclude)
 mkdir -p "$(dirname "$exclude")"
@@ -157,6 +158,7 @@ test_invalid_hook_refuses_before_allocation() {
   local id=setup-invalid-r1 out status
   make_case invalid "$id"
   mkdir -p "$HOME_DIR/config/project-setup"
+  # shellcheck disable=SC2016 # The script body expands inside the hook, not here.
   printf '#!/bin/sh\ntouch "$FM_WORKTREE/ran"\n' > "$HOME_DIR/config/project-setup/taskbase.sh"
   chmod 0644 "$HOME_DIR/config/project-setup/taskbase.sh"
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
@@ -190,6 +192,7 @@ test_hook_does_not_block_same_project_teardown() {
     "window=firstmate:fm-$other" "endpoint_task_id=$other" \
     "worktree=$slot" "project=$PROJECT_DIR" "kind=scout"
   # The hook returns that task while this spawn's setup is still running.
+  # shellcheck disable=SC2016 # The hook body expands inside the hook, not here.
   install_hook '
 "$FM_TEST_TEARDOWN" "$FM_TEST_OTHER_TASK" --force > "$FM_TEST_SETUP_LOG" 2>&1
 echo "TEARDOWN rc=$?" >> "$FM_TEST_SETUP_LOG"'
