@@ -1,0 +1,9 @@
+ok - an absent project setup script leaves the spawn unchanged
+ok - a ship spawn runs the project setup script in the task worktree before launching the agent
+ok - a scout spawn runs the project setup script in the task worktree before launching the agent
+ok - a failing project setup script refuses the launch and leaves the worktree for inspection
+ok - a project setup script that outlives FM_PROJECT_SETUP_TIMEOUT refuses the launch
+ok - a project setup script whose output git can see refuses the launch
+ok - an invalid project setup script or timeout refuses before any terminal or worktree work
+ok - a return of another task of the same project is not refused while the project setup script runs
+# all fm-spawn-project-setup tests passed

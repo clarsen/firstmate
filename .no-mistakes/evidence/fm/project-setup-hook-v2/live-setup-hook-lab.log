@@ -1,0 +1,105 @@
+
+===== provision lab fm-lab-setuphook-90881-32424 =====
+
+===== scratch taskbase project (local bare mirror of github clarsen/taskbase) =====
+55b1d21 feat(e48): row-click selection — ⌘/Shift-click the row, no checkbox (#74)
+
+===== S1 ship spawn of taskbase runs the real bmad setup before launch =====
+warning: /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/tb-ship1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+project setup: running /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase (timeout 600s)
+hook: FM_TASK_ID=tb-ship1 FM_TASK_KIND=ship FM_PROJECT=taskbase cwd=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+Cloning into 'bmad-submodule'...
+Switched to a new branch 'ctlarsen-v6.12.1-2026-09-10'
+branch 'ctlarsen-v6.12.1-2026-09-10' set up to track 'origin/ctlarsen-v6.12.1-2026-09-10'.
+Install complete in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+Next: edit _bmad/custom/projects.toml to register your project(s).
+spawned tb-ship1 harness=bash kind=ship mode=no-mistakes yolo=off window=fm-lab-setuphook-90881-32424:w1:p2 worktree=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+exit=0
+meta worktree=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase pane=w1:p2
+--- agent pane capture ---
+AGENT-START cwd=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+AGENT bmad-submodule checkout: ctlarsen-v6.12.1-2026-09-10 @ 271ea3c
+AGENT .agents -> bmad-submodule/.agents
+AGENT _bmad entries: _config _memory bmad-loop bmb bmm cis config.toml config.user.toml core custom render scripts tea w
+AGENT git-status-lines: 0
+AGENT-END
+--- worktree git status (expect empty) ---
+[end status]
+
+===== S2 teardown of the set-up ship task is not blocked by setup output =====
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown: reaping leaked worktree process(es) for tb-ship1: 92018 93099 93134 94123
+teardown: force-killing leaked worktree process(es) for tb-ship1: 92018
+🌳 Worktree returned to pool.
+/Users/clarsen/Tmp/fm-setup-live.RnpbaD/taskbase: already current
+teardown tb-ship1 complete (window fm-lab-setuphook-90881-32424:w1:p2, worktree /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase)
+Backlog: tb-ship1 just finished (this home keeps no markdown backlog at /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/backlog.md). Update /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/backlog.md - move tb-ship1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+teardown exit=0
+meta removed
+
+===== S3 scout spawn reuses the pooled slot; hook is idempotent over its earlier output =====
+project setup: running /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase (timeout 600s)
+hook: FM_TASK_ID=tb-scout1 FM_TASK_KIND=scout FM_PROJECT=taskbase cwd=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+Already on 'ctlarsen-v6.12.1-2026-09-10'
+Your branch is up to date with 'origin/ctlarsen-v6.12.1-2026-09-10'.
+Install complete in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+Next: edit _bmad/custom/projects.toml to register your project(s).
+spawned tb-scout1 harness=bash kind=scout window=fm-lab-setuphook-90881-32424:w2:p2 worktree=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+exit=0
+meta worktree=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase (same slot as S1: yes) pane=w2:p2
+AGENT-START cwd=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+AGENT bmad-submodule checkout: ctlarsen-v6.12.1-2026-09-10 @ 271ea3c
+AGENT .agents -> bmad-submodule/.agents
+AGENT _bmad entries: _config _memory bmad-loop bmb bmm cis config.toml config.user.toml core custom render scripts tea w
+AGENT git-status-lines: 0
+AGENT-END
+
+===== S4 failing hook refuses the launch and publishes no task =====
+warning: /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/tb-fail1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+project setup: running /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/2/taskbase (timeout 600s)
+clone failed (simulated)
+error: project setup script /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh exited with status 7 in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/2/taskbase; refusing to launch the agent; inspect window fm-lab-setuphook-90881-32424:w2:p3
+exit=1
+left worktree for inspection: /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/2/taskbase
+no task meta published
+panes before=1 after=2
+
+===== S5 hook exceeding FM_PROJECT_SETUP_TIMEOUT refuses the launch =====
+warning: /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/tb-hang1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+project setup: running /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/3/taskbase (timeout 3s)
+hanging
+error: project setup script /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh timed out after 3s in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/3/taskbase (FM_PROJECT_SETUP_TIMEOUT); refusing to launch the agent; inspect window fm-lab-setuphook-90881-32424:w2:p4
+exit=1 elapsed=6s
+no task meta published
+
+===== S6 hook leaving git-visible output refuses the launch =====
+warning: /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/tb-dirty1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+project setup: running /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/4/taskbase (timeout 600s)
+error: project setup script /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh left changes git can see in /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/4/taskbase; exclude its output (for example in $(git rev-parse --git-path info/exclude)) so it cannot be committed or block cleanup; refusing to launch the agent; inspect window fm-lab-setuphook-90881-32424:w2:p5:
+?? setup-junk.txt
+exit=1
+no task meta published
+
+===== S7 non-executable hook refuses before any pane or worktree exists =====
+error: project setup script /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/config/project-setup/taskbase.sh must be an executable regular file; refusing to launch without the setup it declares
+exit=1 panes before=4 after=4
+
+===== S8 bad FM_PROJECT_SETUP_TIMEOUT refuses before any pane =====
+error: FM_PROJECT_SETUP_TIMEOUT must be a positive whole number of seconds (got '0')
+exit=1 panes before=4 after=4
+
+===== S9 project without a setup script spawns unchanged =====
+warning: /Users/clarsen/Tmp/fm-setup-live.RnpbaD/home/data/other1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned other1 harness=bash kind=ship mode=no-mistakes yolo=off window=fm-lab-setuphook-90881-32424:w2:p6 worktree=/Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/otherproj-4929dd/1/otherproj
+exit=0
+no project setup activity
+
+===== cleanup =====
+returned /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+returned /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/1/taskbase
+returned /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/2/taskbase
+returned /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/3/taskbase
+returned /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/taskbase-c2af62/4/taskbase
+returned /Users/clarsen/Tmp/fm-setup-live.RnpbaD/treehouse-pool/.treehouse/otherproj-4929dd/1/otherproj
+lab fm-lab-setuphook-90881-32424 torn down
