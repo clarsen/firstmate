@@ -160,7 +160,11 @@
 # work, kills child runtime endpoints, and removes the retired home. Removing a
 # leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
-# leased home and state in place instead of hiding a still-held lease.
+# leased home and state in place instead of hiding a still-held lease. Before any
+# home is removed, its own Treehouse pool root (bin/fm-wake-lib.sh's
+# fm_treehouse_home_root_destroy) is destroyed with Treehouse's safe bulk
+# destroy; a copy that destroy skips stops the retirement with its output, and
+# nothing is forced.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
@@ -2560,6 +2564,10 @@ remove_firstmate_home() {
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_firstmate_home_for_removal "$home" "$label" "$expected_id") || return 1
   [ -n "$abs_home_path" ] || return 0
+  fm_treehouse_home_root_destroy "$abs_home_path" "$expected_id" || {
+    echo "error: could not remove the own Treehouse pool of $label $abs_home_path; retirement stopped" >&2
+    return 1
+  }
   process_event_backup=$(snapshot_firstmate_home_process_events "$abs_home_path" "$label") || return 1
   if ! cleanup_firstmate_home_process_events "$abs_home_path" "$label"; then
     restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?

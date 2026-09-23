@@ -22,6 +22,9 @@
 #       generated briefs, new homes, new project clones, and registry edits are
 #       rolled back. Treehouse-acquired homes are returned only when the rollback
 #       target is safe; a failed return warns because the lease may still be held.
+#       A new or acquired home's own Treehouse pool root (bin/fm-wake-lib.sh's
+#       fm_treehouse_home_root_destroy) is safely destroyed first; a copy the
+#       destroy skips warns and is never forced.
 #       Set FM_SECONDMATE_CHARTER='<charter>' to seed from inline charter text
 #       when no filled charter brief exists. Set FM_SECONDMATE_SCOPE='<scope>'
 #       to override the registry routing scope. Otherwise the registry summary
@@ -516,6 +519,7 @@ seed_exit_cleanup() {
   seed_rollback
   seed_registry_lock_release
 }
+SEED_ID=
 SEED_HOME=
 SEED_HOME_ACQUIRED=0
 SEED_HOME_CREATED=0
@@ -588,6 +592,16 @@ seed_return_treehouse_home() {
   }
 }
 
+seed_destroy_home_pool() {
+  local home=$1 abs_home
+  abs_home=$(seed_rollback_target "$home" "secondmate home pool") || return 0
+  [ -d "$abs_home" ] || return 0
+  fm_treehouse_home_root_destroy "$abs_home" "$SEED_ID" || {
+    echo "warning: failed to remove the own Treehouse pool of secondmate home $abs_home during seed rollback" >&2
+    return 0
+  }
+}
+
 seed_remove_created_home() {
   local home=$1 abs_home
   abs_home=$(seed_rollback_target "$home" "created home") || return 0
@@ -637,8 +651,10 @@ seed_rollback() {
 
   if [ -n "${SEED_HOME:-}" ] && [ "$SEED_HOME" != "/" ]; then
     if [ "$SEED_HOME_ACQUIRED" = 1 ]; then
+      seed_destroy_home_pool "$SEED_HOME"
       seed_return_treehouse_home "$SEED_HOME"
     elif [ "$SEED_HOME_CREATED" = 1 ]; then
+      seed_destroy_home_pool "$SEED_HOME"
       seed_remove_created_home "$SEED_HOME"
     else
       if [ -n "${SEED_CREATED_PROJECTS_FILE:-}" ] && [ -f "$SEED_CREATED_PROJECTS_FILE" ]; then
@@ -836,6 +852,7 @@ seed_home() {
 
   SEED_ROLLBACK_ACTIVE=1
   SEED_COMMITTED=0
+  SEED_ID=$id
   SEED_HOME=
   SEED_HOME_ACQUIRED=0
   SEED_HOME_CREATED=0

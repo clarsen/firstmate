@@ -12,11 +12,16 @@
 #   - a copy of another clone of the same origin is never adopted;
 #   - with the real treehouse binary (skipped when absent), two homes, one
 #     origin get distinct pools of their own clones, and teardown returns each
-#     copy to the pool it came from.
+#     copy to the pool it came from;
+#   - with the real treehouse binary, retiring a secondmate removes its own
+#     pool (refusing, unforced, while a copy there is still leased), so a
+#     re-seed with the same id and home path spawns a working copy.
 set -u
 
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+# shellcheck source=tests/secondmate-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-spawn-home-pool-isolation)
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
@@ -300,9 +305,96 @@ test_real_pools_are_per_home_and_teardown_returns_home() {
   pass "with real Treehouse, two homes' clones of one origin draw distinct pools and teardown returns each copy to its own pool"
 }
 
+# run_mate <main-home> <fakebin> <cmd> <args...>: a secondmate lifecycle command
+# run from the main home under the shared USER_HOME.
+run_mate() {
+  local main=$1 fakebin=$2 cmd=$3 dir
+  dir=${main%/*}
+  shift 3
+  env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME \
+    FM_ROOT_OVERRIDE='' FM_HOME="$main" HOME="$USER_HOME" CLAUDE_CONFIG_DIR='' \
+    FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
+    FM_FAKE_TMUX_LOG="$dir/mate-tmux.log" FM_FAKE_TMUX_CAPTURE="$dir/mate-pane.txt" \
+    PATH="$fakebin:$PATH" "$ROOT/bin/$cmd" "$@" 2>&1
+}
+
+# seed_and_launch_mate <main> <home> <fakebin>: seed secondmate evo at <home>
+# from <main>'s clone and launch it, leaving <home> spawn-ready.
+seed_and_launch_mate() {
+  local main=$1 home=$2 fakebin=$3 out
+  [ -f "$main/data/evo/brief.md" ] \
+    || FM_HOME="$main" FM_SECONDMATE_CHARTER='evolution charter' "$ROOT/bin/fm-brief.sh" evo --secondmate proj >/dev/null \
+    || fail "could not scaffold the secondmate charter"
+  out=$(run_mate "$main" "$fakebin" fm-home-seed.sh evo "$home" proj) \
+    || fail "seeding secondmate evo failed"$'\n'"$out"
+  out=$(run_mate "$main" "$fakebin" fm-spawn.sh evo "$home" codex --secondmate) \
+    || fail "launching secondmate evo failed"$'\n'"$out"
+  fm_test_spawn_home "$home" codex
+}
+
+test_real_retired_mate_pool_is_removed_and_reseed_spawns() {
+  local dir="$TMP_ROOT/reseed" fakebin matebin main sm clone root out status wt probe
+  if ! command -v treehouse >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    printf '# real-treehouse retire/re-seed case not run: treehouse or jq is not installed\n'
+    return 0
+  fi
+  fakebin=$(make_real_pool_fakebin "$dir/fake")
+  fm_test_fake_sleep_noop "$fakebin"
+  # Secondmate lifecycle commands drive the ordinary fake tmux, but the real
+  # treehouse, so retirement's pool destroy is the real one.
+  matebin=$(make_fake_tmux "$dir/mate-fake")
+  rm -f "$matebin/treehouse"
+  printf '❯\n' > "$dir/mate-pane.txt"
+  main="$dir/main-home"; sm="$dir/evo-home"
+  make_home "$main"
+  printf -- '- proj [direct-PR] - evolution project (added 2026-09-23)\n' > "$main/data/projects.md"
+
+  seed_and_launch_mate "$main" "$sm" "$matebin"
+  clone="$sm/projects/proj"
+  out=$(FM_FAKE_PANE_STATE="$dir/sm1.pane" run_spawn "$sm" "$dir/none" "$fakebin" reseed-r1)
+  status=$?
+  expect_code 0 "$status" "the first secondmate's spawn should launch"$'\n'"$out"$'\n'"$(cat "$dir/sm1.pane.log" 2>/dev/null)"
+  wt=$(meta_worktree "$sm/state/reseed-r1.meta")
+  root=${wt%%/.treehouse/proj-*}
+  [ "$root" != "$wt" ] && [ -d "$root" ] || fail "cannot locate the secondmate's pool root from $wt"
+  out=$(run_teardown "$sm" "$fakebin" reseed-r1)
+  expect_code 0 "$?" "the first secondmate's task teardown should return its copy"$'\n'"$out"
+
+  # A copy still leased in the home's pool stops the retirement, unforced.
+  probe=$(cd "$clone" && env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME HOME="$USER_HOME" \
+    treehouse --root "$root" get --lease --lease-holder probe 2>/dev/null) \
+    || fail "could not lease a probe copy from the secondmate's pool"
+  out=$(run_mate "$main" "$matebin" fm-teardown.sh evo)
+  status=$?
+  [ "$status" -ne 0 ] || fail "retirement removed a home whose pool still held a leased copy"$'\n'"$out"
+  assert_contains "$out" "retirement stopped" "the refusal did not stop the retirement"$'\n'"$out"
+  assert_contains "$out" "leased" "the refusal did not carry Treehouse's skip output"$'\n'"$out"
+  [ -d "$probe" ] && [ -d "$clone" ] && [ -f "$main/state/evo.meta" ] \
+    || fail "a refused retirement still removed the leased copy, the home's clone, or its record"
+  (cd "$clone" && HOME="$USER_HOME" treehouse return --force "$probe" >/dev/null 2>&1) \
+    || fail "could not return the probe copy"
+
+  out=$(run_mate "$main" "$matebin" fm-teardown.sh evo)
+  expect_code 0 "$?" "retiring secondmate evo should succeed once its pool holds no live copy"$'\n'"$out"
+  [ ! -e "$sm" ] || fail "retirement left the secondmate home"
+  [ ! -e "$root" ] || fail "retirement left the secondmate's own pool root: $(find "$root" -maxdepth 3 2>/dev/null)"
+
+  seed_and_launch_mate "$main" "$sm" "$matebin"
+  out=$(FM_FAKE_PANE_STATE="$dir/sm2.pane" run_spawn "$sm" "$dir/none" "$fakebin" reseed-r2)
+  status=$?
+  expect_code 0 "$status" "the re-seeded secondmate's spawn should get a working copy"$'\n'"$out"$'\n'"$(cat "$dir/sm2.pane.log" 2>/dev/null)"
+  wt=$(meta_worktree "$sm/state/reseed-r2.meta")
+  [ "$(common_dir "$wt")" = "$(common_dir "$clone")" ] \
+    || fail "the re-seeded secondmate's copy $wt is not a worktree of its new clone"
+  out=$(run_teardown "$sm" "$fakebin" reseed-r2)
+  expect_code 0 "$?" "the re-seeded secondmate's task teardown should return its copy"$'\n'"$out"
+  pass "retiring a secondmate removes its own pool, refusing unforced while a copy is leased, and a re-seed at the same id and path spawns a working copy"
+}
+
 test_each_home_types_its_own_pool_root
 test_unusable_home_marker_refuses_before_any_endpoint
 test_copy_of_another_clone_is_never_adopted
 test_real_pools_are_per_home_and_teardown_returns_home
+test_real_retired_mate_pool_is_removed_and_reseed_spawns
 
 echo "# all fm-spawn-home-pool-isolation tests passed"

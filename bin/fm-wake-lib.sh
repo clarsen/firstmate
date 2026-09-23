@@ -1248,9 +1248,49 @@ fm_treehouse_home_root() {  # <home>
     1) return 0 ;;
     *) return 2 ;;
   esac
+  fm_treehouse_mate_root "$home" "$id"
+}
+
+# The pool root fm_treehouse_home_root names for a physical home path seeded
+# as secondmate <mate-id>.
+fm_treehouse_mate_root() {  # <physical-home> <mate-id>
+  local hash
   case "${HOME:-}" in /*) ;; *) return 1 ;; esac
-  hash=$(printf '%s' "$home" | git hash-object --stdin 2>/dev/null) || return 1
-  printf '%s/.treehouse/home-pools/%s-%s\n' "${HOME%/}" "$id" "${hash:0:12}"
+  hash=$(printf '%s' "$1" | git hash-object --stdin 2>/dev/null) || return 1
+  printf '%s/.treehouse/home-pools/%s-%s\n' "${HOME%/}" "$2" "${hash:0:12}"
+}
+
+# Remove a secondmate home's own pool root when the home is retired or its seed
+# rolled back, so a later secondmate seeded with the same id at the same path
+# never inherits copies of a deleted clone. Each pool in the root goes through
+# Treehouse's safe bulk `destroy <pool> --all --yes`, never an --include-* flag,
+# so a leased, dirty, unlanded, or in-use copy is skipped rather than forced.
+# Run it before the home's clones are removed: Treehouse verifies each copy
+# against its clone. If any copy survives, it prints Treehouse's output, leaves
+# the root in place, and returns 1; the root is removed only once no copy remains.
+fm_treehouse_home_root_destroy() {  # <home> <mate-id>
+  local home root pool slot out
+  home=$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P) || return 1
+  root=$(fm_treehouse_mate_root "$home" "$2") || return 1
+  [ -d "$root" ] || return 0
+  for pool in "$root"/.treehouse/*/; do
+    [ -d "$pool" ] || continue
+    pool=${pool%/}
+    command -v treehouse >/dev/null 2>&1 || {
+      echo "error: treehouse command not found; cannot destroy this home's own Treehouse pool $pool" >&2
+      return 1
+    }
+    out=$(treehouse destroy "$pool" --all --yes 2>&1) || {
+      printf 'error: treehouse destroy failed for this home'"'"'s own Treehouse pool %s\n%s\n' "$pool" "$out" >&2
+      return 1
+    }
+    for slot in "$pool"/*/; do
+      [ -d "$slot" ] || continue
+      printf 'error: treehouse destroy left copies in this home'"'"'s own Treehouse pool %s; return or land them, then retry\n%s\n' "$pool" "$out" >&2
+      return 1
+    done
+  done
+  rm -rf -- "$root"
 }
 
 # The one lock serializing Treehouse slot allocation and return for a project.
