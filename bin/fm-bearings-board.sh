@@ -213,7 +213,7 @@ validate_payload() {  # <data.json>
 # board open before the build may bind or arm its source.
 
 board_realpath() {  # <board>
-  perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$1" 2>/dev/null
+  "$SCRIPT_DIR/fm-procevent-lavish.sh" canonical-path "$1" 2>/dev/null
 }
 
 lavish_status_field() {  # <lavish-axi output>

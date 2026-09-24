@@ -10,6 +10,7 @@
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
+#   fm-procevent-lavish.sh canonical-path <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
 #
@@ -31,6 +32,10 @@
 #            Captain-supplied body lines are visibly prefixed so they cannot
 #            forge structural labels. Empty message and annotation sections
 #            are reported explicitly.
+# canonical-path  Print the artifact path exactly as Lavish keys its session,
+#            including the on-disk letter case on a case-insensitive volume.
+#            Other scripts that match a board against Lavish's own records call
+#            this rather than resolving the path themselves.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
 #            and prints its response verbatim, absorbing only the one exact
@@ -146,13 +151,25 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 2; }
 
+# The single owner of how firstmate names a board the way Lavish does. Lavish
+# keys a session on Node's native realpath, which on a case-insensitive volume
+# returns the ON-DISK letter case, whereas Perl's Cwd::realpath and GNU
+# realpath(1) keep the caller's case. Resolving through the same Node call
+# lavish-axi runs on is the only way a board reached through a differently
+# cased path still finds its saved session and one source identity.
+lavish_canonical_path() {  # <artifact>
+  node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' \
+    "$1" 2>/dev/null
+}
+
 apply_session_host() {  # <artifact>
-  local endpoint
-  endpoint=$(perl -MJSON::PP -MCwd=realpath -MEncode=decode,FB_CROAK -e '
+  local endpoint real
+  real=$(lavish_canonical_path "$1") \
+    || die "cannot resolve the board server from its Lavish session: $1"
+  endpoint=$(perl -MJSON::PP -MEncode=decode,FB_CROAK -e '
     use strict;
     use warnings;
-    my ($path, $artifact) = @ARGV;
-    my $real = realpath($artifact) // die "cannot resolve board artifact\n";
+    my ($path, $real) = @ARGV;
     $real = decode("UTF-8", $real, FB_CROAK);
     open my $file, "<", $path or die "cannot read Lavish session store\n";
     -f $file or die "Lavish session store is not a regular file\n";
@@ -173,7 +190,7 @@ apply_session_host() {  # <artifact>
     $host ne "0.0.0.0" && $host ne "::" && $port >= 1 && $port <= 65535
       or die "invalid saved Lavish server address\n";
     print "$host\n$port\n";
-  ' "${LAVISH_AXI_STATE_DIR:-$HOME/.lavish-axi}/state.json" "$1") \
+  ' "${LAVISH_AXI_STATE_DIR:-$HOME/.lavish-axi}/state.json" "$real") \
     || die "cannot resolve the board server from its Lavish session: $1"
   LAVISH_AXI_HOST=${endpoint%$'\n'*}
   LAVISH_AXI_PORT=${endpoint##*$'\n'}
@@ -181,13 +198,14 @@ apply_session_host() {  # <artifact>
 }
 
 # Canonical identity is physical, not the path string: Lavish itself keys a
-# session on the realpath of the artifact, so two names for one file are one
+# session on the native realpath of the artifact, so two names for one file -
+# including two letter cases of it on a case-insensitive volume - are one
 # source and must never become two owners.
 cmd_source_id() {
   local artifact=${1-} real
   [ -n "$artifact" ] || usage
   case "$artifact" in *$'\n'*) die "artifact paths cannot contain newlines" ;; esac
-  real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
+  real=$(lavish_canonical_path "$artifact") \
     || die "cannot resolve the artifact path: $artifact"
   [ -f "$real" ] || die "artifact does not exist: $artifact"
   if command -v shasum >/dev/null 2>&1; then
@@ -225,7 +243,7 @@ cmd_arm() {
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
   poll_retry_delay >/dev/null
   id=$(cmd_source_id "$artifact") || exit 1
-  real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
+  real=$(lavish_canonical_path "$artifact") \
     || die "cannot resolve the artifact path: $artifact"
   listener=("$SCRIPT_DIR/fm-procevent-lavish.sh" poll "$real")
   [ -z "$reply_file" ] || listener+=(--agent-reply-file "$reply_file")
@@ -793,6 +811,12 @@ case "${1-}" in
   retire)    shift; cmd_retire "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
+  canonical-path)
+    shift
+    [ "$#" -eq 1 ] && [ -n "$1" ] || usage
+    lavish_canonical_path "$1" || die "cannot resolve the artifact path: $1"
+    printf '\n'
+    ;;
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
