@@ -194,6 +194,7 @@ test_member_refusals_leave_nothing_behind() {
   home="$dir/home"
   make_home "$home"
   git clone --quiet "file://$TMP_ROOT/contract.origin.git" "$home/projects/contract-again"
+  git clone --quiet --bare "file://$TMP_ROOT/contract.origin.git" "$home/projects/contract-bare.git"
   fakebin=$(make_spawn_fakebin "$dir/fake")
   while IFS='|' read -r label want spec; do
     [ -n "$label" ] || continue
@@ -218,6 +219,9 @@ repeated name|given twice|--member api=projects/contract:ref --member api=projec
 own project|is the task's own project|--member api=projects/proj:ref
 shared project|same project as member api|--member api=projects/contract:ref --member spec=projects/contract-again:ref
 missing project|does not exist|--member api=projects/nowhere:ref
+git dir|is not the top of a git clone|--member api=projects/contract/.git:ref
+own git dir|is not the top of a git clone|--member api=projects/proj/.git:ref
+bare repository|is not the top of a git clone|--member api=projects/contract-bare.git:ref
 EOF
   for spec in "--member=api=projects/contract:ref" "--member api=projects/contract:ref"; do
     fm_test_spawn_brief "$home" refuse-batch
