@@ -114,11 +114,13 @@ fm_procevent_any_registered() {
 # refresh it, an attached public start keeps it fresh while its caller remains
 # attached, and the watcher's reconcile cycle keeps it fresh in a live home.
 # A guard proves the runner's owner is still there by reading that lease from
-# the physical state root recorded in the claim. After two consecutive checks
-# cannot prove both the root identity and a fresh lease, it stops the runner's
-# process group. The lease is keyed by state root, so another home's live runner
-# is untouched: that home refreshes its own lease. Nothing here keys on a script
-# name, a command line, or a process name, all of which are shared across homes.
+# the physical state root recorded in the claim, or by that root's session lock
+# naming a live agent session (fm_procevent_owner_alive below). After two
+# consecutive checks cannot prove both the root identity and that presence, it
+# stops the runner's process group. The lease is keyed by state root, so another
+# home's live runner is untouched: that home refreshes its own lease. Nothing here
+# keys on a script name, a command line, or a process name, all of which are
+# shared across homes.
 
 fm_procevent_owner_lease_path() {  # <state-root>
   printf '%s/.owner-lease\n' "$(fm_procevent_registry_dir "$1")"
@@ -158,10 +160,11 @@ fm_procevent_owner_lease_age() {  # <state-root>
   ' "$value"
 }
 
-# How long a runner keeps going with no activity in its owning home. The default
-# is forty watcher cycles at the default poll interval, so an ordinary busy or
-# briefly wedged home never trips it, while a home that is simply gone stops
-# owning processes within the hour rather than within a day.
+# How long a runner keeps going with no activity and no live agent session in
+# its owning home. The default is forty watcher cycles at the default poll
+# interval, so an ordinary busy or briefly wedged home never trips it, while a
+# home that is simply gone stops owning processes within the hour rather than
+# within a day.
 FM_PROCEVENT_OWNER_LEASE_DEFAULT_SECONDS=600
 FM_PROCEVENT_OWNER_LEASE_MIN_SECONDS=1
 FM_PROCEVENT_OWNER_LEASE_MAX_SECONDS=86400
@@ -315,11 +318,34 @@ fm_procevent_launch_floor_wait() {  # <state-root> <source-id> <registration-ide
   return 0
 }
 
-# True while the owning home is provably still active.
+# True while the owning home is provably still active: its lease is fresh, or
+# a live agent session still holds the home.
+#
+# The lease alone cannot tell a GONE home from an idle one. A home whose agent
+# session is alive but whose supervision cycle has ended - a watcher cycle cut
+# off by its host with nothing re-arming it overnight - refreshes nothing, so
+# the lease read it as gone and every board listener in it was stopped; a board
+# answer submitted after that sat in Lavish with nothing polling it. The home's
+# session lock is the fleet's own record of the live session that holds it.
+# Only `held` - a live, verified harness pid - counts, so a free, stale,
+# malformed, or unverifiable lock leaves the lease as the only proof.
 fm_procevent_owner_alive() {  # <state-root> <lease-seconds>
   local age
-  age=$(fm_procevent_owner_lease_age "$1") || return 1
-  [ "$age" -le "$2" ]
+  if age=$(fm_procevent_owner_lease_age "$1") && [ "$age" -le "$2" ]; then
+    return 0
+  fi
+  fm_procevent_owner_session_held "$1"
+}
+
+# bin/fm-session-lock-lib.sh's fm_session_lock_inspect is the single owner of
+# reading state/.lock; it is sourced lazily because only the owner guard asks.
+fm_procevent_owner_session_held() {  # <state-root>
+  if ! declare -F fm_session_lock_inspect >/dev/null; then
+    # shellcheck source=bin/fm-session-lock-lib.sh
+    . "$(dirname -- "${BASH_SOURCE[0]}")/fm-session-lock-lib.sh" || return 1
+  fi
+  fm_session_lock_inspect "$1"
+  [ "$FM_LOCK_INSPECT_STATE" = held ]
 }
 
 # --- ownership --------------------------------------------------------------

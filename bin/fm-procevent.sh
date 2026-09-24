@@ -193,17 +193,21 @@
 # spawns - running with nobody left to reap it. So every runner starts a small
 # guard beside it, in its own separate process group, which re-reads the owning
 # state root's lease on a bounded cadence and stops the runner's whole process
-# group once that lease can no longer be proved fresh. Owner-presence operations
-# refresh the lease, an attached public start keeps it fresh while its caller
-# remains attached, and the watcher's reconcile cycle keeps it fresh in a live
-# home. A runner exports the inherited FM_PROCEVENT_IN_RUNNER marker and every
-# refresh is skipped under it, so a runner and its ordinary children do not
-# certify their own owner. That rule is CONFUSED-AGENT-GRADE, the grade
-# bin/fm-lease-lib.sh documents: a source that DELIBERATELY strips the marker
-# can still refresh, and adversarial-grade unforgeability is out of scope (see
-# docs/configuration.md). Scope is the owning state root and one runner
-# generation, never a script or process name, so a live source in
-# another home is untouched. See bin/fm-procevent-lib.sh for the lease itself.
+# group once neither that lease nor a live agent session holding the home can
+# be proved. Owner-presence operations refresh the lease, an attached public
+# start keeps it fresh while its caller remains attached, and the watcher's
+# reconcile cycle keeps it fresh in a live home; a home whose session lock
+# names a live agent session stays present even when its supervision cycle has
+# lapsed, so an idle home does not lose the board listeners it will need when
+# the answer finally arrives. A runner exports the inherited
+# FM_PROCEVENT_IN_RUNNER marker and every refresh is skipped under it, so a
+# runner and its ordinary children do not certify their own owner. That rule is
+# CONFUSED-AGENT-GRADE, the grade bin/fm-lease-lib.sh documents: a source that
+# DELIBERATELY strips the marker can still refresh, and adversarial-grade
+# unforgeability is out of scope (see docs/configuration.md). Scope is the
+# owning state root and one runner generation, never a script or process name,
+# so a live source in another home is untouched. See bin/fm-procevent-lib.sh
+# for the lease itself.
 #
 # Ownership is machine-wide per canonical source, because separate Firstmate
 # homes can share one underlying source store. A live owner is never displaced;
@@ -1359,7 +1363,8 @@ start_owner_guard() {  # <source-id>
 
 # The runner's owner guard, which bounds an accidentally orphaned detached
 # runner after its home ends. It revalidates the recorded physical state root
-# and its lease on a bounded cadence and, after two consecutive reads cannot prove
+# and its owner presence - a fresh lease or a live agent session holding the
+# home - on a bounded cadence and, after two consecutive reads cannot prove
 # both, invokes the identity-gated stop for the runner's whole process group -
 # which is what reaches the blocking child and everything that child spawned,
 # exactly as retirement does. A failed verified stop stays on the retry cadence;
@@ -1411,7 +1416,7 @@ cmd_owner_watchdog() {  # <source-id> <runner-pid> <runner-identity> <ready-file
   [ "$current_device" = "$state_device" ] && [ "$current_inode" = "$state_inode" ] \
     || die "owning state root identity changed before owner guard initialization"
   fm_procevent_owner_alive "$STATE" "$lease" \
-    || die "owning home lease is not fresh at owner guard initialization"
+    || die "owning home is not provably present at owner guard initialization"
   printf 'ready\n' > "$ready" || die "cannot confirm owner guard initialization"
   trap - EXIT
   while :; do

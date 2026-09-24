@@ -3769,6 +3769,168 @@ wait_gone "$KEEP_DESCENDANT" \
   || fail "retiring a source left a descendant of its listener running"
 pass "retiring a source reaps its reparented listener and every descendant under it"
 
+# --- end-user-aligned regression: an idle live session keeps its boards ------
+#
+# The incident: a secondmate home armed a worker's acceptance board at night.
+# Its agent session stayed alive all night, but its supervision cycle was cut
+# off hours later and nothing re-armed it, so nothing refreshed the owner lease
+# and the guard stopped every listener in the home as though the home were
+# gone. The captain answered the next morning with Send & End; Lavish held that
+# answer on the ended session with nothing polling it, so it reached nobody.
+#
+# Two homes arm the same board shape under the same short lease, and nothing
+# reconciles either of them after launch - that is the lapsed supervision. The
+# one difference is that the first home's session lock names a live agent
+# session. Its listener must keep listening and deliver the answer the moment it
+# is sent. The second home's listener is stopped, exactly as the lease intends
+# for a home nothing holds, and its answer must still be collected exactly once
+# from the ended session when supervision returns and relaunches the listener.
+# Once the live session itself exits, its home's listeners are stopped too.
+
+LAPSE_BIN=$(fm_fakebin "$TMP_ROOT/lapse-lavish")
+cat > "$LAPSE_BIN/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+# Stand-in for the published `lavish-axi poll <file>`. It blocks until the
+# captain's Send & End lands on that board, then delivers the final feedback
+# exactly once marked session_ended - Lavish keeps it queued on the ended session
+# until some poll collects it - and answers every later poll with an empty ended
+# session. Each poll start is logged so a relaunch is observable.
+[ "${1-}" = poll ] || exit 2
+board=$2
+printf 'poll\n' >> "$board.polls"
+while [ ! -e "$board.send-end" ]; do
+  [ "$SECONDS" -lt "${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}" ] || exit 75
+  sleep 0.05
+done
+if mkdir "$board.collected" 2>/dev/null; then
+  printf 'session:\n  file: %s\n  status: feedback\n  session_ended: true\n  ended_by: user\n' "$board"
+  printf 'prompts[1]{uid,prompt,selector,tag,text}:\n'
+  printf '  "1","accept: go to Deploy",#q,message,"accept: go to Deploy"\n'
+else
+  printf 'session:\n  file: %s\n  status: ended\n  ended_by: user\n' "$board"
+fi
+SH
+chmod +x "$LAPSE_BIN/lavish-axi"
+
+# A live agent session holding its home, as bin/fm-lock.sh records one: a
+# harness-named process whose pid is line 1 of state/.lock.
+LAPSE_SESSION_BIN=$(fm_fakebin "$TMP_ROOT/lapse-session")
+ln -s "$(command -v bash)" "$LAPSE_SESSION_BIN/claude"
+# shellcheck disable=SC2016 # The session's own shell expands its variables.
+"$LAPSE_SESSION_BIN/claude" -c \
+  'while [ "$SECONDS" -lt "${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}" ]; do sleep 0.1; done' &
+LAPSE_SESSION_PID=$!
+
+HLAPSE_LIVE="$TMP_ROOT/lapse-live-session"; new_home "$HLAPSE_LIVE"
+HLAPSE_NONE="$TMP_ROOT/lapse-no-session"; new_home "$HLAPSE_NONE"
+fm_test_track_procevent_home "$HLAPSE_LIVE"
+fm_test_track_procevent_home "$HLAPSE_NONE"
+new_task_endpoint "$HLAPSE_LIVE" evo-worker
+new_task_endpoint "$HLAPSE_NONE" evo-worker
+printf '%s\n' "$LAPSE_SESSION_PID" > "$HLAPSE_LIVE/state/.lock"
+assert_contains "$(FM_HOME="$HLAPSE_LIVE" "$ROOT/bin/fm-lock.sh" status)" \
+  "held by live harness pid $LAPSE_SESSION_PID" \
+  "the fixture session reads as a live agent session holding its home"
+assert_contains "$(FM_HOME="$HLAPSE_NONE" "$ROOT/bin/fm-lock.sh" status)" "lock: free" \
+  "the control home has no session holding it"
+
+lapse_board() {  # <home> <name>: create and open a board, print its physical path
+  local dir
+  dir=$(cd -P "$1" && pwd -P)
+  printf '<h1>%s</h1>\n' "$2" > "$dir/$2.html"
+  lavish_session "$dir/$2.html"
+  printf '%s\n' "$dir/$2.html"
+}
+lapse_lavish() {  # <home> <adapter command...>
+  local home=$1
+  shift
+  PATH="$LAPSE_BIN:$PATH" FM_HOME="$home" "$ROOT/bin/fm-procevent-lavish.sh" "$@"
+}
+lapse_pe() {  # <home> <command...>
+  PATH="$LAPSE_BIN:$PATH" orphan_pe "$@"
+}
+
+LIVE_BOARD=$(lapse_board "$HLAPSE_LIVE" acceptance)
+LIVE_OPEN_BOARD=$(lapse_board "$HLAPSE_LIVE" scope)
+NONE_BOARD=$(lapse_board "$HLAPSE_NONE" acceptance)
+live_id=$(lapse_lavish "$HLAPSE_LIVE" source-id "$LIVE_BOARD")
+live_open_id=$(lapse_lavish "$HLAPSE_LIVE" source-id "$LIVE_OPEN_BOARD")
+none_id=$(lapse_lavish "$HLAPSE_NONE" source-id "$NONE_BOARD")
+lapse_lavish "$HLAPSE_LIVE" arm "$LIVE_BOARD" --for evo-worker >/dev/null
+lapse_lavish "$HLAPSE_LIVE" arm "$LIVE_OPEN_BOARD" >/dev/null
+lapse_lavish "$HLAPSE_NONE" arm "$NONE_BOARD" --for evo-worker >/dev/null
+
+# The last supervision cycle each home gets: it launches the listeners.
+lapse_pe "$HLAPSE_LIVE" reconcile >/dev/null
+lapse_pe "$HLAPSE_NONE" reconcile >/dev/null
+for runner in "$HLAPSE_LIVE/state/procevent/$live_id.runner" \
+  "$HLAPSE_LIVE/state/procevent/$live_open_id.runner" \
+  "$HLAPSE_NONE/state/procevent/$none_id.runner"; do
+  wait_for "$runner" || fail "a lapsed-supervision fixture listener never launched: $runner"
+done
+for polls in "$LIVE_BOARD.polls" "$LIVE_OPEN_BOARD.polls" "$NONE_BOARD.polls"; do
+  wait_for "$polls" || fail "a lapsed-supervision fixture listener never reached its poll: $polls"
+done
+LIVE_RUNNER=$(cat "$HLAPSE_LIVE/state/procevent/$live_id.runner")
+LIVE_OPEN_RUNNER=$(cat "$HLAPSE_LIVE/state/procevent/$live_open_id.runner")
+NONE_RUNNER=$(cat "$HLAPSE_NONE/state/procevent/$none_id.runner")
+
+# Supervision has lapsed in both homes. The control home's listener is stopped
+# within the documented bound, which is the evidence that the shared lease
+# really expired rather than this case passing because nothing was tested.
+lapse_bound=$((PROOF_DETECT_BOUND + PROOF_PROMPT_STOP + PROOF_LOAD_SLACK))
+wait_gone "-$NONE_RUNNER" $((lapse_bound * 10)) \
+  || fail "the control listener outlived its expired lease, so the lapse under test never happened"
+# Give the live home the same full bound again after its own lease is certain to
+# have expired, then require both of its listeners to still be listening.
+sleep "$((PROOF_DETECT_BOUND + PROOF_PROMPT_STOP))"
+kill -0 -"$LIVE_RUNNER" 2>/dev/null \
+  || fail "a board listener was stopped while a live agent session still held its home"
+kill -0 -"$LIVE_OPEN_RUNNER" 2>/dev/null \
+  || fail "a second board listener was stopped while a live agent session still held its home"
+pass "a live agent session keeps its home's board listeners through lapsed supervision"
+
+# The captain answers both boards with Send & End, and still nothing reconciles.
+touch "$LIVE_BOARD.send-end" "$NONE_BOARD.send-end"
+wait_for "$HLAPSE_LIVE/state/procevent-inbox/$live_id.1.result" \
+  || fail "the answer sent to a board whose home's session is live never reached the worker"
+LIVE_RESULT="$HLAPSE_LIVE/state/procevent-inbox/$live_id.1.result"
+assert_grep 'accept: go to Deploy' "$LIVE_RESULT" "the live home captured the captain's answer"
+assert_grep 'session_ended: true' "$LIVE_RESULT" "the live home captured the session-ending answer"
+# The runner commits the capture before it delivers it, so wait for delivery.
+wait_for "$HLAPSE_LIVE/state/evo-worker.inbox/001.msg" \
+  || fail "the captured answer was not delivered to the owning worker's steering inbox"
+[ "$(wc -l < "$LIVE_BOARD.polls" | tr -d ' ')" = 1 ] \
+  || fail "the live listener was relaunched instead of collecting the answer it was waiting on"
+pass "a Send & End answer after lapsed supervision reaches the worker with no reconcile"
+
+# The symptom, in the control home: the answer waits on the ended session with
+# no listener, and nothing is captured until supervision returns.
+sleep 1
+[ "$(count_results "$HLAPSE_NONE" "$none_id")" = 0 ] \
+  || fail "the control home captured an answer with no listener running"
+assert_absent "$NONE_BOARD.collected" "the control answer stays queued on the ended session"
+lapse_pe "$HLAPSE_NONE" reconcile >/dev/null
+wait_for "$HLAPSE_NONE/state/procevent-inbox/$none_id.1.result" \
+  || fail "returning supervision did not relaunch the board listener to collect the ended session's answer"
+assert_grep 'accept: go to Deploy' "$HLAPSE_NONE/state/procevent-inbox/$none_id.1.result" \
+  "the relaunched listener collected the captain's final answer from the ended session"
+for _ in 1 2 3; do lapse_pe "$HLAPSE_NONE" reconcile >/dev/null; sleep 0.3; done
+[ "$(count_results "$HLAPSE_NONE" "$none_id")" = 1 ] \
+  || fail "the ended session's final answer was captured $(count_results "$HLAPSE_NONE" "$none_id") times"
+[ "$(wc -l < "$NONE_BOARD.polls" | tr -d ' ')" = 2 ] \
+  || fail "the concluded board kept being polled: $(wc -l < "$NONE_BOARD.polls" | tr -d ' ') polls"
+pass "a relaunched listener collects an ended session's final answer exactly once"
+
+# The session lock grants presence only while its session lives.
+kill "$LAPSE_SESSION_PID" 2>/dev/null || true
+wait "$LAPSE_SESSION_PID" 2>/dev/null || true
+assert_contains "$(FM_HOME="$HLAPSE_LIVE" "$ROOT/bin/fm-lock.sh" status)" "lock: stale" \
+  "the exited session no longer holds its home"
+wait_gone "-$LIVE_OPEN_RUNNER" $(((PROOF_CHECK_SECONDS + PROOF_PROMPT_STOP + PROOF_LOAD_SLACK) * 10)) \
+  || fail "a board listener outlived both its expired lease and the session that held its home"
+pass "a board listener stops once its home's session is gone and its lease has expired"
+
 # --- an expired runner's guard retries unproved cleanup ---------------------
 #
 # A stop the guard cannot PROVE must not end the guard. A descendant still
