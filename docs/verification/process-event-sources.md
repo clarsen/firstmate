@@ -117,7 +117,7 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | trusted classification boundary | Lavish lifecycle classification reads the leading response envelope, so prompt payload text that resembles a missing-session error cannot override a valid session status; exact handled-status mappings are pinned by the executable fixture table above rather than by a live vocabulary guard |
 | result identity and ordering | each wake names the committed sequence to read, and pending sequences 1, 2, and 10 publish in numeric order |
 | one owner per canonical source | a second home's `start` for the same source id reports `already owned` and publishes nothing |
-| canonical physical identity | a final-component symlink and its target produce the same Lavish source id |
+| canonical physical identity | a final-component symlink and its target produce the same Lavish source id; on a case-insensitive volume, a board reached through a differently cased path resolves to Lavish's on-disk letter case, so it shares one source id, finds its saved session, is polled, and arms under the on-disk path |
 | isolated public start boundary | direct `start` establishes a new runner-led process group before claiming the source, so retirement cannot signal an unrelated process inherited from the caller's group |
 | guarded runner startup | the source command does not launch when the detached owner guard rejects an invalid lease configuration, proving the runner waits for positive guard readiness and fails closed when initialization fails |
 | attached owner continuity | a foreground `start` with a one-second lease remains alive beyond that lease while its caller stays attached, then captures normally when the blocking source completes |
