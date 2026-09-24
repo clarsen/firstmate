@@ -44,6 +44,15 @@
 # so the failure is loud. A live cycle already present means re-arm attaches - do
 # not start a second watcher.
 #
+# FM_WATCH_RENEW_AT (epoch seconds, optional) bounds the cycle for a caller whose
+# host kills its process tree at a fixed hook timeout; bin/fm-claude-stop-autoarm.sh
+# owns why and sets it. The started watcher inherits it and closes a quiet cycle
+# with one `renew: ...` line, which this arm relays and exits 0 on. An attached
+# arm returns its own `renew: ...` line at the bound and leaves the watcher it
+# does not own running. A started watcher still running FM_GUARD_GRACE seconds
+# past the bound has missed its terminal wait, so the arm stops it and reports a
+# renewal anyway, which keeps the caller inside its host timeout.
+#
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records
 # arm/watcher identities, timestamps, exit/signal classification, beacon age,
@@ -86,6 +95,14 @@ CYCLE_LOG_KEEP_LINES=${FM_WATCH_CYCLE_LOG_KEEP_LINES:-1000}
 ARM_PID=${BASHPID:-$$}
 case "$CYCLE_LOG_MAX_BYTES" in ''|*[!0-9]*|0) CYCLE_LOG_MAX_BYTES=262144 ;; esac
 case "$CYCLE_LOG_KEEP_LINES" in ''|*[!0-9]*|0) CYCLE_LOG_KEEP_LINES=1000 ;; esac
+# Stays exported for the watcher child, which owns the cooperative close.
+RENEW_AT=${FM_WATCH_RENEW_AT:-}
+case "$RENEW_AT" in
+  *[!0-9]*) echo "watcher: FAILED - FM_WATCH_RENEW_AT must be whole epoch seconds"; exit 1 ;;
+esac
+RENEW_BACKSTOP_GRACE=$GRACE
+RENEW_BACKSTOPPED=0
+case "$RENEW_BACKSTOP_GRACE" in ''|*[!0-9]*) RENEW_BACKSTOP_GRACE=300 ;; esac
 
 # The lifecycle ledger is diagnostic evidence, not a supervision dependency.
 # Writes are bounded and best-effort so an observability failure cannot stall an
@@ -276,8 +293,10 @@ fail_unexplained_cycle() {
 
 # Close a cycle whose reason line this arm could not read against the bounded
 # terminal-delivery ledger the watcher publishes before releasing its lock.
+CLOSED_REASON=
 close_unobserved_cycle() {
   local i reason clean_identity record_pid record_identity record_reason
+  CLOSED_REASON=
   clean_identity=$(printf '%s' "$cycle_watcher_identity" | tr '\t\r\n' '   ')
   i=0
   while ! fm_lock_try_acquire "$WATCH_DELIVERY_LOCK"; do
@@ -299,6 +318,7 @@ close_unobserved_cycle() {
   fm_lock_release "$WATCH_DELIVERY_LOCK"
   if [ -n "$reason" ]; then
     printf '%s\n' "$reason"
+    CLOSED_REASON=$reason
     return 0
   fi
   fail_unexplained_cycle
@@ -312,6 +332,13 @@ close_unobserved_cycle() {
 attach_and_wait() {
   local attached_pid=$1
   while :; do
+    # The followed watcher is not this arm's child and may carry no bound of
+    # its own, so hand back at the bound and leave it running for re-attach.
+    if [ -n "$RENEW_AT" ] && [ "$(date +%s)" -ge "$RENEW_AT" ]; then
+      cycle_log_append unknown unknown attached-renewal none
+      echo "renew: attached cycle reached this arm's lifetime bound; the watcher keeps running"
+      return 0
+    fi
     if healthy_watcher; then
       if [ "$HEALTHY_PID" != "$attached_pid" ] || [ "$HEALTHY_IDENTITY" != "$cycle_watcher_identity" ]; then
         cycle_log_append unknown unknown lock-replaced "attached:$HEALTHY_PID"
@@ -330,7 +357,10 @@ attach_and_wait() {
       continue
     fi
     if close_unobserved_cycle; then
-      cycle_log_append unknown unknown attached-delivered-wake none
+      case "$CLOSED_REASON" in
+        renew:*) cycle_log_append unknown unknown attached-renewal none ;;
+        *) cycle_log_append unknown unknown attached-delivered-wake none ;;
+      esac
       return 0
     fi
     cycle_log_append unknown unknown attached-cycle-ended none
@@ -353,6 +383,10 @@ trap 'handle_attached_signal INT 130' INT
 watch_output_has_wake() {
   local out=$1
   grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$out" 2>/dev/null
+}
+
+watch_output_has_renewal() {
+  grep -q '^renew:' "$1" 2>/dev/null
 }
 
 watch_output_reason_type() {
@@ -500,6 +534,21 @@ owned_child_finished() {
     return 0
   fi
 
+  if { [ "$rc" -eq 0 ] && watch_output_has_renewal "$child_out"; } || [ "$RENEW_BACKSTOPPED" -eq 1 ]; then
+    if [ "$RENEW_BACKSTOPPED" -eq 1 ]; then
+      cycle_log_append "$rc" "$signal" renewal-backstop none
+    else
+      cycle_log_append "$rc" "$signal" renewal none
+    fi
+    print_watch_output "$child_out"
+    [ "$RENEW_BACKSTOPPED" -eq 0 ] \
+      || echo "renew: watcher cycle passed its lifetime bound without closing; the arm stopped it"
+    rm -f "$child_out" 2>/dev/null || true
+    child=
+    child_out=
+    return 0
+  fi
+
   if [ "$rc" -eq 0 ]; then
     if wait_for_healthy_successor; then
       cycle_log_append "$rc" "$signal" unexpected-clean-exit "attached:$HEALTHY_PID"
@@ -540,6 +589,38 @@ owned_child_finished() {
   return "$status"
 }
 
+# Wait for the confirmed owned watcher and return its exit status. Unbounded it
+# is a plain wait. Bounded, a healthy watcher reaches its terminal wait within
+# the guard grace of every beat, so one still running that long past the bound
+# is stopped (TERM, then KILL after a bounded wait) and reported as a renewal
+# rather than left to outlive the caller's host timeout. The bounded wait polls
+# once a second against bash's own wall-clock SECONDS, so a cycle that lasts
+# hours spawns one sleep per second rather than a clock read as well.
+wait_owned_child() {
+  local remaining started i
+  if [ -z "$RENEW_AT" ]; then
+    wait "$child"
+    return
+  fi
+  remaining=$((RENEW_AT + RENEW_BACKSTOP_GRACE - $(date +%s)))
+  started=$SECONDS
+  while fm_pid_alive "$child"; do
+    if [ $((SECONDS - started)) -ge "$remaining" ]; then
+      RENEW_BACKSTOPPED=1
+      kill -TERM "$child" 2>/dev/null || true
+      i=0
+      while fm_pid_alive "$child" && [ "$i" -lt 100 ]; do
+        sleep 0.1
+        i=$((i + 1))
+      done
+      ! fm_pid_alive "$child" || kill -KILL "$child" 2>/dev/null || true
+      break
+    fi
+    sleep 1
+  done
+  wait "$child"
+}
+
 # Verify the outcome: poll until this child is the confirmed healthy watcher, or
 # until some other watcher legitimately holds the singleton (a startup race), or
 # until the child gives up. Only then print the honest line.
@@ -563,7 +644,7 @@ while :; do
       else
         echo "watcher: started pid=$child (beacon fresh)"
       fi
-      wait "$child"
+      wait_owned_child
       rc=$?
       owned_child_finished "$rc"
       exit $?

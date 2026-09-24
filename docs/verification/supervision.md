@@ -534,6 +534,7 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | Harness | Exact opt-in command | Observed guarantee |
 | --- | --- | --- |
 | Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh` | The tracked `SessionStart` hook reclaimed a stale owner before two Stop-owned cycles, and a competing live owner prevented arm, rewake, epoch write, or lock replacement. |
+| Claude | `FM_CLAUDE_RENEWAL_LIVE_E2E=1 tests/fm-claude-hook-renewal-live-e2e.test.sh` | A timed-out asyncRewake hook's exit 2 was dropped while one made before the timeout woke the session, and the tracked chain renewed a quiet idle cycle twice inside a shortened hook timeout with no tool call, catch-up wake, or host kill (2.1.281, 2026-09-24). |
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 FM_PI_LIVE_WATCH_ONLY=1 tests/fm-pi-primary-live-e2e.test.sh` | Three consecutive actionable closes each produced a ledger-linked successor, and an intentional stopped-chain failure still raised the outage alarm. |
@@ -602,6 +603,51 @@ tests/fm-wake-queue.test.sh
 tests/fm-subagent-pretool-check.test.sh
 tests/fm-claude-stop-autoarm.test.sh
 tests/fm-turnend-guard.test.sh
+```
+
+### Claude hook-timeout renewal, 2026-09-24
+
+Claude Code 2.1.281 never delivers an asyncRewake hook's exit 2 once the hook reaches its configured `timeout`.
+Its hook runner settles the command's result as code 143 when the timer fires and only then sends SIGTERM, then SIGKILL 1.5 seconds later, while the asyncRewake handler wakes the model only for result code 2, so the exit status of a hook that traps the TERM is discarded.
+A throwaway project with one Stop `asyncRewake` hook at `timeout: 5` reproduced it in both `claude -p` and an idle interactive session on a private tmux socket: the hook received TERM at 5 seconds and exited 2 with no `Stop hook feedback`, while the same hook exiting 2 on its own at 2 seconds woke the idle session.
+The same hook at `timeout: 86400` was not killed early.
+The Stop auto-arm's renewal bound exists because of this fact ([`watcher-continuity.md`](../watcher-continuity.md#ownership)).
+
+```sh
+claude --version
+FM_CLAUDE_RENEWAL_LIVE_E2E=1 tests/fm-claude-hook-renewal-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+2.1.281 (Claude Code)
+ok - Claude 2.1.281 (Claude Code) drops a timed-out asyncRewake exit 2 and delivers one made before the timeout
+ok - Claude 2.1.281 (Claude Code) renewed a quiet idle cycle 2 times inside a 40s hook timeout in 33s, silently and with no catch-up wake
+```
+
+Counterfactual: the same guard with its lab renewal budget raised from 8 to 3600 seconds, so the cycle outlives the shortened timeout as it did before the fix, delivered no rewake at all.
+
+```text
+not ok - Claude 2.1.281 (Claude Code): expected at least two delivered renewal rewakes, got 0:
+```
+
+The portable coverage runs the real hook, arm, and watcher against a simulated host timeout, the tracked registration's margin, and the arm's attached, overrun, and malformed-bound cases, with ShellCheck 0.11.0 and actionlint 1.7.12.
+`TMPDIR` pointed outside the home directory here because a stray `package.json` there makes Node warn inside the Pi extension checks of `tests/fm-turnend-guard.test.sh`.
+
+```sh
+bin/fm-lint.sh
+bin/fm-doc-audience-check.sh
+bin/fm-test-run.sh tests/fm-claude-stop-autoarm.test.sh tests/fm-watch-arm.test.sh tests/fm-turnend-guard.test.sh tests/fm-supervision-instructions.test.sh tests/fm-live-gate.test.sh
+```
+
+Observed output:
+
+```text
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint-workflows.sh: actionlint 1.7.12 (pinned 1.7.12)
+fm-doc-audience-check: ok surfaces=105 local_links=475
+FM_TEST_SUMMARY total=5 failed=0 skipped_gate=0 duration_ms=148923
 ```
 
 ## Wedge-alarm channels

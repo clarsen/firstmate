@@ -43,6 +43,17 @@
 #     group, so its timeout/session teardown kills arm and watcher together.
 #     HUP, TERM, and INT are translated through the ordinary durable failure
 #     handoff instead of leaving the generation frozen at arming.
+#   - Renewal: Claude never delivers a timed-out asyncRewake hook's exit 2 -
+#     its timeout settles the hook as killed before it signals the tree - so
+#     the cycle must end before the registered timeout. The owner hands the arm
+#     FM_WATCH_RENEW_AT, FM_CLAUDE_AUTOARM_RENEW_AFTER seconds out, and the
+#     watcher closes a quiet cycle there with a `renew:` line (bin/fm-watch-arm.sh
+#     owns the bound's mechanics). The owner then commits outcome `renew` and
+#     exits 2 with a renewal banner that asks for no handling, and the Stop at
+#     the end of that silent turn arms the next cycle. The registered timeout is
+#     twice the default budget, so the renewal fires first under either clock
+#     Claude may time the hook with, even across any system sleep shorter than
+#     the budget; the registration test pins that margin.
 #   - Translation: while supervision is still needed and AFK remains inactive,
 #     an actionable arm close (signal:/stale:/check:/heartbeat) prints one
 #     rewake banner to stderr and exits 2, which wakes Claude even while idle
@@ -89,6 +100,11 @@ AUTOARM_ATTEMPTS=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
 case "$AUTOARM_ATTEMPTS" in
   1|2|3) : ;;
   *) AUTOARM_ATTEMPTS=2 ;;
+esac
+# Seconds a quiet cycle may run before renewal; half the registered timeout.
+RENEW_AFTER=${FM_CLAUDE_AUTOARM_RENEW_AFTER:-43200}
+case "$RENEW_AFTER" in
+  ''|*[!0-9]*|0) RENEW_AFTER=43200 ;;
 esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
@@ -187,6 +203,7 @@ if [ "$CLAIM_RC" -ne 0 ]; then
 fi
 MY_GEN=$FM_AUTOARM_MY_GEN
 [ -n "$MY_GEN" ] || exit 0
+RENEW_AT=$(( $(date +%s) + RENEW_AFTER ))
 
 # Commit <outcome> (optionally with the once-per-episode notice marker) for
 # this generation. Success means this generation's translation WINS and the
@@ -219,13 +236,13 @@ autoarm_record() {  # <outcome>
   fm_autoarm_write_owned "$STATE" "$MY_GEN" "$1" >/dev/null 2>&1 || true
 }
 
-# Claude terminates the complete async-hook process tree when the configured
-# hook timeout expires. The arm is intentionally allowed to follow a healthy
-# watcher until its next wake, so that wait cannot be shortened without adding
-# artificial turns. Translate a host interruption through the ordinary durable
-# failure protocol instead: the winning generation records a terminal outcome,
-# creates the episode marker, and exits 2 so Claude delivers a recovery turn.
-# A superseded generation remains silent, and an episode whose attended
+# Translate an interruption through the ordinary durable failure protocol: the
+# winning generation records a terminal outcome, creates the episode marker,
+# and exits 2, which reaches Claude as a recovery turn only when the signal did
+# not come from Claude itself. Claude's own hook timeout and session teardown
+# settle the hook as killed before signalling its tree, so this exit 2 is never
+# delivered for them; the renewal bound above is what keeps the timeout from
+# firing. A superseded generation remains silent, and an episode whose attended
 # fail-open was already consumed must not restart automatic continuation.
 # shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
 handle_autoarm_signal() {
@@ -264,6 +281,7 @@ trap 'handle_autoarm_signal INT' INT
 # retried or translated into an operator-visible failure.
 OUT=
 ACTIONABLE=0
+RENEW=0
 HEALTHY=0
 attempt=0
 while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
@@ -277,9 +295,9 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   attempt=$((attempt + 1))
   OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
   if [ -n "$OUT" ]; then
-    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
+    FM_GUARD_GRACE="$GRACE" FM_WATCH_RENEW_AT="$RENEW_AT" "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
   else
-    FM_GUARD_GRACE="$GRACE" "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
+    FM_GUARD_GRACE="$GRACE" FM_WATCH_RENEW_AT="$RENEW_AT" "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
   fi
 
   # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress
@@ -291,10 +309,13 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   fi
 
   ACTIONABLE=0
+  RENEW=0
   if [ -n "$OUT" ]; then
     grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
+    grep -q '^renew:' "$OUT" 2>/dev/null && RENEW=1
   fi
   [ "$ACTIONABLE" -eq 1 ] && break
+  [ "$RENEW" -eq 1 ] && break
 
   # A non-actionable close is benign when another verified watcher already owns
   # this home and is still beating within the shared grace window.
@@ -340,6 +361,27 @@ fi
 # do not create another exit-2 continuation that could defeat it.
 if [ -e "$FAILURE_ALARM" ]; then
   autoarm_record failed-suppressed
+  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  exit 0
+fi
+
+# A quiet cycle reached its lifetime bound: hand the session one silent turn so
+# the Stop that ends it arms the next cycle before Claude's timeout could end
+# this one without notice. The outcome is markerless because a renewal leaves
+# the watcher's recovery episode untouched.
+if [ "$RENEW" -eq 1 ]; then
+  if ! fm_autoarm_still_owner "$STATE" "$MY_GEN"; then
+    [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 0
+  fi
+  {
+    printf '%s\n' "firstmate watcher renewal - the Stop-owned watcher cycle reached its lifetime bound with no wake and is being renewed before Claude's hook timeout could end it silently."
+    printf '%s\n' 'Nothing needs handling and no reply is owed: end this turn now with no tool call and no text. The Stop that ends it arms the next cycle automatically.'
+  } >&2
+  if autoarm_commit renew; then
+    [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 2
+  fi
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
   exit 0
 fi

@@ -901,6 +901,22 @@ fm_recovery_transition() {
       fm_lock_release "$target"
       fm_lock_release "$lock"
       ;;
+    release-lock-preserve)
+      # A lifetime-bound renewal close (bin/fm-watch.sh renew_close) is not
+      # downtime to re-present: leave a readable episode, or its absence,
+      # exactly as it is, and publish only over an unreadable marker.
+      [ -n "$target" ] || return 1
+      local preserve_lock="${marker}.lock"
+      fm_lock_acquire_wait "$preserve_lock" || return 1
+      if { [ -e "$marker" ] || [ -L "$marker" ]; } && ! fm_recovery_marker_read "$marker"; then
+        fm_lock_release "$preserve_lock"
+        _fm_recovery_marker_publish "$marker" "${value:-downtime}" || return 1
+        fm_lock_release "$target"
+        return
+      fi
+      fm_lock_release "$target"
+      fm_lock_release "$preserve_lock"
+      ;;
     clear-stale-lock)
       [ -n "$target" ] || return 1
       _fm_recovery_marker_publish "$marker" "${value:-downtime}" || return 1
