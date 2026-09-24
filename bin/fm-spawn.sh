@@ -2963,9 +2963,9 @@ if [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
       echo "error: --member $m_name project path contains a control character" >&2
       exit 1
     }
-    m_top=$(git -C "$m_abs" rev-parse --show-toplevel 2>/dev/null) &&
-      m_top=$(cd "$m_top" 2>/dev/null && pwd -P) || m_top=
-    if [ -z "$m_top" ] || [ "$m_top" != "$(cd "$m_abs" && pwd -P)" ]; then
+    # --show-cdup is empty only at a work tree's top; comparing path strings
+    # would refuse a valid clone reached through a differently-cased path.
+    if ! m_cdup=$(git -C "$m_abs" rev-parse --show-cdup 2>/dev/null) || [ -n "$m_cdup" ]; then
       echo "error: --member $m_name project '$m_abs' is not the top of a git clone" >&2
       exit 1
     fi
