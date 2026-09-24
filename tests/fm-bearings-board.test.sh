@@ -80,7 +80,8 @@ file=$1
 shift
 reopen=0
 for arg in "$@"; do [ "$arg" != --reopen ] || reopen=1; done
-real=$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")
+# Lavish keys a session on Node's native realpath, including on-disk case.
+real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$file")
 if [ -e "$state/user-ended" ] && [ "$reopen" = 0 ]; then
   emit "$real" user-ended
   exit 0
@@ -402,7 +403,7 @@ if [ -z "${1:-}" ]; then
   exit 0
 fi
 if [ "${1:-}" != poll ]; then
-  real=$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")
+  real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$1")
   printf '%s\n' "$real" > "$FM_HOME/order-open"
   mkdir -p "$LAVISH_AXI_STATE_DIR"
   jq -n --arg file "$real" \
