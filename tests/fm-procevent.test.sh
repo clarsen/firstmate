@@ -25,10 +25,14 @@ mkdir -p "$LAVISH_AXI_STATE_DIR"
 # Lavish owns this persisted session contract. The fake CLI below only handles
 # poll delivery; each opened-board fixture supplies the same routing evidence
 # a real `lavish-axi <artifact>` writes, without starting a server.
+# Lavish keys the session on Node's native realpath, so the fixture resolves
+# the artifact with that same call, including its on-disk letter case.
 lavish_session() {  # <artifact> [session-url]
-  perl -MJSON::PP -MCwd=realpath -MDigest::SHA=sha256_hex -MEncode=decode -e '
-    my ($path, $artifact, $url) = @ARGV;
-    my $real = realpath($artifact) // die "missing fixture artifact";
+  local real
+  real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$1") \
+    || fail "missing fixture artifact: $1"
+  perl -MJSON::PP -MDigest::SHA=sha256_hex -MEncode=decode -e '
+    my ($path, $real, $url) = @ARGV;
     my $key = substr(sha256_hex($real), 0, 16);
     my $state = { sessions => {} };
     if (-f $path) { open my $in, "<", $path or die $!; local $/; $state = decode_json(<$in>); }
@@ -37,7 +41,7 @@ lavish_session() {  # <artifact> [session-url]
     };
     open my $out, ">", $path or die $!;
     print $out encode_json($state);
-  ' "$LAVISH_AXI_STATE_DIR/state.json" "$1" "${2:-http://127.0.0.1:14387/session/0123456789abcdef}"
+  ' "$LAVISH_AXI_STATE_DIR/state.json" "$real" "${2:-http://127.0.0.1:14387/session/0123456789abcdef}"
 }
 
 BLOCKER="$TMP_ROOT/blocker.sh"
@@ -684,6 +688,49 @@ assert_grep 'ship it' "$LAVISH_RESULT" "automatic retirement retains the human's
 out=$(PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh" retire "$REVIEW_ART")
 assert_contains "$out" "retired: $lavish_id" "explicit adapter retirement stays supported after automatic retirement"
 pass "one Send & End yields exactly one captured result, automatic retirement, and no recurring poll"
+
+# --- end-user-aligned regression: a board reached through another letter case --
+# The defect: on a case-insensitive volume a board opened through a path whose
+# letter case differs from the on-disk name (TMPDIR=/Users/x/tmp for an on-disk
+# /Users/x/Tmp) was refused with "board must have one saved Lavish session",
+# because firstmate kept the caller's case while Lavish records the on-disk
+# case, so every poll exited empty and the board was never polled.
+CASE_DIR="$TMP_ROOT/CaseBoards"
+mkdir -p "$CASE_DIR"
+CASE_ALIAS="$TMP_ROOT/caseboards"
+if [ ! -d "$CASE_ALIAS" ]; then
+  printf 'skip: case-sensitive filesystem; a differently cased board path cannot name the same file\n'
+else
+  printf '<h1>case</h1>\n' > "$CASE_DIR/board.html"
+  # TMPDIR itself may be reached through another case, so the on-disk name of
+  # the whole path comes from the same resolution Lavish uses.
+  CASE_REAL=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$CASE_ALIAS/board.html")
+  case "$CASE_REAL" in */CaseBoards/board.html) ;; *) fail "unexpected on-disk board path: $CASE_REAL" ;; esac
+  lavish_session "$CASE_ALIAS/board.html"
+  CASE_BIN=$(fm_fakebin "$TMP_ROOT/lavish-case-stub")
+  cat > "$CASE_BIN/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+printf 'session:\n  status: feedback\nfeedback[1]{text}:\n  polled %s\n' "$*"
+SH
+  chmod +x "$CASE_BIN/lavish-axi"
+  out=$(PATH="$CASE_BIN:$PATH" "$ROOT/bin/fm-procevent-lavish.sh" poll "$CASE_ALIAS/board.html" 2>&1) \
+    || fail "a differently cased board path was refused: $out"
+  assert_contains "$out" "polled poll $CASE_ALIAS/board.html" "the differently cased board is polled"
+  out=$(PATH="$CASE_BIN:$PATH" "$ROOT/bin/fm-procevent-lavish.sh" poll "$CASE_REAL" 2>&1) \
+    || fail "the on-disk cased board path was refused: $out"
+  assert_contains "$out" "polled poll $CASE_REAL" "the on-disk cased board is polled"
+  [ "$("$ROOT/bin/fm-procevent-lavish.sh" canonical-path "$CASE_ALIAS/board.html")" = "$CASE_REAL" ] \
+    || fail "canonical-path did not return the on-disk letter case"
+  [ "$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$CASE_ALIAS/board.html")" = \
+    "$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$CASE_REAL")" ] \
+    || fail "two letter cases of one board became two sources"
+  HCASE="$TMP_ROOT/hcase"; new_home "$HCASE"
+  fm_test_track_procevent_home "$HCASE"
+  out=$(PATH="$CASE_BIN:$PATH" FM_HOME="$HCASE" "$ROOT/bin/fm-procevent-lavish.sh" arm "$CASE_ALIAS/board.html")
+  assert_contains "$out" "artifact: $CASE_REAL" "arm registers the board under its on-disk case"
+  PATH="$CASE_BIN:$PATH" FM_HOME="$HCASE" "$ROOT/bin/fm-procevent-lavish.sh" retire "$CASE_ALIAS/board.html" >/dev/null
+  pass "a board reached through a differently cased path finds its saved Lavish session"
+fi
 
 # --- end-user-aligned regression: an empty board close is not news ------------
 # The captain's report: closing a review surface he had said nothing on still
