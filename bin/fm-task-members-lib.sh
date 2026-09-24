@@ -274,10 +274,13 @@ fm_member_lease() {  # <project> <pool-root-or-empty> <holder>
   return 0
 }
 
-# Pin a clean member copy at <ref> (detached), fetching it from origin when it
-# is not already a local commit. An empty <ref> keeps the copy's current HEAD,
-# which the caller has already refreshed to origin's default-branch tip. Sets
-# FM_MEMBER_PIN_COMMIT; returns 1 with FM_MEMBER_ERROR.
+# Pin a clean member copy at <ref> (detached). When the copy has an origin,
+# <ref> resolves first to what origin has now (its just-refreshed remote branch,
+# then a fetch of <ref>), because pooled copies share local branches that may
+# lag origin; a local lookup serves only what origin cannot supply. An empty
+# <ref> keeps the copy's current HEAD, which the caller has already refreshed to
+# origin's default-branch tip. Sets FM_MEMBER_PIN_COMMIT; returns 1 with
+# FM_MEMBER_ERROR.
 fm_member_pin() {  # <worktree> <ref>
   local worktree=$1 ref=$2 commit='' actual
   FM_MEMBER_PIN_COMMIT=
@@ -285,13 +288,14 @@ fm_member_pin() {  # <worktree> <ref>
   if [ -z "$ref" ]; then
     commit=$(git -C "$worktree" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || commit=
   else
-    commit=$(git -C "$worktree" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) \
-      || commit=$(git -C "$worktree" rev-parse --verify --quiet "refs/remotes/origin/$ref^{commit}" 2>/dev/null) \
-      || commit=
-    if [ -z "$commit" ] && git -C "$worktree" remote get-url origin >/dev/null 2>&1; then
-      if git -C "$worktree" fetch --quiet origin "$ref" >/dev/null 2>&1; then
+    if git -C "$worktree" remote get-url origin >/dev/null 2>&1; then
+      commit=$(git -C "$worktree" rev-parse --verify --quiet "refs/remotes/origin/$ref^{commit}" 2>/dev/null) || commit=
+      if [ -z "$commit" ] && git -C "$worktree" fetch --quiet origin "$ref" >/dev/null 2>&1; then
         commit=$(git -C "$worktree" rev-parse --verify --quiet 'FETCH_HEAD^{commit}' 2>/dev/null) || commit=
       fi
+    fi
+    if [ -z "$commit" ]; then
+      commit=$(git -C "$worktree" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || commit=
     fi
   fi
   if [ -z "$commit" ]; then

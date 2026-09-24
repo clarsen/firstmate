@@ -256,8 +256,9 @@
 #   worktree exists; a nonzero exit, a timeout, or setup output git can see
 #   refuses the launch and leaves the worktree for inspection, as every other
 #   post-allocation refusal does. The Treehouse project lock is released while
-#   the hook runs and waited for again afterwards, so a slow hook does not make
-#   an ordinary return of the project refuse; the home's task-set lock stays
+#   the hook and any reference members' allocation run and waited for again
+#   afterwards, so a slow hook does not make an ordinary return of the project
+#   refuse; the home's task-set lock stays
 #   held, so another spawn from this home (any project) and a forced secondmate
 #   teardown of the home refuse until the hook finishes and should be retried.
 #   --relaunch reuses its worktree untouched and never reruns the hook;
@@ -1253,7 +1254,11 @@ parse_orca_worktree_result() {
 # and return take.
 spawn_member_rollback() {
   local i lock project wt lease held
-  [ "${#SPAWN_MEMBER_LEASED_WTS[@]}" -gt 0 ] || return 0
+  if [ "${#SPAWN_MEMBER_LEASED_WTS[@]}" -eq 0 ]; then
+    [ -z "$SPAWN_MEMBER_LOCK_HELD" ] || fm_lock_release "$SPAWN_MEMBER_LOCK_HELD" || true
+    SPAWN_MEMBER_LOCK_HELD=
+    return 0
+  fi
   if [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
     [ -z "$SPAWN_MEMBER_LOCK_HELD" ] || fm_lock_release "$SPAWN_MEMBER_LOCK_HELD" || true
     SPAWN_MEMBER_LOCK_HELD=
@@ -4335,12 +4340,13 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
-  if [ -n "$PROJECT_SETUP_SCRIPT" ]; then
-    # The hook can run for minutes, and holding the Treehouse project lock that
-    # long would make every other spawn or return of this project refuse. The
-    # pane's Treehouse lease and the slot claim above already keep this slot
-    # ours, so the lock is released for the hook and waited for again before
-    # anything else, including an abort's claim release, relies on it.
+  if [ -n "$PROJECT_SETUP_SCRIPT" ] || [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
+    # The hook and the member fetches and setup hooks can run for minutes, and
+    # holding the Treehouse project lock that long would make every other spawn
+    # or return of this project refuse. The pane's Treehouse lease and the slot
+    # claim above already keep this slot ours, so the lock is released for them
+    # and waited for again before anything else, including an abort's claim
+    # release, relies on it.
     project_setup_rc=0
     project_setup_relock=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
@@ -4348,21 +4354,24 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
       fm_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK"
       project_setup_relock=1
     fi
-    run_project_setup "$WT" "$PROJ_ABS" "$PROJECT_SETUP_SCRIPT" "" || project_setup_rc=$?
+    if [ -n "$PROJECT_SETUP_SCRIPT" ]; then
+      run_project_setup "$WT" "$PROJ_ABS" "$PROJECT_SETUP_SCRIPT" "" || project_setup_rc=$?
+    fi
+    if [ "$project_setup_rc" -eq 0 ] && [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
+      if SPAWN_MEMBER_HOLDER=$(fm_member_lease_holder "$FM_HOME" "$ID"); then
+        for i in "${!MEMBER_NAMES[@]}"; do
+          spawn_member_allocate "$i" || { project_setup_rc=1; break; }
+        done
+      else
+        echo "error: could not derive the reference-member lease holder for task $ID" >&2
+        project_setup_rc=1
+      fi
+    fi
     if [ "$project_setup_relock" = 1 ]; then
       fm_lock_acquire_wait "$SPAWN_TREEHOUSE_PROJECT_LOCK"
       SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
     fi
     [ "$project_setup_rc" -eq 0 ] || exit 1
-  fi
-  if [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
-    SPAWN_MEMBER_HOLDER=$(fm_member_lease_holder "$FM_HOME" "$ID") || {
-      echo "error: could not derive the reference-member lease holder for task $ID" >&2
-      exit 1
-    }
-    for i in "${!MEMBER_NAMES[@]}"; do
-      spawn_member_allocate "$i" || exit 1
-    done
   fi
 fi
 spawn_member_launch_prepare || exit 1

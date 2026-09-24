@@ -10,7 +10,8 @@
 #     --add-dir grants, leaving out a member whose copy is gone;
 #   - with the real treehouse binary (skipped when absent), each member is
 #     leased durably from its own project's pool under the task's lease holder,
-#     claimed, pinned at the requested ref (fetching a ref the clone lacks), and
+#     claimed, pinned at the requested ref (fetching a ref the clone lacks, and
+#     preferring origin's tip over a stale local branch), and
 #     set up by its own project's setup hook, and the record, brief, and pane all
 #     name it;
 #   - a member that fails returns every member lease the spawn took and
@@ -438,6 +439,27 @@ test_real_member_failure_returns_every_lease() {
   pass "a member that fails returns every member lease the spawn took and publishes no record"
 }
 
+test_real_member_branch_pins_origin_tip_over_a_stale_local_branch() {
+  local dir="$TMP_ROOT/stale" home fakebin id=stale-a1 out meta api
+  real_treehouse_available || { printf '# real-treehouse stale-branch member case not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_home "$home"
+  git -C "$home/projects/contract" reset -q --hard v1
+  fakebin=$(make_real_pool_fakebin "$dir/fake")
+  out=$(run_spawn "$home" "$fakebin" "$dir/pane" "$id" --member api=projects/contract:ref@main)
+  expect_code 0 "$?" "a spawn with a branch member should launch"$'\n'"$out"
+  meta="$home/state/$id.meta"
+  api=$(meta_value "$meta" member.api.worktree)
+  [ -n "$api" ] && [ -d "$api" ] || fail "the task record does not name the member copy"$'\n'"$(cat "$meta")"
+  assert_equals "$(commit_of "$TMP_ROOT/contract.origin.git" main)" "$(git -C "$api" rev-parse HEAD)" \
+    "a member branch ref is pinned at the clone's stale local branch, not origin's tip"
+  assert_equals "$(git -C "$api" rev-parse HEAD)" "$(meta_value "$meta" member.api.commit)" "the record names another api commit"
+  out=$(run_teardown "$home" "$fakebin" "$id")
+  expect_code 0 "$?" "the task's teardown should return its copies"$'\n'"$out"
+  pass "a member branch ref pins origin's tip even when the clone's local branch lags it"
+}
+
 test_real_teardown_returns_only_this_tasks_members() {
   local dir="$TMP_ROOT/cleanup" home fakebin out status a_api b_api probe contract holder
   real_treehouse_available || { printf '# real-treehouse member cleanup case not run: treehouse or jq is not installed\n'; return 0; }
@@ -569,6 +591,7 @@ test_member_refusals_leave_nothing_behind
 test_relaunch_shows_the_recorded_members_again
 test_real_members_are_leased_pinned_set_up_and_shown
 test_real_member_failure_returns_every_lease
+test_real_member_branch_pins_origin_tip_over_a_stale_local_branch
 test_real_teardown_returns_only_this_tasks_members
 test_real_forced_retirement_returns_child_members
 
