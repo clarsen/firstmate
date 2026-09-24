@@ -234,6 +234,15 @@ POLL=${FM_POLL:-15}                   # seconds between cycles
 # This recomputes the library default above now that the real configured
 # POLL is known.
 WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derived_grace "$POLL")}}
+# Optional cycle lifetime bound, in epoch seconds, handed down through
+# bin/fm-watch-arm.sh by a host whose hook process tree has a fixed timeout
+# (bin/fm-claude-stop-autoarm.sh owns why and the value). Once it passes, a
+# quiet cycle closes with a typed `renew:` line at its terminal wait instead of
+# blocking on (renew_close below). Unset means the cycle runs until its next
+# wake. Read once and removed from the environment so nothing this watcher
+# spawns inherits the deadline; the main entry refuses a malformed value.
+RENEW_AT=${FM_WATCH_RENEW_AT:-}
+unset FM_WATCH_RENEW_AT
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
@@ -2188,6 +2197,14 @@ if ! fm_procevent_launch_confirm_seconds >/dev/null; then
   echo "watcher: FAILED - FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS must be whole seconds from $FM_PROCEVENT_LAUNCH_CONFIRM_MIN_SECONDS to $FM_PROCEVENT_LAUNCH_CONFIRM_MAX_SECONDS"
   exit 1
 fi
+# A malformed lifetime bound would silently leave the cycle unbounded and let
+# the host's hook timeout end it without any notification, so refuse to arm.
+case "$RENEW_AT" in
+  *[!0-9]*)
+    echo "watcher: FAILED - FM_WATCH_RENEW_AT must be whole epoch seconds"
+    exit 1
+    ;;
+esac
 
 if ! fm_lock_try_acquire "$WATCH_LOCK"; then
   BEAT="$STATE/.last-watcher-beat"
@@ -2307,6 +2324,9 @@ watcher_cleanup() {
       && [ "${FM_WATCH_DELIVERED_REASON:-}" = "check: rearm-resurface" ]; then
       transition=release-lock-existing
     fi
+    case "${FM_WATCH_DELIVERED_REASON:-}" in
+      renew:*) transition=release-lock-preserve ;;
+    esac
   fi
   fm_active_check_stop || cleanup_status=1
   fm_check_output_cleanup
@@ -2376,6 +2396,20 @@ rerecord_device_shifted_pr_poll() {  # <id>
   pr_poll_publish_release || exit 1
   pr_poll_control_release || exit 1
   return 0
+}
+
+# Close a quiet cycle that has passed its lifetime bound (RENEW_AT above). It
+# runs only at the terminal wait, after this cycle's scans surfaced nothing, so
+# no wake is ever cut short. The reason is published like a delivered wake, so
+# an attached arm reports it too, and watcher_cleanup keeps the recovery
+# episode as it is, so the renewed cycle does not re-present handled work.
+renew_close() {
+  local reason="renew: watcher cycle reached its lifetime bound with no wake"
+  trap '' HUP INT TERM
+  echo "$reason" || exit 1
+  watch_delivery_publish "$reason" || true
+  FM_WATCH_DELIVERED_REASON=$reason
+  exit 0
 }
 
 resurface_after_downtime() {
@@ -2975,6 +3009,12 @@ EOF
       echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
+  fi
+
+  # A cycle past its lifetime bound hands back for renewal here rather than
+  # waiting on; nothing above found a wake this cycle.
+  if [ -n "$RENEW_AT" ] && [ "$(date +%s)" -ge "$RENEW_AT" ]; then
+    renew_close
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),

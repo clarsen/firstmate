@@ -74,8 +74,8 @@
 #      for the auto-arm to claim this home (a live OPEN generation claim in the
 #      state/.claude-autoarm-epoch ledger - fm_autoarm_claim_open - or a legacy
 #      build's lock-holding claim under the legacy abandonment proof) or to
-#      record a fresh actionable exit-2 outcome
-#      (state/.claude-autoarm-epoch) for this event epoch - either proof allows
+#      record a fresh exit-2 outcome, rewake or renew
+#      (state/.claude-autoarm-epoch), for this event epoch - either proof allows
 #      without consuming a continuation, so one event epoch yields exactly one recovery turn;
 #      the first fresh exhausted-failure epoch preserves the bounded progression,
 #      while later fresh failed epochs consume it instead of resetting it;
@@ -375,7 +375,7 @@ autoarm_owns_recovery() {
   fi
   outcome=$(sed -n '1s/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   case "$outcome" in
-    rewake)
+    rewake|renew)
       age=$(fm_path_age "$STATE/.claude-autoarm-epoch")
       if [ "$age" -lt "$EPOCH_FRESH" ]; then
         [ ! -e "$FAILURE_NOTICE" ] || budget_account_current_epoch || true

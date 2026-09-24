@@ -239,6 +239,62 @@ record_watcher_lock() {
 
 # --- registration contract ----------------------------------------------------
 
+# Claude settles a timed-out asyncRewake hook as killed before it signals the
+# tree, so the hook's own exit 2 after a host timeout is never delivered and the
+# idle session is never woken (reproduced on Claude Code 2.1.281; the live
+# guard tests/fm-claude-hook-renewal-live-e2e.test.sh re-checks it). Continuity
+# therefore depends on the cycle renewing strictly inside the REGISTERED
+# timeout. This runs the tracked registration's own command string and checks
+# the renewal deadline it hands the arm against that entry's declared timeout,
+# with the documented half-window margin that keeps the renewal first even when
+# a system sleep outlasts the gap between the two deadlines.
+test_registration_host_timeout_covers_renewal() {
+  local dir entry cmd timeout started ended renew_at budget floor grace
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  entry=$(jq -c '[.hooks.Stop[].hooks[] | select(.command | contains("fm-claude-stop-autoarm.sh"))]' \
+    "$ROOT/.claude/settings.json")
+  [ "$(printf '%s' "$entry" | jq 'length')" = 1 ] \
+    || fail "expected exactly one tracked Stop registration of the auto-arm, got: $entry"
+  [ "$(printf '%s' "$entry" | jq '.[0].asyncRewake')" = true ] \
+    || fail "the tracked auto-arm registration lost asyncRewake: $entry"
+  timeout=$(printf '%s' "$entry" | jq -r '.[0].timeout')
+  cmd=$(printf '%s' "$entry" | jq -r '.[0].command')
+  case "$timeout" in ''|*[!0-9]*) fail "the tracked auto-arm registration has no whole-second timeout: $entry" ;; esac
+
+  dir=$(make_primary_dir "$TMP_ROOT/registration-renewal")
+  : > "$dir/state/task.meta"
+  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_WATCH_RENEW_AT:-unset}" > "$FM_HOME/state/arm-received-renew-at"
+printf '%s\n' "${FM_GUARD_GRACE:-unset}" > "$FM_HOME/state/arm-received-grace"
+printf 'watcher: attached pid=%s (beacon 2s)\n' "$$"
+exit 0
+SH
+  chmod +x "$dir/bin/fm-watch-arm.sh"
+  started=$(date +%s)
+  printf '%s\n' '{"session_id":"sess-autoarm","stop_hook_active":false}' \
+    | env -u GROK_AGENT -u GROK_HOOK_EVENT FM_HOME="$dir" CLAUDE_PROJECT_DIR="$dir" \
+      FM_CLAUDE_AUTOARM_ATTEMPTS=1 FM_TEST_REGISTERED_CMD="$cmd" "$FAKE_CLAUDE" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        bash -c "$FM_TEST_REGISTERED_CMD"
+      ' >/dev/null 2>&1 || true
+  ended=$(date +%s)
+  renew_at=$(cat "$dir/state/arm-received-renew-at" 2>/dev/null || true)
+  grace=$(cat "$dir/state/arm-received-grace" 2>/dev/null || true)
+  case "$renew_at" in ''|*[!0-9]*) fail "the registered hook handed the arm no renewal deadline: '$renew_at'" ;; esac
+  case "$grace" in ''|*[!0-9]*) fail "the registered hook handed the arm no whole-second grace: '$grace'" ;; esac
+  # The hook read its clock between these two samples, so its budget lies in
+  # [renew_at - ended, renew_at - started]: bound each side conservatively.
+  budget=$((renew_at - started))
+  floor=$((renew_at - ended))
+  [ "$floor" -gt 0 ] || fail "the renewal deadline $renew_at is not in the future of $ended"
+  [ $((budget + grace)) -lt "$timeout" ] \
+    || fail "renewal after ${budget}s plus the ${grace}s backstop grace does not fit inside the registered ${timeout}s timeout"
+  [ $((2 * floor)) -le "$timeout" ] \
+    || fail "renewal after ${floor}s leaves less than half of the registered ${timeout}s timeout as sleep margin"
+  pass "auto-arm: the tracked registration renews after ${floor}s, inside half of its ${timeout}s host timeout"
+}
+
 # --- scope and gates ----------------------------------------------------------
 
 test_inert_in_child_worktree() {
@@ -683,10 +739,11 @@ test_single_flight_admits_exactly_one_owner() {
   pass "auto-arm: concurrent firings admit one owner and one rewake translation"
 }
 
-# Claude terminates the complete async hook process tree when the declared hook
-# timeout expires. The hook owner must turn that TERM into the same durable,
-# rewake-triggering failure handoff as any other exhausted arm failure; leaving
-# the generation at `arming` cannot recover without a later manual turn.
+# An interrupting signal must turn into the same durable, rewake-triggering
+# failure handoff as any other exhausted arm failure; leaving the generation at
+# `arming` cannot recover without a later manual turn. Claude's own timeout and
+# teardown kills never deliver this exit 2 (the renewal case above owns that
+# gap), so this covers signals from anywhere else.
 test_term_mid_arm_commits_failure_and_rewakes() {
   local dir out hook_pid i status=0
   dir=$(make_primary_dir "$TMP_ROOT/term-mid-arm")
@@ -716,6 +773,114 @@ test_term_mid_arm_commits_failure_and_rewakes() {
   assert_contains "$(cat "$out")" "firstmate watcher auto-arm INTERRUPTED" \
     "TERM mid-arm omitted the rewake failure banner"
   pass "auto-arm: TERM mid-arm commits a durable failure and exits 2 for rewake"
+}
+
+# --- lifetime renewal inside the host timeout ----------------------------------
+
+# A fixture checkout carrying the whole bin/, so the real arm and real watcher
+# run under the hook, plus a PATH tmux that fails every call so no real server
+# is ever consulted.
+make_full_primary_dir() {
+  local dir
+  dir=$(make_primary_dir "$1")
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  mkdir -p "$dir/fakebin"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/fakebin/tmux"
+  chmod +x "$dir/fakebin/tmux"
+  printf '%s\n' "$dir"
+}
+
+# Run the real hook chain in the background with a quiet-fleet watcher cadence
+# and the renewal budget under test. Extra VAR=value arguments reach the hook.
+# Sets RUN_AUTOARM_BG_PID.
+run_real_autoarm_bg() {  # <dir> <out> <renew-after-seconds> [VAR=value...]
+  local dir=$1 out=$2 renew=$3
+  shift 3
+  printf '%s\n' '{"session_id":"sess-autoarm","stop_hook_active":false}' \
+    | env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_HEARTBEAT=999999 FM_CHECK_INTERVAL=999999 \
+      FM_CLAUDE_AUTOARM_RENEW_AFTER="$renew" "$@" "$FAKE_CLAUDE" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      ' > "$out" 2>&1 &
+  RUN_AUTOARM_BG_PID=$!
+}
+
+# Stand in for Claude's hook timer: give the hook <limit> seconds to finish on
+# its own and return its status, or 124 when it is still running at the limit,
+# which is where the real host would kill it without delivering anything.
+host_wait() {  # <pid> <limit-seconds>
+  local pid=$1 limit=$2 i=0
+  while [ "$i" -lt $((limit * 10)) ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid"
+      return
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 124
+}
+
+# The overnight gap on Claude homes: a quiet cycle ran until the registered hook
+# timeout, Claude killed the hook tree, and because the host settles a timed-out
+# hook before signalling it, the hook's TERM->exit-2 recovery never woke the
+# idle session. The counterfactual pins the trigger (an unbounded quiet cycle is
+# still running at the host deadline); the rest pins the fix: the same quiet
+# cycle closes itself inside the deadline, the hook exits 2 with the renewal
+# banner, and the handled recovery episode is left alone, so the cycle the next
+# Stop arms opens without a catch-up wake. The divergence at the end proves that
+# last assertion is not vacuous.
+test_quiet_cycle_renews_inside_host_timeout() {
+  local base dir out status lock_pid
+  base=$(make_full_primary_dir "$TMP_ROOT/renewal-unbounded")
+  : > "$base/state/task.meta"
+  out="$base/state/autoarm.out"
+  run_real_autoarm_bg "$base" "$out" 3600 FM_CLAUDE_AUTOARM_ATTEMPTS=1
+  status=0
+  host_wait "$RUN_AUTOARM_BG_PID" 6 || status=$?
+  expect_code 124 "$status" "an unbounded quiet cycle must still be running at the simulated host deadline"
+  lock_pid=$(cat "$base/state/.watch.lock/pid" 2>/dev/null || true)
+  [ -n "$lock_pid" ] || fail "the unbounded cycle holds no watcher lock: $(cat "$out")"
+  kill -TERM "$lock_pid" 2>/dev/null || true
+  host_wait "$RUN_AUTOARM_BG_PID" 30 || true
+
+  dir=$(make_full_primary_dir "$TMP_ROOT/renewal")
+  : > "$dir/state/task.meta"
+  printf 'acked:downtime:handled-seed\n' > "$dir/state/.watcher-down"
+  out="$dir/state/autoarm.out"
+  run_real_autoarm_bg "$dir" "$out" 3
+  status=0
+  host_wait "$RUN_AUTOARM_BG_PID" 30 || status=$?
+  [ "$status" -ne 124 ] || fail "a bounded quiet cycle outlived the simulated host timeout: $(cat "$out")"
+  expect_code 2 "$status" "a renewal must exit 2 so Claude wakes the idle session"
+  assert_contains "$(cat "$out")" "firstmate watcher renewal" "the renewal omitted its banner"
+  assert_not_contains "$(cat "$out")" "firstmate watcher wake" "a renewal must not read as a wake needing a drain"
+  [ "$(epoch_outcome "$dir")" = renew ] \
+    || fail "a renewal left a non-renew ledger outcome: $(sed -n '1p' "$dir/state/.claude-autoarm-epoch")"
+  [ "$(cat "$dir/state/.watcher-down")" = acked:downtime:handled-seed ] \
+    || fail "a renewal changed the handled recovery episode: $(cat "$dir/state/.watcher-down")"
+  [ ! -e "$dir/state/.watch.lock" ] || fail "a renewal left the watcher lock held"
+  tail -1 "$dir/state/.watch-cycle-exits.log" | grep -q "$(printf '\treason=renewal\t')" \
+    || fail "the arm did not record a renewal close: $(tail -1 "$dir/state/.watch-cycle-exits.log")"
+
+  # The Stop that ends the silent renewal turn arms the next cycle.
+  run_real_autoarm_bg "$dir" "$out" 3
+  status=0
+  host_wait "$RUN_AUTOARM_BG_PID" 30 || status=$?
+  expect_code 2 "$status" "the renewed cycle must itself renew"
+  assert_contains "$(cat "$out")" "firstmate watcher renewal" "the renewed cycle did not renew"
+  assert_not_contains "$(cat "$out")" "rearm-resurface" "the renewed cycle opened with a catch-up wake turn"
+
+  # Divergence: had the close published fresh downtime, as an interrupted cycle
+  # does, the same next firing would have cost a catch-up handling turn.
+  printf 'pending:downtime:fresh-down\n' > "$dir/state/.watcher-down"
+  run_real_autoarm_bg "$dir" "$out" 30
+  status=0
+  host_wait "$RUN_AUTOARM_BG_PID" 30 || status=$?
+  expect_code 2 "$status" "fresh downtime must rewake for its catch-up"
+  assert_contains "$(cat "$out")" "check: rearm-resurface" "fresh downtime did not resurface, so the preserved-episode assertion above proves nothing"
+  pass "auto-arm: a quiet cycle renews inside the host timeout with one silent rewake and no catch-up wake"
 }
 
 # --- abandoned single-flight claim recovery (legacy shim) ----------------------
@@ -1233,6 +1398,7 @@ test_fm_lock_status_still_works_with_shared_lib() {
   pass "fm-lock: shared session-lock lib preserves the status path"
 }
 
+test_registration_host_timeout_covers_renewal
 test_inert_in_child_worktree
 test_inert_without_session_lock
 test_reclaims_stale_session_lock_before_arming
@@ -1255,6 +1421,7 @@ test_arms_for_x_mode_poll_need_without_inflight
 test_arms_for_registered_custom_check_without_inflight
 test_single_flight_admits_exactly_one_owner
 test_term_mid_arm_commits_failure_and_rewakes
+test_quiet_cycle_renews_inside_host_timeout
 test_abandoned_owner_claim_is_reclaimed_and_rearms
 test_arming_claim_with_fresh_beacon_is_never_reclaimed
 test_fresh_arming_claim_with_stale_beacon_is_never_reclaimed

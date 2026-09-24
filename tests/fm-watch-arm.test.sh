@@ -882,6 +882,107 @@ test_downtime_marker_does_not_follow_symlink() {
   pass "watch-arm: downtime marker publication does not follow symlinks"
 }
 
+# FM_WATCH_RENEW_AT bounds a cycle for a caller whose host kills its hook tree
+# at a fixed timeout (bin/fm-claude-stop-autoarm.sh). An attached arm follows a
+# watcher it does not own, which may carry no bound at all, so at the bound it
+# must hand back a typed renewal itself and leave that watcher running for the
+# next arm to re-attach, rather than follow it past the caller's host timeout.
+test_attached_arm_renews_without_stopping_the_watcher() {
+  local dir state fakebin out armout status renew_at
+  dir=$(make_case attached-renewal)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  armout="$dir/arm.out"
+  start_seed_watcher "$state" "$fakebin" "$out"
+  renew_at=$(( $(date +%s) + 2 ))
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 \
+    FM_ARM_CONFIRM_TIMEOUT=1 FM_WATCH_RENEW_AT="$renew_at" "$WATCH_ARM" > "$armout" &
+  ARM_PID=$!
+  wait_for_exit "$ARM_PID" 100
+  status=$?
+  [ "$status" -ne 124 ] || fail "an attached arm followed its watcher past the renewal bound: $(cat "$armout")"
+  expect_code 0 "$status" "an attached renewal must exit cleanly: $(cat "$armout")"
+  grep -qF "watcher: attached pid=$SEED_PID" "$armout" || fail "arm did not attach first: $(cat "$armout")"
+  grep -q "^renew: attached cycle reached this arm's lifetime bound" "$armout" \
+    || fail "attached arm did not report its renewal: $(cat "$armout")"
+  is_live_non_zombie "$SEED_PID" || fail "an attached renewal stopped a watcher it does not own"
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$SEED_PID" ] \
+    || fail "the followed watcher lost its lock across the attached renewal"
+  tail -1 "$state/.watch-cycle-exits.log" | grep -q "$(printf '\treason=attached-renewal\t')" \
+    || fail "the attached renewal was not recorded: $(tail -1 "$state/.watch-cycle-exits.log")"
+  kill -TERM "$SEED_PID" 2>/dev/null || true
+  wait_for_exit "$SEED_PID" 100 || true
+  pass "watch-arm: an attached arm renews at its bound and leaves the watcher it follows running"
+}
+
+# A watcher that never reaches its terminal wait cannot close itself at the
+# bound, and a host timeout would then end the caller with no notification. The
+# arm stops such an owned watcher one guard grace past the bound and still
+# reports a renewal; unlike the cooperative close, this is an interruption, so
+# the watcher's own cleanup publishes downtime for the next start to re-present.
+test_overrunning_bounded_watcher_is_stopped_for_renewal() {
+  local dir home state fakebin armout status lock_pid
+  dir=$(make_case renewal-backstop)
+  home="$dir/home"
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  mkdir -p "$home/data"
+  printf 'acked:downtime:handled-seed\n' > "$state/.watcher-down"
+  # A 60s poll parks the watcher in its terminal wait before the 4s bound.
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=60 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_GUARD_GRACE=2 FM_ARM_ATTACH_POLL=0.1 FM_WATCH_RENEW_AT=$(( $(date +%s) + 4 )) \
+    "$WATCH_ARM" > "$armout" &
+  ARM_PID=$!
+  wait_for_exit "$ARM_PID" 300
+  status=$?
+  [ "$status" -ne 124 ] || fail "arm let an overrunning watcher outlive its bound: $(cat "$armout")"
+  expect_code 0 "$status" "a backstopped renewal must exit cleanly: $(cat "$armout")"
+  grep -q '^watcher: started ' "$armout" || fail "arm never started its watcher: $(cat "$armout")"
+  grep -q '^renew: watcher cycle passed its lifetime bound without closing' "$armout" \
+    || fail "arm did not report the backstopped renewal: $(cat "$armout")"
+  tail -1 "$state/.watch-cycle-exits.log" | grep -q "$(printf '\treason=renewal-backstop\t')" \
+    || fail "the backstop was not recorded: $(tail -1 "$state/.watch-cycle-exits.log")"
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  [ -z "$lock_pid" ] || ! is_live_non_zombie "$lock_pid" \
+    || fail "the overrunning watcher is still running as pid $lock_pid"
+  case "$(cat "$state/.watcher-down")" in
+    pending:downtime:*) ;;
+    *) fail "an interrupted watcher did not publish downtime: $(cat "$state/.watcher-down")" ;;
+  esac
+  pass "watch-arm: an owned watcher overrunning its bound is stopped and reported as a renewal"
+}
+
+# A malformed bound would leave the cycle silently unbounded, which is exactly
+# the gap the bound exists to close, so both the arm and a directly started
+# watcher refuse it by name before any watcher holds the lock.
+test_arm_refuses_a_malformed_renewal_bound() {
+  local dir home state fakebin armout status
+  dir=$(make_case renewal-bound-refusal)
+  home="$dir/home"
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  mkdir -p "$home/data"
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_POLL=1 \
+    FM_WATCH_RENEW_AT=soon "$WATCH_ARM" > "$armout" 2>&1 || status=$?
+  [ "$status" -ne 0 ] || fail "arm accepted a malformed renewal bound: $(cat "$armout")"
+  grep -q '^watcher: FAILED - FM_WATCH_RENEW_AT must be whole epoch seconds' "$armout" \
+    || fail "arm refusal did not name the bound: $(cat "$armout")"
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_POLL=1 \
+    FM_WATCH_RENEW_AT=soon "$WATCH" > "$armout" 2>&1 || status=$?
+  [ "$status" -ne 0 ] || fail "watcher accepted a malformed renewal bound: $(cat "$armout")"
+  grep -q '^watcher: FAILED - FM_WATCH_RENEW_AT must be whole epoch seconds' "$armout" \
+    || fail "watcher refusal did not name the bound: $(cat "$armout")"
+  [ ! -e "$state/.watch.lock" ] && [ ! -e "$state/.last-watcher-beat" ] \
+    || fail "a refused renewal bound still left a watcher lock or beacon"
+  pass "watch-arm: a malformed renewal bound is refused by name by both the arm and the watcher"
+}
+
 # The watcher validates FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS when it arms and
 # refuses to arm on an unusable value. Under a running watcher that value would
 # make every per-cycle reconcile refuse by name into a discarded stdout, so no
@@ -924,6 +1025,9 @@ test_arm_refuses_an_unusable_launch_confirm_window() {
   pass "watch-arm: an unusable launch confirm window refuses to arm by name"
 }
 
+test_attached_arm_renews_without_stopping_the_watcher
+test_overrunning_bounded_watcher_is_stopped_for_renewal
+test_arm_refuses_a_malformed_renewal_bound
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window
