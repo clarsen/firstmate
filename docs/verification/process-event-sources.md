@@ -9,6 +9,7 @@ Verified on 2026-07-31 on macOS (Darwin 25.5.0) with `lavish-axi` 0.1.45 install
 Generic keyed-answer feed verified on 2026-08-16 on the same platform, against the same published poll response shape.
 Cross-origin keyed-answer feed verified on 2026-08-19 through the real runner and Lavish adapter interface.
 Trusted external `process-event-adapter/1` binding conformance and the runnable `file-signal` example were verified on 2026-08-27 on macOS (Darwin 25.5.0) with Node v25.9.0.
+Owner presence through a live agent session, and Send & End delivery after lapsed supervision, were verified on 2026-09-24 on macOS (Darwin 27.0.0) with `lavish-axi` 0.1.78.
 
 ## The published Lavish poll interface the adapter wraps
 
@@ -122,6 +123,8 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | guarded runner startup | the source command does not launch when the detached owner guard rejects an invalid lease configuration, proving the runner waits for positive guard readiness and fails closed when initialization fails |
 | attached owner continuity | a foreground `start` with a one-second lease remains alive beyond that lease while its caller stays attached, then captures normally when the blocking source completes |
 | owner-home lifetime and scope | a detached runner and its spawning descendant are observed reparented before an expired owner lease stops their whole process group and process churn; replacing the state directory at the same path cannot keep the old runner alive with a new lease because its recorded device/inode no longer matches, while an identical runner in an unchanged home whose reconcile cycle keeps its lease fresh remains alive |
+| live agent session keeps its boards | two homes arm the same worker board under the same short lease and nothing reconciles either after launch; the control home, which no session holds, has its listener stopped, while the home whose session lock names a live harness-named process keeps both of its listeners past the same bound, captures a later Send & End answer as it lands and delivers it to the worker's steering inbox with no reconcile, and has a still-open board's listener stopped once that session exits |
+| relaunch collects an ended session's final answer once | in that control home the Send & End answer stays queued on the ended session with nothing captured until supervision returns; the next reconcile relaunches the listener, which collects the queued final answer, and further reconciles neither poll the concluded board again nor capture a second result |
 | launch pacing during owner-loss grace | an immediately returning source that attempts detached self-relaunches is held to the configured minimum interval between command launches and remains bounded until its expired owner lease stops the generation; replacement starts a fresh pacing generation, prunes prior pacing state, and prevents a superseded sleeping runner from recreating it |
 | stale reclaim without displacement | concurrent contenders replacing one stale claim start exactly one runner, cross-home replacement removes the old generation's staging file from its recorded state directory, and a generation whose stale owner and independently empty process group prove it gone remains reclaimable when its recorded state-root identity can no longer be revalidated or its recorded registry directory no longer resolves to a directory, so `reconcile` reclaims it once, the replacement runs the source, and later cycles report nothing to do |
 | confirmed launches only | `reconcile` counts a launch as `started` only after the source is observed owned or its launch-pacing stamp has moved: a registration that cannot start is reported `failed=` with a non-zero exit and its source still listed `none`, a source that claimed, ran and exited before confirmation looked is still `started`, a zero-padded confirm window reads as base 10, and an unusable `FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS` is refused by name before any runner is launched |
@@ -172,6 +175,7 @@ bin/fm-test-run.sh tests/fm-extension-binding.test.sh
 FM_EXTENSION_BINDING_SEGMENT=lifecycle-invocation-cleanup bin/fm-test-run.sh tests/fm-extension-binding.test.sh
 bin/fm-test-run.sh tests/fm-procevent.test.sh
 FM_BEARINGS_LAVISH_LIVE=1 bin/fm-test-run.sh tests/fm-bearings-board-lavish-live-e2e.test.sh
+FM_PROCEVENT_LAVISH_LIVE=1 bin/fm-test-run.sh tests/fm-procevent-lavish-live-e2e.test.sh
 bin/fm-doc-audience-check.sh
 ```
 
@@ -216,6 +220,13 @@ They fail for opposite reasons, which is the point of keeping them apart.
 The crashed-leader cases separately pin refusal and claim preservation when a leader dies outside the stop's own signal, so successful escalation cannot be mistaken for closing that limit.
 Refresh the regressions with `bash tests/fm-procevent.test.sh`; the dated measurements above are recorded observations, not fixed timing thresholds.
 
+Measured on 2026-09-24 on macOS (Darwin 27.0.0) against a private `lavish-axi` 0.1.78 server, in a home whose session lock named a live harness-named process, with a 2-second lease and 1-second check and no reconcile after launch.
+Before the change, the guard stopped that home's listener within 8 seconds, a Send & End through the browser's own route left the ended session holding one pending answer with nothing captured, and the ended board dropped out of `lavish-axi`'s session listing.
+The next reconcile relaunched the listener, and its poll against the ended session returned the queued answer marked `session_ended` exactly once.
+With the lease raised to 3600 seconds as the only change, the listener survived the same gap and captured the answer as it landed, which isolates the lease as the cause.
+After the change, the listener survived the gap at the 2-second lease and captured the answer as it landed.
+[`tests/fm-procevent-lavish-live-e2e.test.sh`](../../tests/fm-procevent-lavish-live-e2e.test.sh) is that reproduction as a default-on live guard, and it fails on the listener stop against the prior guard.
+
 ## Portability finding
 
 `setsid` is **not present on macOS**, so it cannot establish the runner's process group.
@@ -228,6 +239,7 @@ Without this launcher, reconcile would silently fail to start a runner on macOS 
 The generic runner and external-adapter path remain domain-neutral and create no endpoint, task metadata, or backlog item, so they affect supported primary harnesses and runtime backends only through the existing `check` and status-signal wake paths they already consume.
 The built-in task-owned Lavish exception validates existing task endpoint metadata and uses the existing steering-inbox backend doorbell to deliver a capture directly to that worker; it creates no new endpoint or backend protocol.
 Session-derived routing happens only inside the shared Lavish poll adapter, so it changes no harness or session-provider launch, registration, steering, or lifecycle interface.
+The owner guard's live-session read reuses `fm_session_lock_inspect`, the session lock's single harness-identity owner, so every primary harness that lock recognizes keeps its home's listeners through a lapsed supervision cycle, and no runtime backend is consulted.
 Built-in adapters extend the runner through `bin/fm-procevent-<adapter>.sh`; the `when` adapter also uses the runner library's locked registration publisher so its private trust state and source registration are serialized under one source boundary.
 Explicit external adapters instead use the single-capability contract in [`docs/extension-bindings.md`](../extension-bindings.md), with no filename discovery or package-supplied argv.
 An adapter's `terminal` command is optional and defaults to keeping the source armed.

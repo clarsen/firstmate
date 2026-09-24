@@ -340,7 +340,7 @@ family_for_basename() {
       printf '%s\n' session-bootstrap
       ;;
     fm-afk-pi-herdr-return-e2e.test.sh|\
-    fm-bearings-board-lavish-live-e2e.test.sh|\
+    fm-bearings-board-lavish-live-e2e.test.sh|fm-procevent-lavish-live-e2e.test.sh|\
     fm-claude-bg-move-registry-live-e2e.test.sh|\
     fm-claude-stop-autoarm-live-e2e.test.sh|\
     fm-cmux-claude-composer-live-e2e.test.sh|\
@@ -768,6 +768,7 @@ tests/fm-pr-check-security.test.sh 226546
 tests/fm-pr-reviewers.test.sh 273
 tests/fm-pr-state-live-e2e.test.sh 45
 tests/fm-pr-state.test.sh 531
+tests/fm-procevent-lavish-live-e2e.test.sh 48
 tests/fm-procevent-quota.test.sh 1900
 tests/fm-procevent-when.test.sh 23805
 tests/fm-procevent.test.sh 221745
