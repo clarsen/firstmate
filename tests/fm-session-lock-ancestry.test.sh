@@ -39,12 +39,15 @@ NAMED_CLAUDE="$FAKEBIN/claude"
 # makes every pid dead). The suite itself may run inside a Claude session whose
 # CLAUDE_CODE_SESSION_ID and CLAUDE_PID would leak into the expression, so both
 # are scrubbed and only FM_TEST_SESSION_ID and FM_TEST_CLAUDE_PID reach it.
+# Claude Code's session registry is pinned the same way, to FM_TEST_CLAUDE_CONFIG
+# or an empty directory, so no case can read the real ~/.claude/sessions.
 lib_eval() {  # <fakebin> <expression>
   local fakebin=$1 expr=$2
   local -a session_env=()
   [ -z "${FM_TEST_SESSION_ID:-}" ] || session_env+=("CLAUDE_CODE_SESSION_ID=$FM_TEST_SESSION_ID")
   [ -z "${FM_TEST_CLAUDE_PID:-}" ] || session_env+=("CLAUDE_PID=$FM_TEST_CLAUDE_PID")
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID ${session_env[@]+"${session_env[@]}"} \
+    CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG:-$TMP_ROOT/no-claude-config}" \
     PATH="$fakebin:$PATH" bash -c "
     . \"\$0\"
     kill() { return \${FM_TEST_KILL_RC:-0}; }
@@ -404,6 +407,184 @@ test_same_session_id_owns_a_recycled_background_chain() {
   pass "session-lock: a trusted same-session id keeps owning a recycled background chain, and nothing weaker does"
 }
 
+# A conversation Claude Code's /background moved out of its terminal. The live
+# front-end 800 still holds the lock under session S1. The daemon 830 runs the
+# pty-host 820, whose child 810 is the new model-loop process: it resumed S1's
+# transcript under a new id S2 (--fork-session) and fires every hook, with
+# CLAUDE_PID=810. The front-end is not in that ancestry and the ids differ, so
+# only Claude Code's session registry can tie the two together. 850 is a live
+# codex process for the not-Claude owner case. Start times are reported with the
+# trailing padding real `ps -o lstart=` prints, and FM_TEST_FRONTEND_START or
+# FM_TEST_WORKER_START replace one to model a reused pid.
+write_moved_session_ps() {  # <fakebin>
+  cat > "$1/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+field= pid=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) field=$2; shift 2 ;;
+    -p) pid=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+loop=/opt/claude/share/claude/versions/2.1.281
+case "$pid:$field" in
+  800:comm=) printf '%s\n' claude ;;
+  800:args=) printf '%s\n' claude ;;
+  800:ppid=) printf '%s\n' 1 ;;
+  800:lstart=) printf '%s    \n' "${FM_TEST_FRONTEND_START:-Thu Sep 24 05:22:51 2026}" ;;
+  830:comm=) printf '%s\n' claude ;;
+  830:args=) printf '%s\n' 'claude daemon run --origin transient' ;;
+  830:ppid=) printf '%s\n' 1 ;;
+  820:comm=) printf '%s\n' claude ;;
+  820:args=) printf '%s\n' "claude --bg-pty-host /tmp/pty/0123abcd.sock 80 39 -- $loop --session-id S2 --fork-session --resume /p/S1.jsonl" ;;
+  820:ppid=) printf '%s\n' 830 ;;
+  810:comm=) printf '%s\n' "$loop" ;;
+  810:args=) printf '%s\n' "$loop --session-id S2 --fork-session --resume /p/S1.jsonl" ;;
+  810:ppid=) printf '%s\n' 820 ;;
+  810:lstart=) printf '%s    \n' "${FM_TEST_WORKER_START:-Thu Sep 24 05:52:05 2026}" ;;
+  850:comm=) printf '%s\n' codex ;;
+  850:args=) printf '%s\n' codex ;;
+  850:ppid=) printf '%s\n' 1 ;;
+  *:lstart=) ;;
+  *:comm=) printf '%s\n' bash ;;
+  *:args=) printf '%s\n' 'bash /repo/bin/fm-lock.sh' ;;
+  *:ppid=) printf '%s\n' 810 ;;
+esac
+SH
+  chmod +x "$1/ps"
+}
+
+# Write the pair of registry records a real /background move leaves behind,
+# then apply an optional jq edit to the front-end's (<front-edit>) or the
+# worker's (<worker-edit>) record.
+write_moved_session_registry() {  # <config-dir> [<front-edit>] [<worker-edit>]
+  local sessions="$1/sessions"
+  rm -rf "$sessions"
+  mkdir -p "$sessions"
+  jq -n '{pid: 800, sessionId: "S1", kind: "interactive", procStart: "Thu Sep 24 05:22:51 2026",
+      version: "2.1.281", parkedJobId: "0123abcd"} | '"${2:-.}" > "$sessions/800.json" \
+    || fail "could not write the front-end registry record"
+  jq -n '{pid: 810, sessionId: "S2", kind: "bg", jobId: "0123abcd", procStart: "Thu Sep 24 05:52:05 2026",
+      version: "2.1.281"} | '"${3:-.}" > "$sessions/810.json" \
+    || fail "could not write the background registry record"
+}
+
+moved() {  # <fakebin> <state>
+  lib_eval "$1" "fm_session_lock_moved_to_self '$2'"
+}
+
+move_reason() {  # <fakebin> <state>
+  lib_eval "$1" "fm_session_lock_moved_to_self '$2'; printf '%s' \"\$FM_SESSION_LOCK_MOVE_UNPROVEN\""
+}
+
+# Every case below is refused; <label> names the shape and <reason>, when given,
+# is text the refusal must carry so the unmet condition is named.
+expect_not_moved() {  # <fakebin> <state> <owner-pid> <label> [<reason>]
+  local got
+  if moved "$1" "$2"; then
+    fail "$4 was accepted as a background move of the lock owner's conversation"
+  fi
+  got=$(foreign_owner "$1" "$2") || fail "$4 did not leave the live owner foreign"
+  [ "$got" = "$3" ] || fail "$4: the foreign owner pid was '$got', expected $3"
+  if [ -n "${5:-}" ]; then
+    got=$(move_reason "$1" "$2")
+    assert_contains "$got" "$5" "$4 did not name the unmet move condition"
+  fi
+}
+
+test_background_move_transfers_only_on_registry_proof() {
+  local dir fakebin state config got
+  dir="$TMP_ROOT/moved-session"
+  fakebin=$(fm_fakebin "$dir")
+  state="$dir/state"
+  config="$dir/claude-config"
+  mkdir -p "$state"
+  write_moved_session_ps "$fakebin"
+  write_moved_session_registry "$config"
+  printf '800\n' > "$state/.lock"
+  printf 'S1\n' > "$state/.lock-session"
+  export FM_TEST_CLAUDE_CONFIG="$config" FM_TEST_SESSION_ID=S2 FM_TEST_CLAUDE_PID=810
+
+  # The divergence itself: neither existing signal owns this lock, so the
+  # registry proof is the only thing that can make any verdict below positive.
+  if lib_eval "$fakebin" 'fm_harness_ancestry_pids' | grep -qx 800; then
+    fail "the moved session's ancestry reached the front-end, so the move cases would prove nothing"
+  fi
+  lib_eval "$fakebin" 'fm_session_lock_trusted_session_id' | grep -qx S2 \
+    || fail "the moved session's id was not trusted, so the move cases would prove nothing"
+  if owned "$fakebin" "$state"; then
+    fail "the moved session owned the front-end's lock without the move proof"
+  fi
+
+  # 1. The real /background shape: moved, not foreign, and still not owned -
+  # only bin/fm-lock.sh turns the proof into ownership, by rewriting the lock.
+  moved "$fakebin" "$state" || fail "a proven background move of the owner's conversation was not recognized: $(move_reason "$fakebin" "$state")"
+  if foreign_owner "$fakebin" "$state" >/dev/null; then
+    fail "the front-end whose conversation moved into this session was reported foreign"
+  fi
+  if owned "$fakebin" "$state"; then
+    fail "the move proof became an ownership verdict on its own"
+  fi
+
+  # 2. The owner still runs its conversation: a user fork, a second terminal, or
+  # `claude --bg --resume` leave no parkedJobId on the owner's record.
+  write_moved_session_registry "$config" 'del(.parkedJobId)'
+  expect_not_moved "$fakebin" "$state" 800 "a fork beside a live owner" "does not record pid 800 (session S1)"
+  write_moved_session_registry "$config" '.parkedJobId = "fedcba98"'
+  expect_not_moved "$fakebin" "$state" 800 "an owner parked into a different job" "background job 0123abcd"
+
+  # 3. This session must be the background job's model loop under its own id.
+  write_moved_session_registry "$config" . '.kind = "interactive"'
+  expect_not_moved "$fakebin" "$state" 800 "an interactive successor" "records no background job for this session"
+  write_moved_session_registry "$config" . 'del(.jobId)'
+  expect_not_moved "$fakebin" "$state" 800 "a background record with no job id" "records no job id"
+  write_moved_session_registry "$config" . '.sessionId = "S3"'
+  expect_not_moved "$fakebin" "$state" 800 "a background record under another id" "records no background job"
+
+  # 4. The owner's record must be the conversation recorded beside the lock.
+  write_moved_session_registry "$config" '.sessionId = "S9"'
+  expect_not_moved "$fakebin" "$state" 800 "an owner record under another conversation" "does not record pid 800"
+
+  # 5. Claude Code's pid-reuse guard, the record's own pid, and the file itself.
+  write_moved_session_registry "$config"
+  FM_TEST_FRONTEND_START='Fri Sep 25 01:00:00 2026' expect_not_moved "$fakebin" "$state" 800 "a reused owner pid" "does not record pid 800"
+  FM_TEST_WORKER_START='Fri Sep 25 01:00:00 2026' expect_not_moved "$fakebin" "$state" 800 "a reused worker pid" "records no background job"
+  write_moved_session_registry "$config" '.pid = 801'
+  expect_not_moved "$fakebin" "$state" 800 "a record naming another pid" "does not record pid 800"
+  write_moved_session_registry "$config"
+  mv "$config/sessions/800.json" "$dir/front-record.json"
+  ln -s "$dir/front-record.json" "$config/sessions/800.json"
+  expect_not_moved "$fakebin" "$state" 800 "a symlinked owner record" "does not record pid 800"
+  write_moved_session_registry "$config"
+  rm -f "$config/sessions/810.json"
+  expect_not_moved "$fakebin" "$state" 800 "a missing background record" "records no background job"
+  write_moved_session_registry "$config"
+  printf '[]\n' > "$config/sessions/800.json"
+  expect_not_moved "$fakebin" "$state" 800 "a malformed owner record" "does not record pid 800"
+  write_moved_session_registry "$config"
+  FM_TEST_CLAUDE_CONFIG="$dir/other-config" expect_not_moved "$fakebin" "$state" 800 "another Claude config directory"
+
+  # 6. The trust gate and the lock's own record stay in charge.
+  FM_TEST_CLAUDE_PID=800 expect_not_moved "$fakebin" "$state" 800 "the right id from a CLAUDE_PID outside this run"
+  got=$(FM_TEST_CLAUDE_PID=800 move_reason "$fakebin" "$state")
+  [ -z "$got" ] || fail "an untrusted session was given a move diagnostic: $got"
+  FM_TEST_SESSION_ID='' FM_TEST_CLAUDE_PID='' expect_not_moved "$fakebin" "$state" 800 "a session with no id"
+  rm -f "$state/.lock-session"
+  expect_not_moved "$fakebin" "$state" 800 "a lock with no recorded session id" "no session id is recorded"
+  printf 'S1\n' > "$state/.lock-session"
+  if FM_TEST_KILL_RC=1 moved "$fakebin" "$state"; then
+    fail "a dead owner was treated as a move instead of left for the ordinary reclaim"
+  fi
+  printf '850\n' > "$state/.lock"
+  expect_not_moved "$fakebin" "$state" 850 "a live non-Claude owner" "pid 850 is not a live Claude process"
+  printf '800\n' > "$state/.lock"
+  moved "$fakebin" "$state" || fail "the restored fixture no longer proves the move, so the cases above may be vacuous"
+  unset FM_TEST_CLAUDE_CONFIG FM_TEST_SESSION_ID FM_TEST_CLAUDE_PID
+  pass "session-lock: a background move is recognized only on Claude Code's registry proof, and every other live owner stays foreign"
+}
+
 test_anchor_pid_is_the_model_loop_process_only_for_a_trusted_id() {
   local dir fakebin got
   dir="$TMP_ROOT/background-anchor"
@@ -613,8 +794,10 @@ done
 printf '%s\n' "$$" > "$FM_HOME/state/frontend-pid"
 CLAUDE_CODE_SESSION_ID=S1 CLAUDE_PID=$$ "$FM_HOME/bin/fm-lock.sh" > "$FM_HOME/state/frontend-lock.out" 2>&1
 printf '%s\n' "$?" > "$FM_HOME/state/frontend-lock.rc"
-"$FM_FIXTURE_CLAUDE" "$FM_HOME/daemon.sh" &
-disown
+if [ "${FM_FIXTURE_FRONTEND_SPAWNS_DAEMON:-1}" = 1 ]; then
+  "$FM_FIXTURE_CLAUDE" "$FM_HOME/daemon.sh" &
+  disown
+fi
 while [ ! -e "$FM_HOME/state/stop-frontend" ]; do sleep 0.05; done
 exit 0
 SH
@@ -641,10 +824,15 @@ while [ ! -e "$FM_HOME/state/stop-spare" ]; do
   if [ -f "$req" ]; then
     out="$FM_HOME/state/phase-$n"
     mkdir -p "$out"
-    unset CLAUDE_CODE_SESSION_ID CLAUDE_PID
+    unset CLAUDE_CODE_SESSION_ID CLAUDE_PID FM_FIXTURE_LOCK_FIRST
     # shellcheck disable=SC1090
     . "$req"
     ( . "$FM_HOME/bin/fm-session-lock-lib.sh" && fm_harness_ancestry_pids ) > "$out/ancestry" 2>/dev/null
+    # A session start before the Stop, when the phase asks for that order.
+    if [ "${FM_FIXTURE_LOCK_FIRST:-0}" = 1 ]; then
+      "$FM_HOME/bin/fm-lock.sh" > "$out/lock-first.out" 2>&1
+      printf '%s\n' "$?" > "$out/lock-first.rc"
+    fi
     printf '%s\n' '{"session_id":"fixture","stop_hook_active":true}' \
       | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$out/hook.out" 2>&1
     printf '%s\n' "$?" > "$out/hook.rc"
@@ -800,6 +988,130 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
 
   : > "$dir/state/stop-spare"
   pass "session-lock e2e: a background session keeps its lock and its supervision across a recycled helper chain"
+}
+
+# --- end-to-end layer: a conversation moved to the background ------------------
+#
+# The /background topology with real processes: a front-end that acquired the
+# lock under S1 and stays alive, and a separate daemon -> pty-host -> model-loop
+# tree whose model loop continues that conversation under S2 and fires the real
+# Stop auto-arm, turn-end guard, and lock script. The registry records Claude
+# Code writes for the two processes are laid down with their real start times
+# and varied per phase.
+
+proc_start() {  # <pid>  -> its start time in the form Claude Code records
+  LC_ALL=C TZ=UTC ps -o lstart= -p "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+write_live_registry() {  # <config-dir> <front-pid> <worker-pid> [<front-edit>]
+  local sessions="$1/sessions" front=$2 worker=$3
+  mkdir -p "$sessions"
+  jq -n --argjson pid "$front" --arg start "$(proc_start "$front")" \
+    '{pid: $pid, sessionId: "S1", kind: "interactive", procStart: $start, version: "fixture",
+      parkedJobId: "0123abcd"} | '"${4:-.}" > "$sessions/$front.json" \
+    || fail "could not write the front-end registry record"
+  jq -n --argjson pid "$worker" --arg start "$(proc_start "$worker")" \
+    '{pid: $pid, sessionId: "S2", kind: "bg", jobId: "0123abcd", procStart: $start, version: "fixture"}' \
+    > "$sessions/$worker.json" || fail "could not write the background registry record"
+}
+
+# The move proved: arm, no foreign diagnostic, lock accepted, and the lock now
+# names the model loop beside the moved conversation's id.
+expect_phase_moved() {  # <dir> <n> <expected-arms> <worker-pid> <label>
+  local dir=$1 n=$2 arms=$3 worker=$4 label=$5
+  expect_code 2 "$(phase_value "$dir" "$n" hook.rc)" "$label: the Stop auto-arm did not rewake: $(cat "$dir/state/phase-$n/hook.out")"
+  [ "$(arm_count "$dir")" = "$arms" ] || fail "$label: expected $arms arm(s), got $(arm_count "$dir")"
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "$label: no rewake claim was recorded, got: $(epoch_outcome "$dir")"
+  expect_code 0 "$(phase_value "$dir" "$n" guard.rc)" "$label: the turn-end guard did not allow the stop"
+  if grep -q 'OWNED BY ANOTHER LIVE SESSION' "$dir/state/phase-$n/guard.out"; then
+    fail "$label: the turn-end guard called the moved conversation's own front-end foreign"
+  fi
+  expect_code 0 "$(phase_value "$dir" "$n" lock.rc)" "$label: fm-lock.sh refused the moved session: $(cat "$dir/state/phase-$n/lock.out")"
+  [ "$(phase_value "$dir" "$n" lock-after)" = "$worker" ] \
+    || fail "$label: lock line 1 is $(phase_value "$dir" "$n" lock-after), expected the model loop $worker"
+  [ "$(phase_value "$dir" "$n" session-after)" = S2 ] \
+    || fail "$label: the sidecar names $(phase_value "$dir" "$n" session-after), expected the moved conversation's id S2"
+}
+
+test_e2e_moved_conversation_takes_its_lock_only_on_registry_proof() {
+  local dir config frontend daemon ptyhost worker
+  dir="$TMP_ROOT/e2e-moved-session"
+  config="$dir/claude-config"
+  make_background_session_home "$dir"
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
+    FM_HOME="$dir" FM_FIXTURE_CLAUDE="$NAMED_CLAUDE" FM_FIXTURE_FRONTEND_SPAWNS_DAEMON=0 \
+    bash -c '"$0" "$1" &' "$NAMED_CLAUDE" "$dir/frontend.sh"
+  wait_for_file "$dir/state/frontend-lock.rc" "the front-end's lock result"
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
+    FM_HOME="$dir" FM_FIXTURE_CLAUDE="$NAMED_CLAUDE" CLAUDE_CONFIG_DIR="$config" \
+    FM_POLL=1 FM_HEARTBEAT=999999 FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=0 \
+    bash -c '"$0" "$1" &' "$NAMED_CLAUDE" "$dir/daemon.sh"
+  wait_for_file "$dir/state/spare-pid" "the background model loop"
+  frontend=$(tr -d '[:space:]' < "$dir/state/frontend-pid")
+  daemon=$(tr -d '[:space:]' < "$dir/state/daemon-pid")
+  ptyhost=$(tr -d '[:space:]' < "$dir/state/ptyhost-pid")
+  worker=$(tr -d '[:space:]' < "$dir/state/spare-pid")
+  BG_FIXTURE_PIDS+=("$frontend" "$daemon" "$ptyhost" "$worker")
+  expect_code 0 "$(tr -d '[:space:]' < "$dir/state/frontend-lock.rc")" "the front-end could not acquire the lock: $(cat "$dir/state/frontend-lock.out")"
+  [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$frontend" ] \
+    || fail "the front-end's lock names $(cat "$dir/state/.lock"), expected its own pid $frontend"
+  [ "$(tr -d '[:space:]' < "$dir/state/.lock-session")" = S1 ] \
+    || fail "the front-end did not record its trusted session id beside the lock"
+  cp "$dir/state/.lock-session" "$dir/sidecar-initial"
+
+  # Phase 1: the owner still runs its conversation - a fork beside a live owner.
+  write_live_registry "$config" "$frontend" "$worker" 'del(.parkedJobId)'
+  fire_phase "$dir" 1 'export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$$'
+  if grep -qx "$frontend" "$dir/state/phase-1/ancestry"; then
+    fail "the moved session's ancestry reached the front-end, so these phases prove nothing"
+  fi
+  grep -qx "$worker" "$dir/state/phase-1/ancestry" || fail "the hook's ancestry lost its own model loop"
+  expect_phase_foreign "$dir" 1 0 "$frontend" "a fork beside the live owner"
+  grep -q "not a proven move of that session's conversation into this one: .*does not record pid $frontend (session S1)" \
+    "$dir/state/phase-1/lock.out" || fail "the fork refusal did not name the unmet move condition: $(cat "$dir/state/phase-1/lock.out")"
+
+  # Phases 2-4: a reused owner pid, the right records with an untrusted id, and
+  # no id at all.
+  write_live_registry "$config" "$frontend" "$worker" '.procStart = "Thu Jan  1 00:00:00 1970"'
+  fire_phase "$dir" 2 'export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$$'
+  expect_phase_foreign "$dir" 2 0 "$frontend" "a reused owner pid"
+  write_live_registry "$config" "$frontend" "$worker"
+  fire_phase "$dir" 3 "export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$frontend"
+  expect_phase_foreign "$dir" 3 0 "$frontend" "the moved id from a CLAUDE_PID outside this run"
+  fire_phase "$dir" 4 ''
+  expect_phase_foreign "$dir" 4 0 "$frontend" "a moved session with no id"
+
+  # Phase 5: the proven move reaching session start first.
+  fire_phase "$dir" 5 'export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$$; export FM_FIXTURE_LOCK_FIRST=1'
+  expect_code 0 "$(phase_value "$dir" 5 lock-first.rc)" "session start refused the moved session: $(cat "$dir/state/phase-5/lock-first.out")"
+  grep -qx "lock acquired: harness pid $worker" "$dir/state/phase-5/lock-first.out" \
+    || fail "session start did not record the model loop: $(cat "$dir/state/phase-5/lock-first.out")"
+  grep -qx "lock moved: the conversation pid $frontend held now runs in this background session" "$dir/state/phase-5/lock-first.out" \
+    || fail "session start did not report where the lock came from: $(cat "$dir/state/phase-5/lock-first.out")"
+  expect_phase_moved "$dir" 5 1 "$worker" "session start after the move"
+  kill -0 "$frontend" 2>/dev/null || fail "the front-end died, so the live-owner move was not exercised"
+
+  # Phase 6: the same move reaching a Stop first, with no session start at all.
+  printf '%s\n' "$frontend" > "$dir/state/.lock"
+  cp "$dir/sidecar-initial" "$dir/state/.lock-session"
+  fire_phase "$dir" 6 'export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$$'
+  expect_phase_moved "$dir" 6 2 "$worker" "Stop after the move"
+  kill -0 "$frontend" 2>/dev/null || fail "the front-end died, so the live-owner move was not exercised"
+
+  # Afterwards the old conversation's id in any other process is a fork of the
+  # moved session and is refused, naming the new owner and its id.
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID FM_HOME="$dir" CLAUDE_CONFIG_DIR="$config" \
+    "$NAMED_CLAUDE" -c 'CLAUDE_CODE_SESSION_ID=S1 CLAUDE_PID=$$ "$FM_HOME/bin/fm-lock.sh" > "$FM_HOME/state/fork-lock.out" 2>&1
+      printf "%s\n" "$?" > "$FM_HOME/state/fork-lock.rc"'
+  expect_code 1 "$(tr -d '[:space:]' < "$dir/state/fork-lock.rc")" "a fork of the old conversation took the moved session's lock"
+  grep -q "another live firstmate session holds the lock (pid $worker, session S2)" "$dir/state/fork-lock.out" \
+    || fail "the fork refusal did not name the moved session: $(cat "$dir/state/fork-lock.out")"
+  [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$worker" ] || fail "a refused fork rewrote the lock"
+
+  : > "$dir/state/stop-spare"
+  : > "$dir/state/stop-frontend"
+  kill -TERM "$daemon" 2>/dev/null || true
+  pass "session-lock e2e: a conversation moved to the background takes its live front-end's lock only on Claude Code's registry proof"
 }
 
 # A same-session confirmation must refresh a /clear re-key even while another
@@ -1097,11 +1409,13 @@ test_ordinary_paths_are_never_harness_processes
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
 test_same_session_id_owns_a_recycled_background_chain
+test_background_move_transfers_only_on_registry_proof
 test_anchor_pid_is_the_model_loop_process_only_for_a_trusted_id
 test_e2e_version_named_session_claims_the_home
 test_e2e_daemon_parented_session_claims_the_home
 test_e2e_daemon_parented_version_named_session_keeps_its_lock
 test_e2e_background_session_keeps_its_lock_across_a_recycled_chain
+test_e2e_moved_conversation_takes_its_lock_only_on_registry_proof
 test_same_session_confirmation_refreshes_rekeyed_id_under_claim_lock
 test_same_session_confirmation_does_not_steal_after_wait
 test_failed_lock_write_restores_previous_sidecar

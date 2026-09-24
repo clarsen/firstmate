@@ -20,6 +20,13 @@
 # bin/fm-startup-network.sh compares that pid across its deferred sweeps; a dead
 # recorded pid is reclaimed and rewritten to this session's anchor.
 #
+# A live recorded pid owned by another session is refused, except a Claude
+# front-end whose conversation Claude Code moved into this background process,
+# as fm_session_lock_moved_to_self proves. That lock is taken over exactly like
+# a dead owner's - sidecar then line 1, under the claim lock - and a second
+# `lock moved:` line names the front-end it came from. A refusal names the
+# unmet move condition whenever this session proved a trusted Claude id.
+#
 # Usage: fm-lock.sh           acquire; exit 1 unless ownership is verified
 #        fm-lock.sh status    print holder and liveness; always exits 0.
 #                             A held lock is not proof the holder is consuming
@@ -186,16 +193,22 @@ refuse_live_owner() {  # <recorded-pid>
   else
     echo "error: another live firstmate session holds the lock (pid $1); operate read-only until resolved" >&2
   fi
+  if [ -n "$FM_SESSION_LOCK_MOVE_UNPROVEN" ]; then
+    echo "not a proven move of that session's conversation into this one: $FM_SESSION_LOCK_MOVE_UNPROVEN" >&2
+  fi
   exit 1
 }
 
+# Set when the live owner's conversation proved moved into this session, so
+# the takeover below reports where the lock came from.
+MOVED_FROM=
 if [ -f "$LOCK" ] && [ ! -L "$LOCK" ]; then
   old=$(cat "$LOCK" 2>/dev/null || true)
   if [ "$old" = "$me" ] || fm_session_lock_owned_by_self "$STATE"; then
     confirm_own_lock "$old"
     old=$(cat "$LOCK" 2>/dev/null || true)
   fi
-  if fm_harness_pid_alive "$old"; then
+  if fm_harness_pid_alive "$old" && ! fm_session_lock_moved_to_self "$STATE"; then
     refuse_live_owner "$old"
   fi
 fi
@@ -223,7 +236,8 @@ if [ -e "$LOCK" ] || [ -L "$LOCK" ]; then
     fm_session_lock_owned_by_self "$STATE" && confirm_own_lock "$old"
     old=$(cat "$LOCK" 2>/dev/null || true)
     if [ "$old" != "$me" ] && fm_harness_pid_alive "$old"; then
-      refuse_live_owner "$old"
+      fm_session_lock_moved_to_self "$STATE" || refuse_live_owner "$old"
+      MOVED_FROM=$old
     fi
   fi
 fi
@@ -273,3 +287,6 @@ fi
 commit_lock_session
 release_claim_lock
 echo "lock acquired: harness pid $me"
+if [ -n "$MOVED_FROM" ]; then
+  echo "lock moved: the conversation pid $MOVED_FROM held now runs in this background session"
+fi

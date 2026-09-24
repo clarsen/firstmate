@@ -638,7 +638,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
   {
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - FLEET LOCK OWNERSHIP WAS NOT VERIFIED\n'
-    printf '●  %s\n' "$LOCK_OUT"
+    printf '%s\n' "$LOCK_OUT" | sed 's/^/●  /'
     printf '●  Skipping every mutating step: stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'
     printf '●  X-mode artifacts, fleet sync, and wake-queue drain. Detect-only bootstrap\n'

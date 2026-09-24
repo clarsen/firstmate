@@ -350,6 +350,53 @@ COMPLETE
 ```
 
 No live unattended Claude background session ran on the verifying machine: that topology is documented by the real process listings in issues #3902, #2314, #3398, and #4066, and the coverage above is the structural predicate plus those executable fixtures, not a live pass.
+
+A conversation moved with Claude Code's `/background` is a different shape: a new model-loop process under the daemon's pty host resumes the transcript with `--session-id <new> --fork-session --resume <old transcript>`, so both `CLAUDE_PID` and the session id change while the old terminal front-end stays alive holding the lock.
+`fm_session_lock_moved_to_self` in `bin/fm-session-lock-lib.sh` owns the takeover proof from Claude Code's session registry (`<config>/sessions/<pid>.json`): the front-end's record carries `parkedJobId`, and the job's model loop records `kind: "bg"` with the same `jobId`, each bound to its pid, session id, and `procStart`.
+On 2026-09-24 with Claude Code 2.1.281 on macOS, a parked front-end and its live background model loop were read directly, and the installed binary's own code sets `parkedJobId` when it backgrounds a session, clears it when that front-end registers a new session id, and joins parked sessions to running jobs by that same pair.
+The records bound each pid to its start time exactly as `LC_ALL=C TZ=UTC ps -o lstart=` prints it, trimmed:
+
+```sh
+LC_ALL=C TZ=UTC ps -o lstart= -p 18901 -p 18774
+jq -c '{pid, sessionId, kind, procStart, parkedJobId}' ~/.claude/sessions/18901.json
+jq -c '{pid, sessionId, kind, procStart, jobId}' ~/.claude/sessions/18774.json
+bash -c '. bin/fm-session-lock-lib.sh
+  fm_claude_session_moved 18901 8418502c-cba7-498b-b58f-5c6a07c2f00a 18774 855f6449-7740-41fa-89f7-05ad4d1e0545; echo "rc=$?"
+  fm_claude_session_moved 18901 8418502c-cba7-498b-b58f-5c6a07c2f00a 80974 0e31aea7-cdf9-4ddb-a009-052b7d8e2000; echo "rc=$? $FM_SESSION_LOCK_MOVE_UNPROVEN"'
+```
+
+```text
+Thu Sep 24 05:22:51 2026
+Thu Sep 24 05:52:05 2026
+{"pid":18901,"sessionId":"8418502c-cba7-498b-b58f-5c6a07c2f00a","kind":"interactive","procStart":"Thu Sep 24 05:22:51 2026","parkedJobId":"855f6449"}
+{"pid":18774,"sessionId":"855f6449-7740-41fa-89f7-05ad4d1e0545","kind":"bg","procStart":"Thu Sep 24 05:52:05 2026","jobId":"855f6449"}
+rc=0
+rc=1 Claude Code records no background job for this session (pid 80974, session 0e31aea7-cdf9-4ddb-a009-052b7d8e2000)
+```
+
+The moved model loop's hooks run with `CLAUDE_PID` set to that loop inside their contiguous Claude ancestry, which the trust gate requires; that was observed when the same moved session verified ownership through `bin/fm-lock.sh` once lock line 1 named its model loop and the sidecar its new id.
+`tests/fm-session-lock-ancestry.test.sh` pins the proof behind a deterministic process table and registry, refusing a fork beside a live owner, a different job, an interactive successor, a mismatched id, a reused pid, a symlinked, missing, or malformed record, an untrusted or absent id, a missing sidecar, a dead owner, and a non-Claude owner, and it drives the real lock script, Stop auto-arm, and turn-end guard through separate real front-end and background trees:
+
+```sh
+tests/fm-session-lock-ancestry.test.sh
+```
+
+```text
+ok - session-lock: a background move is recognized only on Claude Code's registry proof, and every other live owner stays foreign
+ok - session-lock e2e: a conversation moved to the background takes its live front-end's lock only on Claude Code's registry proof
+```
+
+The default-on, read-only live guard reads every live Claude Code process's real record through the same library readers and proves every live parked conversation against its live background job, so a reshaped record fails naming the installed version; it spends no tokens and refreshes this evidence after a `/background` and after every Claude Code upgrade:
+
+```sh
+tests/fm-claude-bg-move-registry-live-e2e.test.sh
+```
+
+```text
+ok - Claude 2.1.281 (Claude Code): 10 live session record(s) carry the registry contract, 1 background job(s), 1 parked conversation(s) proved moved into their live job
+```
+
+No `/background` was driven on the verifying machine for this record, because a fresh Claude session registers only after an interactive folder-trust acceptance that would have changed the operator's own Claude configuration; the evidence is the real records above, that live guard, and the executable fixtures.
 [`sessionstart-nudge.md`](../sessionstart-nudge.md#shared-wrapper-and-safety) owns the nudge wrapper's separate ancestry check and its redundant-nudge behavior after helper-chain recycling.
 `tests/fm-watch-arm.test.sh` runs real watcher and arm cycles against durable on-disk state to verify that a delivered reason survives until post-handling acknowledgement and stops replaying after acknowledgement, while an unrelated queue append cannot make a watcher cycle that delivered nothing look successful.
 The same suite ingests a keyed remote-secondmate parent reply through the real adapter, establishes the incremental OPEN DECISIONS cursor, interrupts supervision, and proves re-arm replays every unacknowledged queue row plus the still-open decision through the ordinary drain path.
