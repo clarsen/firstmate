@@ -10,7 +10,10 @@
 # is a member of this process's contiguous harness ancestry, or the trusted
 # Claude session id below matches the id recorded beside a live lock. Neither
 # signal ever fails open: no id, no sidecar, an untrusted id, or a different
-# recorded id leaves the ancestry verdict exactly as it was.
+# recorded id leaves the ancestry verdict exactly as it was. Separately, a
+# conversation Claude Code moved into a background process may take over the
+# live lock its former front-end still holds, but only through bin/fm-lock.sh
+# and only on the registry proof in fm_session_lock_moved_to_self below.
 # This file is sourced by scripts and has no side effects on source.
 
 # Cursor process identity is NOT expressible as a command-name pattern and is
@@ -189,8 +192,10 @@ fm_harness_pid_alive() {
 #
 # A --fork-session successor mints a new id, so it stays a foreign live owner
 # until the pre-fork process exits; that is the safe direction and a documented
-# non-goal. Two genuinely different live sessions sharing one id is not a
-# supported state (Claude refuses to resume a running session under its id).
+# non-goal. The one exception is the successor Claude Code itself records as the
+# same conversation moved to the background (fm_session_lock_moved_to_self).
+# Two genuinely different live sessions sharing one id is not a supported state
+# (Claude refuses to resume a running session under its id).
 
 # Print the Claude session id this process may own with, or return 1. $1 is the
 # ancestry list an earlier walk already produced, so a caller that walked once
@@ -238,6 +243,150 @@ fm_session_lock_same_session() {  # <state> [<ancestry-pids>]
   trusted=$(fm_session_lock_trusted_session_id "${2:-}") || return 1
   recorded=$(fm_session_lock_recorded_session_id "$state") || return 1
   [ "$recorded" = "$trusted" ]
+}
+
+# --- a conversation moved to the background ----------------------------------
+# Claude Code's /background (alias /bg) moves a running interactive conversation
+# into its background service: the daemon starts a new model-loop process that
+# resumes the conversation's transcript under a new session id (argv
+# `--session-id <new> --fork-session --resume <old transcript>`), and the
+# original terminal process stays alive as a view of that job. The pid and the
+# id both change, so neither signal above recognizes the continuation, and the
+# lock keeps naming a live front-end that no longer runs the conversation.
+#
+# The proof is Claude Code's own peer-session registry,
+# <config>/sessions/<pid>.json (config is CLAUDE_CONFIG_DIR, else ~/.claude),
+# where every interactive and background process records its pid, sessionId,
+# kind, and procStart. Moving a conversation to the background stamps the
+# front-end's record with parkedJobId, the job it moved into, and that job's
+# model-loop process records kind "bg" with the same jobId; Claude Code links a
+# parked session to its running job by exactly that pair. Ownership may move
+# only when ALL of these hold:
+#   - this process proves a trusted Claude session id (the gate above) that
+#     differs from the id recorded beside the lock;
+#   - the recorded pid is a live Claude-shaped harness outside this ancestry;
+#   - the recorded pid's record names that pid, the recorded session id, a
+#     parkedJobId, and the recorded pid's live start time;
+#   - CLAUDE_PID's record names that pid, the trusted id, kind "bg", the same
+#     job id, and CLAUDE_PID's live start time.
+# The start time is Claude Code's own pid-reuse guard, compared in the form it
+# records: `LC_ALL=C TZ=UTC ps -o lstart=`, trimmed. A user fork, a second
+# terminal, or `claude --bg --resume` while the original still runs leaves no
+# parkedJobId on the owner's record, and Claude Code clears parkedJobId when that
+# front-end takes a new conversation, so a live owner in any of those shapes is
+# still refused. A missing, symlinked, or malformed record, or no jq, is no proof.
+
+# Print Claude Code's peer-session registry directory.
+fm_claude_session_registry_dir() {
+  local config=${CLAUDE_CONFIG_DIR:-}
+  if [ -z "$config" ]; then
+    [ -n "${HOME:-}" ] || return 1
+    config="$HOME/.claude"
+  fi
+  printf '%s/sessions\n' "$config"
+}
+
+# Print pid $1's start time exactly as Claude Code records it, or return 1.
+_fm_claude_proc_start() {  # <pid>
+  local start
+  start=$(LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null) || return 1
+  start=${start#"${start%%[![:space:]]*}"}
+  start=${start%"${start##*[![:space:]]}"}
+  [ -n "$start" ] || return 1
+  printf '%s\n' "$start"
+}
+
+# Print the value of <field> in pid $1's registry record when the record is a
+# regular file naming pid $1, session id $2, and pid $1's live start time, and
+# the field is a non-empty single-line string; otherwise return 1.
+_fm_claude_registry_field() {  # <pid> <session-id> <field>
+  local pid=$1 id=$2 field=$3 dir file start value
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  dir=$(fm_claude_session_registry_dir) || return 1
+  file="$dir/$pid.json"
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  start=$(_fm_claude_proc_start "$pid") || return 1
+  value=$(jq -r --argjson pid "$pid" --arg id "$id" --arg start "$start" --arg field "$field" '
+    select(type == "object" and .pid == $pid and .sessionId == $id and .procStart == $start)
+    | .[$field]
+    | select(type == "string" and length > 0)' "$file" 2>/dev/null) || return 1
+  [ -n "$value" ] || return 1
+  case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  printf '%s\n' "$value"
+}
+
+# True when Claude Code's registry proves that the conversation pid $1 ran as
+# session id $2 now runs as the background job process pid $3 under session id
+# $4. On failure the first unmet condition is left in
+# FM_SESSION_LOCK_MOVE_UNPROVEN, so bin/fm-lock.sh's refusal names it and a
+# registry format change surfaces as a diagnostic instead of a silent refusal.
+# shellcheck disable=SC2034 # Output global, read by bin/fm-lock.sh's refusal.
+FM_SESSION_LOCK_MOVE_UNPROVEN=
+# shellcheck disable=SC2034 # Output global, read by bin/fm-lock.sh's refusal.
+fm_claude_session_moved() {  # <from-pid> <from-session-id> <to-pid> <to-session-id>
+  local from=$1 from_id=$2 to=$3 to_id=$4 kind version job parked
+  FM_SESSION_LOCK_MOVE_UNPROVEN=
+  if ! command -v jq >/dev/null 2>&1; then
+    FM_SESSION_LOCK_MOVE_UNPROVEN="jq is not installed, so Claude Code's session records cannot be read"
+    return 1
+  fi
+  kind=$(_fm_claude_registry_field "$to" "$to_id" kind) || kind=
+  if [ "$kind" != bg ]; then
+    FM_SESSION_LOCK_MOVE_UNPROVEN="Claude Code records no background job for this session (pid $to, session $to_id)"
+    return 1
+  fi
+  version=$(_fm_claude_registry_field "$to" "$to_id" version) || version=
+  if ! job=$(_fm_claude_registry_field "$to" "$to_id" jobId); then
+    FM_SESSION_LOCK_MOVE_UNPROVEN="Claude Code${version:+ $version} records no job id for this background session (pid $to)"
+    return 1
+  fi
+  parked=$(_fm_claude_registry_field "$from" "$from_id" parkedJobId) || parked=
+  if [ "$parked" != "$job" ]; then
+    FM_SESSION_LOCK_MOVE_UNPROVEN="Claude Code${version:+ $version} does not record pid $from (session $from_id) as having moved its conversation to background job $job"
+    return 1
+  fi
+}
+
+# True when state dir $1's lock is held by a live Claude front-end whose
+# conversation Claude Code moved into this background process (see above).
+# bin/fm-lock.sh transfers the lock on this verdict; the Stop auto-arm delegates
+# to it and the turn-end guard stops calling that front-end foreign. Never an
+# ownership verdict on its own: fm_session_lock_owned_by_self is unchanged.
+# Without a trusted Claude id there is nothing to prove and no reason is left.
+# shellcheck disable=SC2034 # Output global, read by bin/fm-lock.sh's refusal.
+fm_session_lock_moved_to_self() {  # <state> [<ancestry-pids>]
+  local state=$1 pids=${2:-} lock_pid trusted recorded pid comm args
+  FM_SESSION_LOCK_MOVE_UNPROVEN=
+  [ -f "$state/.lock" ] && [ ! -L "$state/.lock" ] || return 1
+  lock_pid=$(cat "$state/.lock" 2>/dev/null || true)
+  case "$lock_pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ -z "$pids" ]; then
+    pids=$(fm_harness_ancestry_pids) || return 1
+  fi
+  trusted=$(fm_session_lock_trusted_session_id "$pids") || return 1
+  if ! recorded=$(fm_session_lock_recorded_session_id "$state"); then
+    FM_SESSION_LOCK_MOVE_UNPROVEN="no session id is recorded beside the lock"
+    return 1
+  fi
+  [ "$recorded" != "$trusted" ] || return 1
+  while IFS= read -r pid; do
+    [ "$pid" = "$lock_pid" ] && return 1
+  done <<EOF
+$pids
+EOF
+  if kill -0 "$lock_pid" 2>/dev/null && comm=$(ps -o comm= -p "$lock_pid" 2>/dev/null); then
+    args=$(ps -o args= -p "$lock_pid" 2>/dev/null)
+    fm_harness_process_matches "$comm" "$args" || FM_HARNESS_IS_CLAUDE=0
+  else
+    FM_HARNESS_IS_CLAUDE=0
+  fi
+  if [ "$FM_HARNESS_IS_CLAUDE" -ne 1 ]; then
+    FM_SESSION_LOCK_MOVE_UNPROVEN="pid $lock_pid is not a live Claude process"
+    return 1
+  fi
+  fm_claude_session_moved "$lock_pid" "$recorded" "$CLAUDE_PID" "$trusted"
 }
 
 # Print the pid bin/fm-lock.sh records on lock line 1 for this session. For a
@@ -288,7 +437,8 @@ EOF
 
 # True when state dir $1 records a live verified harness outside this process's
 # contiguous harness ancestry that was not recorded by this same trusted Claude
-# session. Sets FM_SESSION_LOCK_FOREIGN_OWNER_PID for a diagnostic caller.
+# session and is not a front-end whose conversation moved into this process.
+# Sets FM_SESSION_LOCK_FOREIGN_OWNER_PID for a diagnostic caller.
 # Malformed, missing, dead, and ancestry-uncertain locks are not foreign-owner
 # evidence.
 # shellcheck disable=SC2034 # Output global, read by the sourcing guard caller.
@@ -309,6 +459,7 @@ fm_session_lock_foreign_owner_live() {
 $pids
 EOF
   fm_session_lock_same_session "$state" "$pids" && return 1
+  fm_session_lock_moved_to_self "$state" "$pids" && return 1
   # shellcheck disable=SC2034 # Output global, read by the sourcing guard caller.
   FM_SESSION_LOCK_FOREIGN_OWNER_PID=$lock_pid
   return 0
