@@ -102,9 +102,9 @@ case "$AUTOARM_ATTEMPTS" in
   *) AUTOARM_ATTEMPTS=2 ;;
 esac
 # Seconds a quiet cycle may run before renewal; half the registered timeout.
-RENEW_AFTER=${FM_CLAUDE_AUTOARM_RENEW_AFTER:-43200}
+RENEW_AFTER=${FM_CLAUDE_AUTOARM_RENEW_AFTER:-14400}
 case "$RENEW_AFTER" in
-  ''|*[!0-9]*|0) RENEW_AFTER=43200 ;;
+  ''|*[!0-9]*|0) RENEW_AFTER=14400 ;;
 esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh

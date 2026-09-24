@@ -610,7 +610,6 @@ tests/fm-turnend-guard.test.sh
 Claude Code 2.1.281 never delivers an asyncRewake hook's exit 2 once the hook reaches its configured `timeout`.
 Its hook runner settles the command's result as code 143 when the timer fires and only then sends SIGTERM, then SIGKILL 1.5 seconds later, while the asyncRewake handler wakes the model only for result code 2, so the exit status of a hook that traps the TERM is discarded.
 A throwaway project with one Stop `asyncRewake` hook at `timeout: 5` reproduced it in both `claude -p` and an idle interactive session on a private tmux socket: the hook received TERM at 5 seconds and exited 2 with no `Stop hook feedback`, while the same hook exiting 2 on its own at 2 seconds woke the idle session.
-The same hook at `timeout: 86400` was not killed early.
 The Stop auto-arm's renewal bound exists because of this fact ([`watcher-continuity.md`](../watcher-continuity.md#ownership)).
 
 ```sh
