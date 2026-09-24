@@ -1400,6 +1400,31 @@ test_hook_claude_mode_allows_on_fresh_rewake_epoch() {
   pass "fm-turnend-guard --claude: fresh rewake epoch prevents a duplicate continuation for the same event"
 }
 
+# A user turn can end between the watcher's renew: close and the owner's renew
+# commit: the new Stop auto-arm defers to the still-open claim, then the old
+# owner commits outcome=renew and exits 2. That exit 2 is the recovery turn, so
+# the guard must not add a second one or charge the block budget for it.
+test_hook_claude_mode_allows_on_fresh_renew_epoch() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-renew-epoch")
+  : > "$dir/state/task1.meta"
+  printf 'epoch=3 owner_pid=999 outcome=renew updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+  expect_code 0 "$status" "--claude mode must allow the stop whose renewal rewake the auto-arm already owns"
+  [ -z "$out" ] || fail "--claude renew-epoch allow produced output: $out"
+  assert_absent "$dir/state/.turnend-claude-blocks" "a fresh renew epoch charged the block budget"
+
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-stale-renew-epoch")
+  : > "$dir/state/task1.meta"
+  printf 'epoch=3 owner_pid=999 outcome=renew updated_at=1\n' > "$dir/state/.claude-autoarm-epoch"
+  touch -t 202001010000 "$dir/state/.claude-autoarm-epoch"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+  expect_code 2 "$status" "a stale renew epoch must not pass for recovery under way"
+  assert_contains "$out" "TURN WOULD END BLIND" "stale-renew block must carry the blind-turn banner"
+  [ -f "$dir/state/.turnend-claude-blocks" ] || fail "a stale renew re-block did not charge the block budget"
+  pass "fm-turnend-guard --claude: a fresh renew epoch prevents a duplicate continuation; a stale one re-blocks"
+}
+
 # The 2026-08-14 lapse: a cycle armed, delivered one rewake, exited, and left its
 # owner lock behind holding a live pid. Both Stop participants read that lock as
 # "recovery is already under way", so with work in flight and a beacon 40 minutes
@@ -2244,6 +2269,7 @@ test_hook_claude_mode_allows_when_autoarm_owner_alive
 test_hook_claude_mode_repeated_failed_to_arming_interleavings_reach_fail_open
 test_hook_claude_mode_terminal_boundary_excludes_starting_owner
 test_hook_claude_mode_allows_on_fresh_rewake_epoch
+test_hook_claude_mode_allows_on_fresh_renew_epoch
 test_hook_claude_mode_blocks_on_abandoned_autoarm_claim
 test_hook_claude_mode_blocks_on_pid_reused_arming_claim
 test_hook_claude_mode_blocks_on_stuck_arming_claim
