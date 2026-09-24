@@ -85,8 +85,9 @@
 # not genuinely this task's destroys another worker's live work. Before the first
 # cleanup step, teardown verifies record exclusivity: no OTHER task record in
 # this home or any locally registered Firstmate home may name the same live path
-# in its worktree= or home=. One live path with two task records is the reuse
-# collision itself, whichever record is stale.
+# in its worktree=, home=, or a reference member's worktree (the same scan
+# covers each of this task's own members). One live path with two task records
+# is the reuse collision itself, whichever record is stale.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
 # have exited and its record been cleaned up, or it may live in a home this
@@ -136,6 +137,15 @@
 # Orca tasks use the same safety checks, then close the recorded terminal and
 # remove the recorded worktree through `orca worktree rm`; teardown never guesses
 # an Orca target from ambient CLI state.
+# Reference members (bin/fm-task-members-lib.sh) are read-only scratch copies
+# of other projects, so no landed-work check applies to them. Under each member
+# project's lock, and before any destructive step, teardown reads every member's
+# slot claim and Treehouse lease: a claim naming another task or a lease this
+# task no longer holds leaves that slot alone, while an unreadable claim or pool
+# status refuses. Held members are returned, discarding whatever was left in
+# them, before the task's own copy; a failed member return aborts the
+# teardown there, and a rerun skips members already returned. A forced
+# secondmate retirement returns its children's members the same way.
 # A Herdr presentation journal never authorizes cleanup. Teardown still closes
 # only the exact task pane from ordinary endpoint metadata and never calls
 # `workspace close`. It retires the non-authoritative journal only when a
@@ -317,6 +327,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-task-members-lib.sh
+. "$SCRIPT_DIR/fm-task-members-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -393,6 +405,8 @@ DESCENDANT_TASK_IDS=()
 DESCENDANT_TASK_KINDS=()
 DESCENDANT_TASK_HOMES=()
 DESCENDANT_TREEHOUSE_LOCK_PATHS=()
+TEARDOWN_MEMBER_LOCK_PATHS=()
+TEARDOWN_MEMBER_ACTIONS=()
 teardown_release_locks() {
   local status=$? i
   if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
@@ -402,6 +416,10 @@ teardown_release_locks() {
     fm_lock_release "${DESCENDANT_LOCK_PATHS[$i]}" || true
   done
   DESCENDANT_LOCK_PATHS=()
+  for ((i=${#TEARDOWN_MEMBER_LOCK_PATHS[@]} - 1; i >= 0; i--)); do
+    fm_lock_release "${TEARDOWN_MEMBER_LOCK_PATHS[$i]}" || true
+  done
+  TEARDOWN_MEMBER_LOCK_PATHS=()
   if [ -n "${HANDOFF_WAKE_RETIRE_LOCK:-}" ]; then
     fm_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || true
     HANDOFF_WAKE_RETIRE_LOCK=
@@ -2276,7 +2294,7 @@ collect_local_firstmate_states() {
 
 require_exclusive_worktree_slot_record() {
   local record_meta=$1 record_id=$2 record_state=$3 worktree=$4
-  local slot state_dir other other_id field other_path other_slot
+  local slot state_dir other other_id field other_path other_slot other_paths
   slot=$(canonical_existing_dir "$worktree") || return 0
   collect_local_firstmate_states "$record_state" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
@@ -2284,15 +2302,22 @@ require_exclusive_worktree_slot_record() {
       [ -f "$other" ] && [ ! -L "$other" ] || continue
       [ "$other" != "$record_meta" ] || continue
       other_id=$(basename "$other" .meta)
-      for field in worktree home; do
-        other_path=$(fm_meta_get "$other" "$field")
-        [ -n "$other_path" ] || continue
-        other_slot=$(canonical_existing_dir "$other_path") || continue
-        [ "$other_slot" = "$slot" ] || continue
-        echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
-        echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
-        echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
-        return 1
+      for field in worktree home member; do
+        if [ "$field" = member ]; then
+          other_paths=$(fm_member_records "$other" | cut -d "$FM_MEMBER_FS" -f 3)
+        else
+          other_paths=$(fm_meta_get "$other" "$field")
+        fi
+        while IFS= read -r other_path; do
+          [ -n "$other_path" ] || continue
+          other_slot=$(canonical_existing_dir "$other_path") || continue
+          [ "$other_slot" = "$slot" ] || continue
+          [ "$field" != member ] || field="reference member worktree"
+          echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
+          echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
+          echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
+          return 1
+        done <<<"$other_paths"
       done
     done
   done
@@ -2368,6 +2393,97 @@ require_owned_task_worktree_slot() {
 
 teardown_owns_worktree() {
   [ "$TEARDOWN_SLOT_REASSIGNED" != 1 ]
+}
+
+# Reference members (bin/fm-task-members-lib.sh owns the contract) are scratch
+# copies of other projects: cleanup discards whatever is left in them and
+# returns each slot, but only while its claim is not another task's and
+# Treehouse still reports this task's own lease on it, so a slot that has since
+# gone back to its pool is never reset. teardown_members_preflight decides that
+# for every member of one task record before any destructive step and refuses
+# on anything it cannot read; teardown_members_return then acts on exactly
+# those decisions. Every step runs under that member project's lock, taken by
+# teardown_member_locks_for_meta like the task's own slot lock.
+teardown_member_locks_for_meta() {  # <meta> <label>
+  local meta=$1 label=$2 row name project rest lock held
+  while IFS= read -r row; do
+    IFS=$FM_MEMBER_FS read -r name project rest <<<"$row"
+    [ -n "$name" ] || continue
+    [ -n "$project" ] && [ -d "$project" ] || continue
+    lock=$(fm_treehouse_project_lock_path "$project") || {
+      echo "REFUSED: cannot resolve the shared Treehouse project lock for $label's reference member $name ($project); nothing was changed" >&2
+      return 1
+    }
+    [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || [ "$TREEHOUSE_PROJECT_LOCK" != "$lock" ] || continue
+    for held in "${TEARDOWN_MEMBER_LOCK_PATHS[@]+"${TEARDOWN_MEMBER_LOCK_PATHS[@]}"}" \
+      "${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]+"${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]}"}"; do
+      [ "$held" != "$lock" ] || continue 2
+    done
+    fm_lock_try_acquire "$lock" || {
+      echo "REFUSED: another Treehouse slot allocation or return is in progress for $label's reference member $name ($project); nothing was changed" >&2
+      return 1
+    }
+    TEARDOWN_MEMBER_LOCK_PATHS+=("$lock")
+  done < <(fm_member_records "$meta")
+}
+
+teardown_members_preflight() {  # <meta> <task-id>
+  local meta=$1 id=$2 row name project wt commit lease root rc
+  while IFS= read -r row; do
+    IFS=$FM_MEMBER_FS read -r name project wt _ _ commit lease root <<<"$row"
+    [ -n "$name" ] || continue
+    if [ -z "$wt" ] || [ ! -d "$wt" ] || [ -z "$project" ] || [ ! -d "$project" ]; then
+      echo "warning: task $id's reference member $name copy '${wt:-<none>}' or its project '${project:-<none>}' no longer exists; there is nothing of it to return" >&2
+      continue
+    fi
+    fm_treehouse_slot_owner_state "$wt" "$id"
+    case "$FM_TREEHOUSE_SLOT_OWNER" in
+      other)
+        echo "warning: task $id's reference member $name copy $wt now belongs to task $FM_TREEHOUSE_SLOT_OWNER_ID; leaving it untouched" >&2
+        continue
+        ;;
+      unsafe)
+        echo "REFUSED: task $id's reference member $name copy $wt carries a slot-owner claim that cannot be read; nothing was changed. Inspect or repair $(fm_treehouse_slot_owner_marker "$wt" 2>/dev/null || echo "the claim beside $wt"), then re-run teardown." >&2
+        return 1
+        ;;
+    esac
+    require_exclusive_worktree_slot_record "$meta" "$id" "$(dirname "$meta")" "$wt" || return 1
+    rc=0
+    fm_member_lease_state "$project" "$root" "$wt" "$lease" || rc=$?
+    case "$rc" in
+      0) TEARDOWN_MEMBER_ACTIONS+=("return$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit") ;;
+      1)
+        echo "warning: task $id's reference member $name copy $wt no longer carries this task's lease; leaving the slot to its pool" >&2
+        TEARDOWN_MEMBER_ACTIONS+=("release$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit")
+        ;;
+      *)
+        echo "REFUSED: cannot tell whether task $id still holds reference member $name copy $wt ($FM_MEMBER_ERROR); nothing was changed" >&2
+        return 1
+        ;;
+    esac
+  done < <(fm_member_records "$meta")
+}
+
+teardown_members_return() {  # <meta>
+  local row action meta id name project wt lease commit head
+  for row in "${TEARDOWN_MEMBER_ACTIONS[@]+"${TEARDOWN_MEMBER_ACTIONS[@]}"}"; do
+    IFS=$FM_MEMBER_FS read -r action meta id name project wt lease commit <<<"$row"
+    [ "$meta" = "$1" ] || continue
+    if [ "$action" = return ]; then
+      head=$(git -C "$wt" rev-parse --verify --quiet HEAD 2>/dev/null) || head=
+      if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -n 1)" ] ||
+        { [ -n "$commit" ] && [ "$head" != "$commit" ]; }; then
+        echo "teardown: discarding what was left in task $id's reference member $name copy $wt (members are read-only scratch)" >&2
+      fi
+      # Treehouse's own return stops what still runs in the copy and resets it.
+      if ! fm_member_return "$project" "$wt" "$lease"; then
+        echo "error: could not return task $id's reference member $name copy $wt ($FM_MEMBER_ERROR); teardown aborted" >&2
+        return 1
+      fi
+      echo "teardown: returned task $id's reference member $name copy $wt" >&2
+    fi
+    fm_treehouse_slot_owner_release "$wt" "$id"
+  done
 }
 
 firstmate_home_has_treehouse_slot() {
@@ -2854,6 +2970,7 @@ preflight_descendant_treehouse_slots() {
     if [ "$kind" = secondmate ] || [ "$backend" = orca ]; then
       continue
     fi
+    teardown_member_locks_for_meta "$meta" "child $task_id" || return 1
     if ! fm_treehouse_pool_slot "$project" "$worktree"; then
       continue
     fi
@@ -2863,7 +2980,8 @@ preflight_descendant_treehouse_slots() {
     }
     held=0
     [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || [ "$TREEHOUSE_PROJECT_LOCK" != "$lock_path" ] || held=1
-    for target in "${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]+"${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]}"}"; do
+    for target in "${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]+"${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]}"}" \
+      "${TEARDOWN_MEMBER_LOCK_PATHS[@]+"${TEARDOWN_MEMBER_LOCK_PATHS[@]}"}"; do
       [ "$target" != "$lock_path" ] || held=1
     done
     if [ "$held" = 0 ]; then
@@ -2887,6 +3005,7 @@ preflight_descendant_treehouse_slots() {
     if [ "$kind" = secondmate ] || [ "$backend" = orca ]; then
       continue
     fi
+    teardown_members_preflight "$meta" "$task_id" || return 1
     if ! fm_treehouse_pool_slot "$project" "$worktree"; then
       continue
     fi
@@ -3157,6 +3276,7 @@ cleanup_firstmate_home_children() {
           || { endpoint_close_refusal "child $child_id" "$child_backend" "$child_t" 0; return 1; }
       fi
     fi
+    [ "$child_kind" = secondmate ] || teardown_members_return "$child_meta" || return 1
     if [ "$child_kind" = secondmate ]; then
       child_home=$(meta_value "$child_meta" home)
       [ -n "$child_home" ] || child_home=$child_wt
@@ -3241,6 +3361,8 @@ remove_secondmate_registry_entry() {
 
 require_exclusive_task_worktree_slot || exit 1
 require_owned_task_worktree_slot || exit 1
+teardown_member_locks_for_meta "$META" "task $ID" || exit 1
+teardown_members_preflight "$META" "$ID" || exit 1
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
@@ -3475,6 +3597,10 @@ fi
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
 # pruned code root. Best effort - a sweep failure never blocks this teardown.
 "$SCRIPT_DIR/fm-remote-job-reap-orphans.sh" >&2 || true
+
+# Reference members go back before the task's own copy, so a failed member
+# return stops while the task's own copy and records still name it for a rerun.
+teardown_members_return "$META" || exit 1
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then

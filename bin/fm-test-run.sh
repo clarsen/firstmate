@@ -374,7 +374,7 @@ family_for_basename() {
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
     fm-spawn-compact-adviser-disable-remote.test.sh|fm-spawn-project-setup.test.sh|\
-    fm-spawn-home-pool-isolation.test.sh|\
+    fm-spawn-home-pool-isolation.test.sh|fm-spawn-ref-members.test.sh|\
     fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
       ;;
