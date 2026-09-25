@@ -32,7 +32,11 @@
 #                          human the wait is on. Only when neither absorb class
 #                          applies does the log's latest recognized status event decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
-#                          both surfaced at once. A provably-working stale past the
+#                          both surfaced at once, except that a terminal one
+#                          whose work is finished and handed on - a ship with a
+#                          registered merge poll or a scout with its report,
+#                          reading done with a not-dead agent - is absorbed
+#                          (stale_terminal_ready). A provably-working stale past the
 #                          wedge threshold also surfaces, with an "escalation N"
 #                          count in the reason; at FM_WEDGE_DEMAND_INSPECT_COUNT
 #                          consecutive escalations on the SAME pane, the reason
@@ -142,6 +146,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 mkdir -p "$STATE"
 
 # The native event fast-path and only its true dependencies have one narrow
@@ -1699,6 +1704,32 @@ captain_call_stale_bound() {  # <window-key> <task>
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
+# 0 when a stale window's work is finished and already handed on, so an idle
+# pane has nothing left to say: a ship whose PR merge poll is registered, or a
+# scout whose report exists, AND whose authoritative current state reads done.
+# Its done: status already woke firstmate, and the merge poll or the report now
+# carries the outcome, so re-alarming on every pane tick only forces no-op turns.
+# The registered poll and the report are what the supervisor produced after
+# reading that done, so they are checked first and keep the fm-crew-state.sh
+# read off every other task's path. The current-state read is what keeps a
+# later blocker, decision, or unpushed head (fm-dod-lib.sh's named-head gate)
+# alarming. An endpoint whose agent is positively dead is never absorbed here,
+# so a genuine liveness failure still surfaces.
+stale_terminal_ready() {  # <window> <task>
+  local win=$1 task=$2 line state
+  [ -n "$task" ] || return 1
+  case "$(window_kind "$win")" in
+    ship) fm_pr_poll_artifacts_valid "$STATE" "$task" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1 ;;
+    scout) [ -f "$DATA/$task/report.md" ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  [ "$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null)" != dead ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || return 1
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = "done" ]
+}
+
 # Surface a stale pane no classifier could resolve, so firstmate inspects it: it
 # may have finished through an interactive menu that wrote no status, be waiting on
 # a decision, or be wedged. pause_state_class deliberately answers `none` for a
@@ -2830,7 +2861,12 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            if stale_terminal_ready "$w" "$task"; then
+              printf '%s' "$h" > "$sf"
+              rm -f "$ssf"
+              clear_write_tracking "$key"
+              triage_log "absorbed stale (finished and handed on: merge poll registered or report written): $w"
+            elif crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               clear_write_tracking "$key"
