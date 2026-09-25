@@ -33,7 +33,10 @@
 #     the spawn started in another member;
 #   - cleanup refuses while any edit member holds unlanded work, refuses a
 #     --discard-member naming no edit member, and otherwise returns each landed
-#     or named member, dropping its branch.
+#     or named member, dropping its branch;
+#   - an edit member whose copy is gone still refuses cleanup while its branch
+#     holds unlanded work, and passes once its recorded PR has merged with that
+#     work, though the branch is on no remote.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -835,6 +838,43 @@ test_real_edit_member_discard_names_one_repository() {
   pass "--discard-member discards exactly the named edit member's unlanded work and returns it"
 }
 
+test_real_edit_member_gone_copy_passes_on_its_merged_pr() {
+  local dir="$TMP_ROOT/edit-gone" home fakebin id=edit-g1 out meta api head
+  local url=https://github.com/o/contract/pull/3
+  real_treehouse_available || { printf '# real-treehouse edit member gone-copy case not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_edit_home "$home"
+  fakebin=$(make_edit_fakebin "$dir/fake")
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1 $2" = "pr view" ] || exit 1
+printf '%s\t%s\t%s\n' "${FM_TEST_PR_STATE:?}" "${FM_TEST_PR_HEAD:?}" "$3"
+SH
+  chmod +x "$fakebin/gh"
+  out=$(run_ship_spawn "$home" "$fakebin" "$dir/pane" "$id" --member api=projects/contract:edit)
+  expect_code 0 "$?" "a ship spawn with an edit member should launch"$'\n'"$out"
+  meta="$home/state/$id.meta"
+  api=$(meta_value "$meta" member.api.worktree)
+  member_commit "$api" "api change"
+  head=$(git -C "$api" rev-parse HEAD)
+  printf 'member.api.pr=%s\n' "$url" >> "$meta"
+  git -C "$home/projects/contract" worktree remove --force "$api" || fail "could not remove the api copy"
+  git -C "$home/projects/contract" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "removing the api copy dropped its branch"
+
+  if out=$(FM_TEST_PR_STATE=OPEN FM_TEST_PR_HEAD=$head run_plain_teardown "$home" "$fakebin" "$id"); then
+    fail "cleanup returned a task whose gone edit member's branch holds work its open PR has not landed"$'\n'"$out"
+  fi
+  assert_contains "$out" "edit member api has no copy this task still holds" "the refusal did not name the gone edit member"
+  [ -f "$meta" ] || fail "a refused cleanup removed the task record"
+
+  out=$(FM_TEST_PR_STATE=MERGED FM_TEST_PR_HEAD=$head run_plain_teardown "$home" "$fakebin" "$id")
+  expect_code 0 "$?" "cleanup should pass a gone edit member whose recorded PR merged its branch's work"$'\n'"$out"
+  [ ! -e "$meta" ] || fail "cleanup kept the task record"
+  pass "a gone edit member's branch refuses cleanup until its recorded PR has merged that work"
+}
+
 test_real_edit_member_failure_returns_every_lease_and_branch() {
   local dir="$TMP_ROOT/edit-rollback" home fakebin id=edit-r1 out status
   real_treehouse_available || { printf '# real-treehouse edit member rollback case not run: treehouse or jq is not installed\n'; return 0; }
@@ -869,6 +909,7 @@ test_real_forced_retirement_returns_child_members
 test_relaunch_shows_edit_members_and_refuses_a_missing_one
 test_real_edit_members_are_branched_recorded_and_briefed
 test_real_edit_member_discard_names_one_repository
+test_real_edit_member_gone_copy_passes_on_its_merged_pr
 test_real_edit_member_failure_returns_every_lease_and_branch
 
 echo "# all fm-spawn-members tests passed"

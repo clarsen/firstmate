@@ -2,10 +2,13 @@
 # Regression tests for PR delivery of a task that changes several repositories
 # through edit members (bin/fm-task-members-lib.sh). They drive the real
 # fm-pr-check.sh and fm-pr-merge.sh entry points against a fake forge and prove:
-#   - a PR is resolved to its repository by origin, recorded under that
+#   - a PR is resolved to its repository by any remote, recorded under that
 #     repository's own key ahead of pr=, and gated on that repository's own
 #     copy and delivery mode;
 #   - a PR of no repository of the task is refused;
+#   - a PR is matched against every remote of a repository, so a fork's
+#     upstream and an ssh host alias (resolved with `ssh -G`) both place it,
+#     and a PR two repositories of the task both match is refused;
 #   - pr= moves to another repository only once the PR in delivery has a
 #     recorded merge or the forge reports it closed without merging, and a
 #     merged PR whose merge is not recorded yet still holds it;
@@ -196,11 +199,47 @@ test_pr_of_no_repository_of_the_task_is_refused() {
   if run_entry "$dir" "$PR_CHECK" task-a https://github.com/o/other/pull/1 > "$dir/out" 2> "$dir/err"; then
     fail "a PR of no repository of the task was registered"
   fi
-  assert_grep "is not the origin of this task's own repository or of any of its edit members" "$dir/err" \
+  assert_grep "is not a remote of this task's own repository or of any of its edit members" "$dir/err" \
     "the refusal did not say the PR belongs to no repository of the task"
   cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" || fail "a refused registration changed the task record"
   [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "a refused registration armed a poll"
   pass "a PR of no repository of the task is refused before anything is recorded"
+}
+
+test_pr_matches_any_remote_of_a_repository() {
+  local dir
+  dir=$(make_case fork)
+  git -C "$dir/api-project" remote set-url origin git@github.com:me/api.git
+  git -C "$dir/api-project" remote add upstream https://github.com/o/api.git
+  run_entry "$dir" "$PR_CHECK" task-a "$API_URL" > "$dir/out" 2> "$dir/err" \
+    || fail "a member PR opened on its fork's upstream was refused: $(cat "$dir/err")"
+  assert_line "member.api.pr=$API_URL" "$dir/home/state/task-a.meta" "the upstream PR is not recorded under the fork's repository"
+
+  dir=$(make_case alias)
+  git -C "$dir/api-project" remote set-url origin git@github-work:o/api.git
+  cat > "$dir/fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = -G ] || exit 255
+case "$2" in
+  github-work) printf 'user git\nhostname github.com\nport 22\n' ;;
+  *) printf 'user git\nhostname %s\nport 22\n' "$2" ;;
+esac
+SH
+  chmod +x "$dir/fakebin/ssh"
+  run_entry "$dir" "$PR_CHECK" task-a "$API_URL" > "$dir/out" 2> "$dir/err" \
+    || fail "a member PR whose origin uses an ssh host alias was refused: $(cat "$dir/err")"
+  assert_line "member.api.pr=$API_URL" "$dir/home/state/task-a.meta" "the aliased origin's PR is not recorded under its repository"
+
+  dir=$(make_case ambiguous)
+  git -C "$dir/proj" remote add api https://github.com/o/api.git
+  cp "$dir/home/state/task-a.meta" "$dir/meta.before"
+  if run_entry "$dir" "$PR_CHECK" task-a "$API_URL" > "$dir/out" 2> "$dir/err"; then
+    fail "a PR two repositories of the task both match was registered"
+  fi
+  assert_grep "is a remote of both this task's own repository and edit member api, so its repository is ambiguous" "$dir/err" \
+    "the refusal did not say the PR's repository is ambiguous"
+  cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" || fail "a refused registration changed the task record"
+  pass "a PR is placed by any remote of its repository, through an ssh host alias too, and refused when ambiguous"
 }
 
 test_delivery_moves_between_repositories_only_after_merge() {
@@ -272,6 +311,7 @@ test_merge_binds_to_the_pr_in_delivery() {
 test_member_pr_records_under_its_repository
 test_member_named_head_gate_reads_the_member_copy
 test_pr_of_no_repository_of_the_task_is_refused
+test_pr_matches_any_remote_of_a_repository
 test_delivery_moves_between_repositories_only_after_merge
 test_merge_binds_to_the_pr_in_delivery
 

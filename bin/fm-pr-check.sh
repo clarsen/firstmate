@@ -18,8 +18,8 @@
 # skips this refusal, because its own merge-time draft refusal is authoritative.
 # A task with edit members (bin/fm-task-members-lib.sh owns that delivery
 # model) ships one PR per repository. Here the PR's repository is resolved by
-# origin - the task's own or one edit member's; a PR of no repository of the
-# task refuses - and its copy, clone, and delivery mode stand in for the
+# remote - the task's own or one edit member's; a PR matching no repository of
+# the task, or several, refuses - and its copy, clone, and delivery mode stand in for the
 # task's own in the head read, the named-head gate, and the ready line. The PR
 # is also recorded for its repository (member.<name>.pr= and .pr_head=, or
 # anchor_pr= and anchor_pr_head= for the task's own), while pr= and pr_head=

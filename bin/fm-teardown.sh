@@ -1477,9 +1477,9 @@ patch_id_for_commit() {
     | awk 'NR == 1 { print $1 }'
 }
 
-unpushed_patches_are_in_pr_head() {
-  local pr_head=$1 current base pr_patch_ids commit patch_id unpushed
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+unpushed_patches_are_in_pr_head() {  # <pr-head> <rev>
+  local pr_head=$1 rev=$2 current base pr_patch_ids commit patch_id unpushed
+  current=$(git -C "$WT" rev-parse --verify "$rev" 2>/dev/null) || return 1
   base=$(git -C "$WT" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
   pr_patch_ids=$(
     git -C "$WT" log --format=%H "$base..$pr_head" -- 2>/dev/null \
@@ -1490,7 +1490,7 @@ unpushed_patches_are_in_pr_head() {
       | sort -u
   ) || return 1
   [ -n "$pr_patch_ids" ] || return 1
-  unpushed=$(git -C "$WT" log --format=%H HEAD --not --remotes -- 2>/dev/null) || return 1
+  unpushed=$(git -C "$WT" log --format=%H "$rev" --not --remotes -- 2>/dev/null) || return 1
   [ -n "$unpushed" ] || return 1
   while IFS= read -r commit; do
     [ -n "$commit" ] || continue
@@ -1502,13 +1502,13 @@ $unpushed
 EOF
 }
 
-# Is the worktree's PR merged for local work contained in that PR? Resolves the
+# Is the worktree's PR merged for local work at <rev> contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
 # for both the PR state and head. Returns non-zero when the PR is not merged, the
 # current work is not contained in the PR head, no PR is found, or any gh error
 # occurs - the caller then falls back to the content check.
-pr_is_merged() {
-  local branch=$1 target view state remainder head resolved_url current landed=0
+pr_is_merged() {  # <branch> <rev>
+  local branch=$1 rev=$2 target view state remainder head resolved_url current landed=0
   if [ -n "$PR_URL" ]; then
     target=$PR_URL
   else
@@ -1528,10 +1528,10 @@ pr_is_merged() {
   esac
   [ -n "$head" ] || return 1
   ensure_commit_object "$target" "$head" || return 1
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  current=$(git -C "$WT" rev-parse --verify "$rev" 2>/dev/null) || return 1
   if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
     landed=1
-  elif unpushed_patches_are_in_pr_head "$head"; then
+  elif unpushed_patches_are_in_pr_head "$head" "$rev"; then
     landed=1
   fi
   [ "$landed" = 1 ] || return 1
@@ -1542,15 +1542,15 @@ pr_is_merged() {
   return 0
 }
 
-# Is the branch's content already present in the up-to-date default branch? Fetches
-# first, then 3-way merges the default branch with HEAD: when HEAD introduces nothing
+# Is the content at <rev> already present in the up-to-date default branch? Fetches
+# first, then 3-way merges the default branch with <rev>: when <rev> introduces nothing
 # the default branch does not already contain (e.g. its change landed via squash) the
 # merged tree equals the default branch's tree. This isolates branch-only changes, so
 # unrelated commits the default branch gained past the merge-base do not count as
 # "added". Returns non-zero when inconclusive (no default ref, or a merge conflict),
 # so the caller refuses rather than guesses.
-content_in_default() {
-  local name ref default_tree merged_tree
+content_in_default() {  # <rev>
+  local rev=$1 name ref default_tree merged_tree
   name=$(default_branch) || return 1
   if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
     git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
@@ -1562,20 +1562,20 @@ content_in_default() {
   fi
   default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
   [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
+  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" "$rev" 2>/dev/null) || return 1
   merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
   [ "$merged_tree" = "$default_tree" ]
 }
 
-# Has the worktree's committed work actually LANDED, though its commits are not
-# reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
+# Has the worktree's committed work at <rev> actually LANDED, though its commits are
+# not reachable from any remote-tracking branch? True when a merged PR proves that
+# local work is contained in the PR head, OR the content is already in the
 # default branch (fallback, which also covers the no-PR and gh-error paths). False
 # only for genuinely unlanded work.
-work_is_landed() {
-  local branch=$1
-  pr_is_merged "$branch" && return 0
-  content_in_default
+work_is_landed() {  # <branch> <rev>
+  local branch=$1 rev=$2
+  pr_is_merged "$branch" "$rev" && return 0
+  content_in_default "$rev"
 }
 
 # The completion links this teardown already holds locally. A scout's
@@ -1899,7 +1899,7 @@ validate_worktree_teardown_safety() {
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
-    if ! work_is_landed "$branch"; then
+    if ! work_is_landed "$branch" HEAD; then
       echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
       printf 'unpushed commits:\n%s\n' "$unpushed" >&2
       echo "Push the branch, land its PR, or get the captain's explicit OK to discard, then --force." >&2
@@ -2494,12 +2494,13 @@ teardown_member_discard_named() {  # <name>
 }
 
 # An edit member whose copy this task no longer holds (gone, reassigned, or no
-# longer leased) still has its branch fm/<task-id> in the member's clone. With
-# no copy to run the landed-work test in, any commit on that branch that is
-# neither on a remote nor on the clone's local default branch refuses, unless
-# its work is being discarded.
-teardown_edit_member_branch_check() {  # <task-id> <name> <project>
-  local id=$1 name=$2 project=$3 branch="fm/$1" default unlanded
+# longer leased) still has its branch fm/<task-id> in the member's clone. Any
+# commit on that branch that is neither on a remote nor on the clone's local
+# default branch refuses, unless its work is being discarded or the task's own
+# landed-work test (work_is_landed), run on that branch in the clone against
+# the member's recorded PR, proves it landed.
+teardown_edit_member_branch_check() {  # <meta> <task-id> <name> <project>
+  local meta=$1 id=$2 name=$3 project=$4 branch="fm/$2" default unlanded
   [ "$FORCE" != --force ] || return 0
   ! teardown_member_discard_named "$name" || return 0
   [ -n "$project" ] && [ -d "$project" ] || return 0
@@ -2511,10 +2512,19 @@ teardown_edit_member_branch_check() {  # <task-id> <name> <project>
     unlanded=$(git -C "$project" log --oneline "refs/heads/$branch" --not --remotes -- 2>/dev/null) || unlanded='?'
   fi
   [ -n "$unlanded" ] || return 0
-  echo "REFUSED: task $id's edit member $name has no copy this task still holds, and its branch $branch in $project has work that is not on a remote or on its default branch; nothing was changed." >&2
+  [ "$unlanded" = '?' ] || ! teardown_edit_member_branch_landed "$meta" "$name" "$project" "$branch" || return 0
+  echo "REFUSED: task $id's edit member $name has no copy this task still holds, and its branch $branch in $project has work that is not on a remote or on its default branch and has not landed; nothing was changed." >&2
   printf '%s\n' "$unlanded" | head -5 >&2
   echo "Land that work, or re-run with --discard-member $name on the captain's explicit instruction to discard it." >&2
   return 1
+}
+
+# Bash's dynamic scoping makes these locals the PROJ, WT, and PR_URL that
+# work_is_landed and its helpers read and set, run in the member's clone.
+teardown_edit_member_branch_landed() {  # <meta> <name> <project> <branch>
+  local PROJ=$3 WT=$3 PR_URL
+  PR_URL=$(fm_member_meta_field "$1" "$2" pr)
+  work_is_landed "$4" "refs/heads/$4"
 }
 
 # The landed-work test for one held edit member copy: the same
@@ -2566,7 +2576,7 @@ teardown_members_preflight() {  # <meta> <task-id>
     label=$(teardown_member_label "$role")
     if [ -z "$wt" ] || [ ! -d "$wt" ] || [ -z "$project" ] || [ ! -d "$project" ]; then
       if [ "$role" = edit ]; then
-        teardown_edit_member_branch_check "$id" "$name" "$project" || return 1
+        teardown_edit_member_branch_check "$meta" "$id" "$name" "$project" || return 1
       fi
       echo "warning: task $id's $label $name copy '${wt:-<none>}' or its project '${project:-<none>}' no longer exists; there is nothing of it to return" >&2
       continue
@@ -2575,7 +2585,7 @@ teardown_members_preflight() {  # <meta> <task-id>
     case "$FM_TREEHOUSE_SLOT_OWNER" in
       other)
         if [ "$role" = edit ]; then
-          teardown_edit_member_branch_check "$id" "$name" "$project" || return 1
+          teardown_edit_member_branch_check "$meta" "$id" "$name" "$project" || return 1
         fi
         echo "warning: task $id's $label $name copy $wt now belongs to task $FM_TREEHOUSE_SLOT_OWNER_ID; leaving it untouched" >&2
         continue
@@ -2592,7 +2602,7 @@ teardown_members_preflight() {  # <meta> <task-id>
       0) TEARDOWN_MEMBER_ACTIONS+=("return$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit$FM_MEMBER_FS$role") ;;
       1)
         if [ "$role" = edit ]; then
-          teardown_edit_member_branch_check "$id" "$name" "$project" || return 1
+          teardown_edit_member_branch_check "$meta" "$id" "$name" "$project" || return 1
         fi
         echo "warning: task $id's $label $name copy $wt no longer carries this task's lease; leaving the slot to its pool" >&2
         TEARDOWN_MEMBER_ACTIONS+=("release$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit$FM_MEMBER_FS$role")

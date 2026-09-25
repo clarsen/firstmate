@@ -346,33 +346,54 @@ fm_member_brief_section() {  # <task-id>
   fi
 }
 
-# The host/path identity of <dir>'s origin remote, lower-cased and without a
-# trailing .git or slash, or nothing when there is no origin or its URL is not
-# a network URL. Accepts https, http, ssh, and git URLs and the scp-like
-# user@host:path form.
-fm_member_origin_identity() {  # <dir>
-  local url rest host path
-  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0
+# The host/path identity of a remote URL, lower-cased and without a trailing
+# .git or slash, or nothing when it is not a network URL. Accepts https, http,
+# ssh, and git URLs and the scp-like user@host:path form. An ssh or scp host
+# is resolved to its real hostname with `ssh -G` (configuration only, no
+# connection), so a host alias such as git@github-work:o/r names github.com.
+fm_member_url_identity() {  # <url>
+  local url=$1 rest host path ssh_host=0 real
   case "$url" in
-    https://* | http://* | ssh://* | git://* | git+ssh://*)
+    https://* | http://* | git://*)
       rest=${url#*://}
-      rest=${rest#*@}
-      host=${rest%%/*}
-      path=${rest#*/}
-      [ "$path" != "$rest" ] || return 0
-      host=${host%%:*}
+      ;;
+    ssh://* | git+ssh://*)
+      rest=${url#*://}
+      ssh_host=1
       ;;
     *@*:*)
       rest=${url#*@}
       host=${rest%%:*}
       path=${rest#*:}
+      ssh_host=1
       ;;
     *) return 0 ;;
   esac
+  if [ -z "${host:-}" ]; then
+    rest=${rest#*@}
+    host=${rest%%/*}
+    path=${rest#*/}
+    [ "$path" != "$rest" ] || return 0
+    host=${host%%:*}
+  fi
+  if [ "$ssh_host" = 1 ] && [ -n "$host" ]; then
+    real=$(ssh -G "$host" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }') || real=
+    [ -z "$real" ] || host=$real
+  fi
   path=${path%/}
   path=${path%.git}
   [ -n "$host" ] && [ -n "$path" ] || return 0
   printf '%s/%s\n' "$host" "$path" | tr '[:upper:]' '[:lower:]'
+}
+
+# 0 when some remote of <dir> has the host/path identity <want>.
+fm_member_has_remote() {  # <dir> <want>
+  local remote url
+  while IFS= read -r remote; do
+    url=$(git -C "$1" remote get-url "$remote" 2>/dev/null) || continue
+    [ "$(fm_member_url_identity "$url")" != "$2" ] || return 0
+  done < <(git -C "$1" remote 2>/dev/null)
+  return 1
 }
 
 # Set FM_MEMBER_MATCH_* to the task's own repository.
@@ -403,27 +424,33 @@ fm_member_match_edit() {  # <meta> <name>
 }
 
 # Which repository of a task a PR at <host>/<path> belongs to: the task's own
-# (FM_MEMBER_MATCH_NAME empty) or an edit member, matched by origin identity.
-# Sets FM_MEMBER_MATCH_{NAME,WORKTREE,PROJECT,MODE,YOLO}; returns 1 with
-# FM_MEMBER_ERROR when no repository of the task has that origin. A PR is
-# matched against every repository the task delivers, never a ref member.
+# (FM_MEMBER_MATCH_NAME empty) or an edit member, matched against every remote
+# of each repository, the task's own first. Sets
+# FM_MEMBER_MATCH_{NAME,WORKTREE,PROJECT,MODE,YOLO}; returns 1 with
+# FM_MEMBER_ERROR when no repository of the task has such a remote, or when
+# more than one does. A PR is matched against every repository the task
+# delivers, never a ref member.
 fm_member_resolve_pr_repo() {  # <meta> <host> <path>
-  local meta=$1 want row name project rest
+  local meta=$1 want row name project rest matched=
   FM_MEMBER_ERROR=
   want=$(printf '%s/%s' "$2" "$3" | tr '[:upper:]' '[:lower:]')
   fm_member_match_anchor "$meta"
-  if [ -n "$FM_MEMBER_MATCH_PROJECT" ] && [ "$(fm_member_origin_identity "$FM_MEMBER_MATCH_PROJECT")" = "$want" ]; then
-    return 0
+  if [ -n "$FM_MEMBER_MATCH_PROJECT" ] && fm_member_has_remote "$FM_MEMBER_MATCH_PROJECT" "$want"; then
+    matched="this task's own repository"
   fi
   while IFS= read -r row; do
     IFS=$FM_MEMBER_FS read -r name project rest <<<"$row"
     [ -n "$project" ] || continue
-    if [ "$(fm_member_origin_identity "$project")" = "$want" ]; then
-      fm_member_match_edit "$meta" "$name"
-      return
+    fm_member_has_remote "$project" "$want" || continue
+    if [ -n "$matched" ]; then
+      FM_MEMBER_ERROR="$2/$3 is a remote of both $matched and edit member $name, so its repository is ambiguous"
+      return 1
     fi
+    matched="edit member $name"
+    fm_member_match_edit "$meta" "$name"
   done < <(fm_member_edit_records "$meta")
-  FM_MEMBER_ERROR="$2/$3 is not the origin of this task's own repository or of any of its edit members"
+  [ -z "$matched" ] || return 0
+  FM_MEMBER_ERROR="$2/$3 is not a remote of this task's own repository or of any of its edit members"
   return 1
 }
 

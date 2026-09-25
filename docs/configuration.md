@@ -436,11 +436,12 @@ Cleanup discards whatever is left in each reference member and returns it before
 An edit member, `:edit`, lets one ship worker change several repositories, with one branch and one PR per repository, listed under "Edit worktrees".
 It starts on a new `fm/<task-id>` branch at origin's current default-branch tip, and it takes no ref.
 Its delivery mode and merge posture come from that project's own registry entry, read mechanically when the task spawns, so the brief carries a definition of done for each mode the task's repositories use.
+Each repository's PR merges under that repository's own recorded merge posture, the task's own `yolo` for its own repository and `member.<name>.yolo` for an edit member, never the task's posture applied to another repository.
 Repositories deliver one at a time in land order, providers before consumers, with each change additive so each PR is safe alone, and a consumer validates only after its provider has merged.
 Firstmate states that land order in the brief, and after each repository lands it steers the worker to the next one, whose worker pauses until then.
 With several repositories, the worker's validation intent may carry one factual companion note that describes the other repositories only by contract ([`bin/fm-dod-lib.sh`](../bin/fm-dod-lib.sh)).
 The task record's `pr=` names the one PR currently in delivery, which the merge poll and merge helper bind to, while `member.<name>.pr=` and `anchor_pr=` keep each repository's own PR.
-`bin/fm-pr-check.sh` resolves a PR to its repository by origin and refuses to move `pr=` to another repository until the current PR's merge has been recorded or the forge reports it closed without merging.
+`bin/fm-pr-check.sh` resolves a PR to the one repository of the task with a remote at its forge path and refuses to move `pr=` to another repository until the current PR's merge has been recorded or the forge reports it closed without merging.
 `bin/fm-merge-local.sh --member <name>` lands a local-only edit member, and `bin/fm-review-diff.sh --member <name>` reviews one.
 Cleanup refuses while any edit member holds unlanded work, applying the task's own landed-work test to each member, until it lands, `bin/fm-teardown.sh --discard-member <name>` names that repository for discard, or a forced cleanup discards the whole task.
 Once an edit member is landed or discarded, cleanup ends its no-mistakes run, drops its branch, and returns its copy.
