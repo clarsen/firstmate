@@ -85,7 +85,7 @@
 # not genuinely this task's destroys another worker's live work. Before the first
 # cleanup step, teardown verifies record exclusivity: no OTHER task record in
 # this home or any locally registered Firstmate home may name the same live path
-# in its worktree=, home=, or a reference member's worktree (the same scan
+# in its worktree=, home=, or a task member's worktree (the same scan
 # covers each of this task's own members). One live path with two task records
 # is the reuse collision itself, whichever record is stale.
 # That scan alone cannot prove THIS record is the current owner, because the task

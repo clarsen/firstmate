@@ -2986,7 +2986,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ];
   fi
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
 fi
-# Reference members (header above): every member project is resolved, checked,
+# Task members (header above): every member project is resolved, checked,
 # and given its lock and setup hook here, before any endpoint or copy exists.
 # Two copies of one Treehouse project identity would share one lock and one
 # pool, so a member may be neither the task's own project nor another member's.
