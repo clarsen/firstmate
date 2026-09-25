@@ -14,7 +14,11 @@
 # merge, so a captain approval must be recorded as an `answer --release` before
 # this entrypoint is invoked. The lock ends when the fast-forward returns;
 # docs/captain-hold-lifecycle.md owns the accepted merge-to-cleanup residual.
-# Usage: fm-merge-local.sh <task-id>
+# --member <name> lands a local-only edit member of the task instead
+# (bin/fm-task-members-lib.sh): the same fm/<id> branch, fast-forwarded into
+# the default branch of that member's own project clone, gated on that member's
+# own recorded delivery mode.
+# Usage: fm-merge-local.sh <task-id> [--member <name>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,7 +29,16 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
-if [ "$#" -ne 1 ] || ! fm_pr_task_id_valid "$1"; then
+# shellcheck source=bin/fm-task-members-lib.sh
+. "$SCRIPT_DIR/fm-task-members-lib.sh"
+MEMBER=
+if [ "$#" -eq 3 ] && [ "$2" = --member ] && fm_member_name_valid "$3"; then
+  MEMBER=$3
+elif [ "$#" -ne 1 ]; then
+  echo "error: invalid local merge request" >&2
+  exit 2
+fi
+if ! fm_pr_task_id_valid "$1"; then
   echo "error: invalid local merge request" >&2
   exit 2
 fi
@@ -75,6 +88,12 @@ fi
 
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
+if [ -n "$MEMBER" ]; then
+  fm_member_match_edit "$META" "$MEMBER" || { echo "error: task $ID has no edit member named $MEMBER" >&2; exit 1; }
+  PROJ=$FM_MEMBER_MATCH_PROJECT
+  MODE=$FM_MEMBER_MATCH_MODE
+  [ "$MODE" = local-only ] || { echo "error: task $ID's edit member $MEMBER is mode=$MODE, not local-only; merge its PR with bin/fm-pr-merge.sh <id> <PR url> after approval" >&2; exit 1; }
+fi
 [ "$MODE" = local-only ] || { echo "error: task $ID is mode=$MODE, not local-only; merge PR tasks with bin/fm-pr-merge.sh <id> <PR url> after approval" >&2; exit 1; }
 
 default_branch() {

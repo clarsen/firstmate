@@ -137,6 +137,12 @@
 #      backend's pane busy state, then the resolved status declaration
 #      when its verb maps to a recognized run-state. Decision-only events such as
 #      `resolved` never become current state or detail.
+#   A task with edit members (bin/fm-task-members-lib.sh) first picks which of
+#   its repositories' worktrees holds the run to read in step 2
+#   (fm_nm_select_delivery_worktree in bin/fm-nm-run-lib.sh): the one live run,
+#   or else the most recently created; an edit member's run is named with a
+#   trailing `repository: <name>` component. A ship done names its repository
+#   for bin/fm-dod-lib.sh's gate.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log. On tmux and herdr, which own a
@@ -191,11 +197,17 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
+# The edit member whose run the run-step reading reports, when a task that
+# changes several repositories is validating one of its members (below).
+DELIVERY_REPOSITORY=
 
 # Emit the one canonical line and exit 0. Detail is optional.
 emit() {  # <state> <source> [detail]
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  if [ -n "$DELIVERY_REPOSITORY" ] && [ "$2" = run-step ]; then
+    line="$line${SEP}repository: $DELIVERY_REPOSITORY"
+  fi
   printf '%s\n' "$line"
   exit 0
 }
@@ -209,6 +221,7 @@ meta_value() {  # <key>
 }
 
 WT=$(meta_value worktree)
+ANCHOR_WT=$WT
 KIND=$(meta_value kind)
 HARNESS=$(meta_value harness)
 REMOTE_HOST=$(meta_value remote_host)
@@ -233,7 +246,7 @@ fi
 # not treated as finished-and-safe.
 emit_ship_status_done() {  # [extra-detail]
   local extra=${1:-} reason
-  if reason=$(fm_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
+  if reason=$(fm_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$ANCHOR_WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
     emit "done" status-log "$(status_line_note "$LOG_LINE")${extra:+${SEP}$extra}"
   fi
   emit blocked status-log "$reason"
@@ -844,6 +857,35 @@ nm_ci_checks_state() {
 nm_runs_list() {
   nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT"
 }
+
+# A task that changes several repositories (edit members,
+# bin/fm-task-members-lib.sh) validates them one at a time in land order, so
+# the run to attribute is the one fm_nm_select_delivery_worktree picks among
+# its worktrees - its own first. Everything below then reads that worktree's
+# run exactly as a single repository's; an edit member's is named in the output
+# as its repository. Runs that cannot be placed in order report unknown.
+if [ "$KIND" = ship ] && [ -z "$REMOTE_HOST" ] && fm_member_has_edit "$META" \
+  && command -v no-mistakes >/dev/null 2>&1; then
+  DELIVERY_WTS=("$WT")
+  DELIVERY_NAMES=("")
+  while IFS= read -r m_row; do
+    IFS=$FM_MEMBER_FS read -r m_name _ m_wt _ <<<"$m_row"
+    [ -n "$m_name" ] && [ -d "$m_wt" ] || continue
+    DELIVERY_WTS+=("$m_wt")
+    DELIVERY_NAMES+=("$m_name")
+  done < <(fm_member_edit_records "$META")
+  DELIVERY_CHOICE=$(fm_nm_select_delivery_worktree "$NM_TIMEOUT" "${DELIVERY_WTS[@]}")
+  case "$DELIVERY_CHOICE" in
+    selected\|*)
+      DELIVERY_INDEX=${DELIVERY_CHOICE#selected|}
+      WT=${DELIVERY_WTS[$DELIVERY_INDEX]}
+      DELIVERY_REPOSITORY=${DELIVERY_NAMES[$DELIVERY_INDEX]}
+      ;;
+    unknown\|*)
+      emit unknown run-step "${DELIVERY_CHOICE#unknown|}"
+      ;;
+  esac
+fi
 
 # CREW_BRANCH is empty at detached HEAD (a just-spawned crew, or a scout's
 # scratch worktree); with no branch there is no run to attribute to this crew.

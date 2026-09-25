@@ -10,7 +10,12 @@
 # only a fallback when fetch fails (stale recorded SHAs must never win over a
 # reachable remote PR head). If neither PR head can be resolved, fall back to
 # the local branch with a warning. Without pr=, compare the local branch.
-# Usage: fm-review-diff.sh <task-id> [--stat]
+# A task with edit members (bin/fm-task-members-lib.sh) has one branch and PR
+# per repository: the task's own copy is compared with its recorded
+# anchor_pr=/anchor_pr_head=, since pr= then names the PR currently in
+# delivery, and --member <name> compares that edit member's copy with its
+# member.<name>.pr=/pr_head= instead.
+# Usage: fm-review-diff.sh <task-id> [--stat] [--member <name>]
 #   --stat prints only the stat summary; default prints stat summary plus full diff.
 set -eu
 
@@ -21,7 +26,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 usage() {
-  echo "usage: fm-review-diff.sh <task-id> [--stat]" >&2
+  echo "usage: fm-review-diff.sh <task-id> [--stat] [--member <name>]" >&2
 }
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
@@ -31,19 +36,38 @@ fi
 
 ID=${1:-}
 [ -n "$ID" ] || { usage; exit 1; }
+shift
 STAT_ONLY=false
-case "${2:-}" in
-  '') ;;
-  --stat) STAT_ONLY=true ;;
-  *) usage; exit 1 ;;
-esac
-[ $# -le 2 ] || { usage; exit 1; }
+MEMBER=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --stat) STAT_ONLY=true ;;
+    --member)
+      [ "$#" -ge 2 ] && [ -z "$MEMBER" ] || { usage; exit 1; }
+      MEMBER=$2
+      shift
+      ;;
+    *) usage; exit 1 ;;
+  esac
+  shift
+done
 
 META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 
+# shellcheck source=bin/fm-task-members-lib.sh
+. "$SCRIPT_DIR/fm-task-members-lib.sh"
 WT=$(grep '^worktree=' "$META" | cut -d= -f2-)
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
+PR_KEY='pr'
+if [ -n "$MEMBER" ]; then
+  fm_member_match_edit "$META" "$MEMBER" || { echo "error: task $ID has no edit member named $MEMBER" >&2; exit 1; }
+  WT=$FM_MEMBER_MATCH_WORKTREE
+  PROJ=$FM_MEMBER_MATCH_PROJECT
+  PR_KEY="member.$MEMBER.pr"
+elif fm_member_has_edit "$META"; then
+  PR_KEY=anchor_pr
+fi
 [ -n "$WT" ] || { echo "error: meta for task $ID is missing worktree=" >&2; exit 1; }
 [ -n "$PROJ" ] || { echo "error: meta for task $ID is missing project=" >&2; exit 1; }
 [ -d "$WT" ] || { echo "error: worktree for task $ID is missing: $WT" >&2; exit 1; }
@@ -122,8 +146,8 @@ resolve_pr_head() {
   return 1
 }
 
-PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
-PR_HEAD_RECORDED=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
+PR_URL=$(grep "^$PR_KEY=" "$META" | tail -1 | cut -d= -f2- || true)
+PR_HEAD_RECORDED=$(grep "^${PR_KEY}_head=" "$META" | tail -1 | cut -d= -f2- || true)
 COMPARE_REF=$BRANCH
 if [ -n "$PR_URL" ]; then
   if PR_HEAD=$(resolve_pr_head "$PR_URL" "$PR_HEAD_RECORDED"); then

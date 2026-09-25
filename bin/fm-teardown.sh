@@ -137,13 +137,26 @@
 # Orca tasks use the same safety checks, then close the recorded terminal and
 # remove the recorded worktree through `orca worktree rm`; teardown never guesses
 # an Orca target from ambient CLI state.
-# Reference members (bin/fm-task-members-lib.sh) are read-only scratch copies
-# of other projects, so no landed-work check applies to them. Under each member
-# project's lock, and before any destructive step, teardown reads every member's
-# slot claim and Treehouse lease: a claim naming another task or a lease this
-# task no longer holds leaves that slot alone, while an unreadable claim or pool
-# status refuses. Held members are returned, discarding whatever was left in
-# them, before the task's own copy; a failed member return aborts the
+# Task members (bin/fm-task-members-lib.sh): reference members are read-only
+# scratch copies of other projects, so no landed-work check applies to them.
+# Edit members hold delivered work in other repositories, so each one faces the
+# same landed-work test as the task's own copy - dirty, unpushed, and landed
+# against that repository's recorded member.<name>.pr= and delivery mode - and
+# teardown refuses while any of them is unlanded. A task with edit members
+# proves its own copy against its recorded anchor_pr=, since its pr= then names
+# the PR currently in delivery. An edit member whose copy this task no longer
+# holds is judged by its fm/<task-id> branch in the member's clone: any commit
+# there that is on neither a remote nor the clone's default branch refuses.
+# --force discards every member's unlanded work; --discard-member <name>, given
+# only on the captain's explicit instruction naming that repository, discards
+# just that edit member's. Under each member project's lock, and before any
+# destructive step, teardown reads every member's slot claim and Treehouse
+# lease: a claim naming another task or a lease this task no longer holds
+# leaves that slot alone, while an unreadable claim or pool status refuses. Held
+# members are returned before the task's own copy - an edit member only after
+# its own parked no-mistakes run is concluded (Fix 1 below), its landed-work
+# test passes again, and its fm/<task-id> branch is dropped; a reference member
+# discarding whatever was left in it. A failed member return aborts the
 # teardown there, and a rerun skips members already returned. A forced
 # secondmate retirement returns its children's members the same way.
 # A Herdr presentation journal never authorizes cleanup. Teardown still closes
@@ -175,10 +188,14 @@
 # fm_treehouse_home_root_destroy) is destroyed with Treehouse's safe bulk
 # destroy; a copy that destroy skips stops the retirement with its output, and
 # nothing is forced.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--discard-member <name>]...
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --discard-member <name> skips the landed-work checks of that one edit
+#   member only; every other member and the task's own copy still face them.
+#   Only use it when the captain has explicitly said to discard that
+#   repository's work. It refuses a name that is not an edit member of the task.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
@@ -336,11 +353,20 @@ fi
 ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
+DISCARD_MEMBERS=()
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --discard-member)
+      if [ "$#" -lt 2 ] || ! fm_member_name_valid "$2"; then
+        echo "error: invalid teardown request" >&2
+        exit 2
+      fi
+      DISCARD_MEMBERS+=("$2")
+      shift
+      ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -363,7 +389,7 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 # Role partition: forced teardown discards work, and the supervision branch
 # never discards anything - only an ordinary landed-work teardown is branch
 # territory (contract: bin/fm-lease-lib.sh).
-if [ "$FORCE" = --force ] && [ "$(fm_lease_actor)" = branch ]; then
+if { [ "$FORCE" = --force ] || [ "${#DISCARD_MEMBERS[@]}" -gt 0 ]; } && [ "$(fm_lease_actor)" = branch ]; then
   echo "error: forced teardown refused - the supervision branch cannot discard work" >&2
   exit "$FM_LEASE_REFUSE_EXIT"
 fi
@@ -1062,7 +1088,22 @@ if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
   "$FM_ROOT/bin/fm-guard.sh" || true
 fi
 HOME_PATH=$(grep '^home=' "$META" | cut -d= -f2- || true)
-PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+# TASK_PR_URL is the task's recorded pr=. PR_URL is the PR
+# the task's own copy is proven landed against: the same pr=, except that a
+# task with edit members records its own repository's PR as anchor_pr=, since
+# its pr= then names the PR currently in delivery (bin/fm-task-members-lib.sh).
+TASK_PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+PR_URL=$TASK_PR_URL
+if fm_member_has_edit "$META"; then
+  PR_URL=$(grep '^anchor_pr=' "$META" | tail -1 | cut -d= -f2- || true)
+fi
+# --discard-member names edit members of this task and nothing else.
+for discard_name in "${DISCARD_MEMBERS[@]+"${DISCARD_MEMBERS[@]}"}"; do
+  if ! fm_member_edit_records "$META" | cut -d "$FM_MEMBER_FS" -f 1 | grep -qxF "$discard_name"; then
+    echo "error: --discard-member $discard_name names no edit member of task $ID; nothing was changed" >&2
+    exit 2
+  fi
+done
 # tasktmp is recorded by fm-spawn for tasks that set up a per-task temp root
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
@@ -1539,7 +1580,8 @@ work_is_landed() {
 
 # The completion links this teardown already holds locally. A scout's
 # deliverable is its report, a local-only ship lands on local main, and every
-# other ship carries the PR recorded on its own record.
+# other ship carries the PR recorded on its own record: for a task with edit
+# members, its own repository's anchor_pr=, or else the last PR it delivered.
 BACKLOG_DONE_ARGS=()
 backlog_done_args() {
   local data_relative
@@ -1552,8 +1594,8 @@ backlog_done_args() {
     *)
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
-      elif [ -n "$PR_URL" ]; then
-        BACKLOG_DONE_ARGS=(--pr "$PR_URL")
+      elif [ -n "${PR_URL:-${TASK_PR_URL:-}}" ]; then
+        BACKLOG_DONE_ARGS=(--pr "${PR_URL:-${TASK_PR_URL:-}}")
       fi
       ;;
   esac
@@ -2395,23 +2437,37 @@ teardown_owns_worktree() {
   [ "$TEARDOWN_SLOT_REASSIGNED" != 1 ]
 }
 
-# Reference members (bin/fm-task-members-lib.sh owns the contract) are scratch
-# copies of other projects: cleanup discards whatever is left in them and
-# returns each slot, but only while its claim is not another task's and
-# Treehouse still reports this task's own lease on it, so a slot that has since
-# gone back to its pool is never reset. teardown_members_preflight decides that
-# for every member of one task record before any destructive step and refuses
-# on anything it cannot read; teardown_members_return then acts on exactly
-# those decisions. Every step runs under that member project's lock, taken by
-# teardown_member_locks_for_meta like the task's own slot lock.
+# Task members (bin/fm-task-members-lib.sh owns the contract). A reference
+# member is a scratch copy of another project: cleanup discards whatever is
+# left in it and returns its slot. An edit member holds delivered work in
+# another repository, so its copy goes back only once that work has landed,
+# proven by the same landed-work test as the task's own copy against that
+# repository's recorded PR and delivery mode (teardown_edit_member_landed);
+# --force discards every member's unlanded work, and --discard-member <name>
+# only that one edit member's. Every member slot goes back only while its
+# claim is not another task's and Treehouse still reports this task's own lease
+# on it, so a slot that has since gone back to its pool is never reset.
+# teardown_members_preflight decides that for every member of one task record
+# before any destructive step and refuses on anything it cannot read;
+# teardown_members_return then acts on exactly those decisions. Every step runs
+# under that member project's lock, taken by teardown_member_locks_for_meta
+# like the task's own slot lock.
+teardown_member_label() {  # <role>
+  if [ "$1" = edit ]; then
+    printf 'edit member'
+  else
+    printf 'reference member'
+  fi
+}
+
 teardown_member_locks_for_meta() {  # <meta> <label>
-  local meta=$1 label=$2 row name project rest lock held
+  local meta=$1 label=$2 row name project wt role rest lock held
   while IFS= read -r row; do
-    IFS=$FM_MEMBER_FS read -r name project rest <<<"$row"
+    IFS=$FM_MEMBER_FS read -r name project wt role rest <<<"$row"
     [ -n "$name" ] || continue
     [ -n "$project" ] && [ -d "$project" ] || continue
     lock=$(fm_treehouse_project_lock_path "$project") || {
-      echo "REFUSED: cannot resolve the shared Treehouse project lock for $label's reference member $name ($project); nothing was changed" >&2
+      echo "REFUSED: cannot resolve the shared Treehouse project lock for $label's $(teardown_member_label "$role") $name ($project); nothing was changed" >&2
       return 1
     }
     [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || [ "$TREEHOUSE_PROJECT_LOCK" != "$lock" ] || continue
@@ -2420,30 +2476,112 @@ teardown_member_locks_for_meta() {  # <meta> <label>
       [ "$held" != "$lock" ] || continue 2
     done
     fm_lock_try_acquire "$lock" || {
-      echo "REFUSED: another Treehouse slot allocation or return is in progress for $label's reference member $name ($project); nothing was changed" >&2
+      echo "REFUSED: another Treehouse slot allocation or return is in progress for $label's $(teardown_member_label "$role") $name ($project); nothing was changed" >&2
       return 1
     }
     TEARDOWN_MEMBER_LOCK_PATHS+=("$lock")
   done < <(fm_member_records "$meta")
 }
 
+# 0 when --discard-member named <name>: the captain's explicit instruction to
+# discard that one edit member's unlanded work.
+teardown_member_discard_named() {  # <name>
+  local named
+  for named in "${DISCARD_MEMBERS[@]+"${DISCARD_MEMBERS[@]}"}"; do
+    [ "$named" != "$1" ] || return 0
+  done
+  return 1
+}
+
+# An edit member whose copy this task no longer holds (gone, reassigned, or no
+# longer leased) still has its branch fm/<task-id> in the member's clone. With
+# no copy to run the landed-work test in, any commit on that branch that is
+# neither on a remote nor on the clone's local default branch refuses, unless
+# its work is being discarded.
+teardown_edit_member_branch_check() {  # <task-id> <name> <project>
+  local id=$1 name=$2 project=$3 branch="fm/$1" default unlanded
+  [ "$FORCE" != --force ] || return 0
+  ! teardown_member_discard_named "$name" || return 0
+  [ -n "$project" ] && [ -d "$project" ] || return 0
+  git -C "$project" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 || return 0
+  default=$(PROJ=$project default_branch) || default=
+  if [ -n "$default" ]; then
+    unlanded=$(git -C "$project" log --oneline "refs/heads/$branch" --not --remotes "refs/heads/$default" -- 2>/dev/null) || unlanded='?'
+  else
+    unlanded=$(git -C "$project" log --oneline "refs/heads/$branch" --not --remotes -- 2>/dev/null) || unlanded='?'
+  fi
+  [ -n "$unlanded" ] || return 0
+  echo "REFUSED: task $id's edit member $name has no copy this task still holds, and its branch $branch in $project has work that is not on a remote or on its default branch; nothing was changed." >&2
+  printf '%s\n' "$unlanded" | head -5 >&2
+  echo "Land that work, or re-run with --discard-member $name on the captain's explicit instruction to discard it." >&2
+  return 1
+}
+
+# The landed-work test for one held edit member copy: the same
+# validate_worktree_teardown_safety the task's own copy passes, run against
+# the member's copy, clone, recorded PR, and delivery mode.
+teardown_edit_member_landed() {  # <meta> <task-id> <name> <project> <worktree>
+  local meta=$1 id=$2 name=$3 project=$4 wt=$5 mode pr rc=0
+  [ "$FORCE" != --force ] || return 0
+  ! teardown_member_discard_named "$name" || return 0
+  mode=$(fm_member_meta_field "$meta" "$name" mode)
+  [ -n "$mode" ] || mode=no-mistakes
+  pr=$(fm_member_meta_field "$meta" "$name" pr)
+  teardown_edit_member_safety "$project" "$wt" "$mode" "$pr" || rc=$?
+  if [ "$rc" -eq "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" ]; then
+    rc=0
+    cleanup_stale_lock_for_safety_check "$wt" || rc=$?
+    [ "$rc" -ne 0 ] || teardown_edit_member_safety "$project" "$wt" "$mode" "$pr" || rc=$?
+  fi
+  [ "$rc" -eq 0 ] && return 0
+  echo "REFUSED: task $id's edit member $name ($wt) holds work that has not landed; nothing of it was returned." >&2
+  echo "Land its PR, or re-run with --discard-member $name on the captain's explicit instruction to discard only that repository's work." >&2
+  return 1
+}
+
+# Bash's dynamic scoping makes these locals the PROJ, WT, MODE, and PR_URL
+# that validate_worktree_teardown_safety and its helpers read and set, so the
+# task's own values are untouched once this returns.
+teardown_edit_member_safety() {  # <project> <worktree> <mode> <pr-url>
+  local PROJ=$1 WT=$2 MODE=$3 PR_URL=$4 KIND=ship TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=
+  validate_worktree_teardown_safety
+}
+
+# Every held edit member of the task record must have landed before any
+# destructive step; the decisions come from teardown_members_preflight.
+teardown_edit_members_landed() {  # <meta>
+  local row action meta id name project wt lease commit role
+  for row in "${TEARDOWN_MEMBER_ACTIONS[@]+"${TEARDOWN_MEMBER_ACTIONS[@]}"}"; do
+    IFS=$FM_MEMBER_FS read -r action meta id name project wt lease commit role <<<"$row"
+    [ "$meta" = "$1" ] && [ "$action" = return ] && [ "$role" = edit ] || continue
+    teardown_edit_member_landed "$meta" "$id" "$name" "$project" "$wt" || return 1
+  done
+}
+
 teardown_members_preflight() {  # <meta> <task-id>
-  local meta=$1 id=$2 row name project wt commit lease root rc
+  local meta=$1 id=$2 row name project wt role commit lease root rc label
   while IFS= read -r row; do
-    IFS=$FM_MEMBER_FS read -r name project wt _ _ commit lease root <<<"$row"
+    IFS=$FM_MEMBER_FS read -r name project wt role _ commit lease root _ <<<"$row"
     [ -n "$name" ] || continue
+    label=$(teardown_member_label "$role")
     if [ -z "$wt" ] || [ ! -d "$wt" ] || [ -z "$project" ] || [ ! -d "$project" ]; then
-      echo "warning: task $id's reference member $name copy '${wt:-<none>}' or its project '${project:-<none>}' no longer exists; there is nothing of it to return" >&2
+      if [ "$role" = edit ]; then
+        teardown_edit_member_branch_check "$id" "$name" "$project" || return 1
+      fi
+      echo "warning: task $id's $label $name copy '${wt:-<none>}' or its project '${project:-<none>}' no longer exists; there is nothing of it to return" >&2
       continue
     fi
     fm_treehouse_slot_owner_state "$wt" "$id"
     case "$FM_TREEHOUSE_SLOT_OWNER" in
       other)
-        echo "warning: task $id's reference member $name copy $wt now belongs to task $FM_TREEHOUSE_SLOT_OWNER_ID; leaving it untouched" >&2
+        if [ "$role" = edit ]; then
+          teardown_edit_member_branch_check "$id" "$name" "$project" || return 1
+        fi
+        echo "warning: task $id's $label $name copy $wt now belongs to task $FM_TREEHOUSE_SLOT_OWNER_ID; leaving it untouched" >&2
         continue
         ;;
       unsafe)
-        echo "REFUSED: task $id's reference member $name copy $wt carries a slot-owner claim that cannot be read; nothing was changed. Inspect or repair $(fm_treehouse_slot_owner_marker "$wt" 2>/dev/null || echo "the claim beside $wt"), then re-run teardown." >&2
+        echo "REFUSED: task $id's $label $name copy $wt carries a slot-owner claim that cannot be read; nothing was changed. Inspect or repair $(fm_treehouse_slot_owner_marker "$wt" 2>/dev/null || echo "the claim beside $wt"), then re-run teardown." >&2
         return 1
         ;;
     esac
@@ -2451,25 +2589,47 @@ teardown_members_preflight() {  # <meta> <task-id>
     rc=0
     fm_member_lease_state "$project" "$root" "$wt" "$lease" || rc=$?
     case "$rc" in
-      0) TEARDOWN_MEMBER_ACTIONS+=("return$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit") ;;
+      0) TEARDOWN_MEMBER_ACTIONS+=("return$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit$FM_MEMBER_FS$role") ;;
       1)
-        echo "warning: task $id's reference member $name copy $wt no longer carries this task's lease; leaving the slot to its pool" >&2
-        TEARDOWN_MEMBER_ACTIONS+=("release$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit")
+        if [ "$role" = edit ]; then
+          teardown_edit_member_branch_check "$id" "$name" "$project" || return 1
+        fi
+        echo "warning: task $id's $label $name copy $wt no longer carries this task's lease; leaving the slot to its pool" >&2
+        TEARDOWN_MEMBER_ACTIONS+=("release$FM_MEMBER_FS$meta$FM_MEMBER_FS$id$FM_MEMBER_FS$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$lease$FM_MEMBER_FS$commit$FM_MEMBER_FS$role")
         ;;
       *)
-        echo "REFUSED: cannot tell whether task $id still holds reference member $name copy $wt ($FM_MEMBER_ERROR); nothing was changed" >&2
+        echo "REFUSED: cannot tell whether task $id still holds $label $name copy $wt ($FM_MEMBER_ERROR); nothing was changed" >&2
         return 1
         ;;
     esac
   done < <(fm_member_records "$meta")
 }
 
+# Return every held member of the task record. An edit member first has its
+# own parked no-mistakes run concluded (script header, Fix 1), its landed-work
+# test repeated now that nothing else may still be writing to it, and its
+# fm/<task-id> branch dropped, exactly like the task's own copy.
 teardown_members_return() {  # <meta>
-  local row action meta id name project wt lease commit head
+  local row action meta id name project wt lease commit role head branch
   for row in "${TEARDOWN_MEMBER_ACTIONS[@]+"${TEARDOWN_MEMBER_ACTIONS[@]}"}"; do
-    IFS=$FM_MEMBER_FS read -r action meta id name project wt lease commit <<<"$row"
+    IFS=$FM_MEMBER_FS read -r action meta id name project wt lease commit role <<<"$row"
     [ "$meta" = "$1" ] || continue
-    if [ "$action" = return ]; then
+    if [ "$action" = return ] && [ "$role" = edit ]; then
+      conclude_task_no_mistakes_run "$wt" || return 1
+      teardown_edit_member_landed "$meta" "$id" "$name" "$project" "$wt" || return 1
+      if [ "$FORCE" = --force ] || teardown_member_discard_named "$name"; then
+        echo "teardown: discarding any unlanded work in task $id's edit member $name copy $wt on explicit instruction" >&2
+      fi
+      branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=
+      if [ "$branch" = "fm/$id" ] && git -C "$wt" checkout --detach -q 2>/dev/null; then
+        git -C "$wt" branch -D "$branch" >/dev/null 2>&1 || true
+      fi
+      if ! fm_member_return "$project" "$wt" "$lease"; then
+        echo "error: could not return task $id's edit member $name copy $wt ($FM_MEMBER_ERROR); teardown aborted" >&2
+        return 1
+      fi
+      echo "teardown: returned task $id's edit member $name copy $wt" >&2
+    elif [ "$action" = return ]; then
       head=$(git -C "$wt" rev-parse --verify --quiet HEAD 2>/dev/null) || head=
       if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -n 1)" ] ||
         { [ -n "$commit" ] && [ "$head" != "$commit" ]; }; then
@@ -3449,7 +3609,7 @@ fi
 # Non-blocking: a delivered public loop is not a teardown refusal (guard-work
 # already passed), but tearing down a ship whose PR merged while a loop is still
 # open with nothing owed is the moment the drop is detectable.
-if [ "$KIND" = ship ] && [ -n "$PR_URL" ] \
+if [ "$KIND" = ship ] && [ -n "${TASK_PR_URL:-$PR_URL}" ] \
     && [ -n "$PUBLIC_FOLLOWUP_STATE" ] \
     && [ "${PUBLIC_FOLLOWUP_RELAY_ACTIVE:-0}" = 1 ] \
     && fm_pf_has_delivered_open_loops "$PUBLIC_FOLLOWUP_STATE"; then
@@ -3485,6 +3645,8 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
     fi
   fi
 fi
+# Every edit member's work must have landed too, before any destructive step.
+teardown_edit_members_landed "$META" || exit 1
 
 # A Herdr close may reposition shared workspace order, so the whole
 # destructive sequence below (worktree return, pane close, record removal)

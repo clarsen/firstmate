@@ -413,24 +413,39 @@ The script must be an executable regular file, and a script that is not, or a ti
 A nonzero exit, a timeout, or setup output that git can see refuses the launch with the script path and exit status, leaves the worktree in place for inspection, and publishes no task record.
 Keep everything the script creates out of git's view, for example by appending its paths to the file `git rev-parse --git-path info/exclude` names, because visible setup output would otherwise be committable by the worker and would make cleanup refuse the worktree as uncommitted work.
 Pooled worktrees are reused, so the script must also succeed when its earlier output is already present.
-The spawn releases the project's slot-allocation lock while the script and any reference members' setup run and waits to take it back afterwards, so an ordinary return of another task of the project is not refused during a slow script; the task's claimed worktree slot stays its own throughout.
+The spawn releases the project's slot-allocation lock while the script and any task members' setup run and waits to take it back afterwards, so an ordinary return of another task of the project is not refused during a slow script; the task's claimed worktree slot stays its own throughout.
 The spawn still holds its home's task-set lock, so another spawn from the same home, of any project, and a forced teardown of that secondmate home refuse until the script finishes; retry them once the spawn completes.
 A relaunch reuses its worktree untouched and never reruns the script, and secondmate spawns never run it.
-The script also runs in each fresh [reference member](#reference-members-fm-spawnsh---member) copy of its project, with `FM_MEMBER` set to the member's name and `FM_PROJECT`, `FM_PROJECT_DIR`, and `FM_WORKTREE` naming the member, and it must leave that copy at its pinned commit.
+The script also runs in each fresh [task member](#task-members-fm-spawnsh---member) copy of its project, with `FM_MEMBER` set to the member's name and `FM_PROJECT`, `FM_PROJECT_DIR`, and `FM_WORKTREE` naming the member, and it must leave that copy at its pinned or starting commit.
 The directory is local to each home and is not part of secondmate inherited configuration, because that contract copies single files, not executable directories, and a secondmate's projects are its own clones; install a script into a secondmate home's own `config/project-setup/` when that home spawns the project.
 
-## Reference members (fm-spawn.sh --member)
+## Task members (fm-spawn.sh --member)
 
-A ship or scout spawn may also hold read-only copies of other projects this home has cloned, such as a contract or specification repository, or the server beside a client: pass `--member <name>=<project-dir>:ref[@<ref>]` once per member.
-Each member is a durable Treehouse lease from that project's own pool under this home's pool root, pinned detached at `<ref>` (a branch, tag, commit, or fetchable ref such as `refs/pull/<n>/head`, resolved against what origin has now before any local branch of the same name), or at origin's current default-branch tip when no ref is given.
-The member project's own setup hook runs in its copy.
-The worker sees every member in its launch brief under "Reference worktrees", in the pane variable `FM_MEMBER_<NAME>` (which a [launch environment allowlist](#worker-launch-environment-configlaunch-env-allowlist) always keeps), and, for Claude, through `--add-dir`.
-Members are read-only context: the brief tells the worker never to edit, commit in, or push from them, to rely only on the contract they define, and to keep changes to anything another repository relies on additive.
-If any member cannot be leased, pinned, or set up, the spawn returns every member lease it took and publishes no task record.
-A relaunch shows the replacement agent the same members, leaving out one whose copy is gone.
-Cleanup discards whatever is left in each member and returns it before the task's own copy, leaving alone a slot another task now holds or this task no longer holds.
+A spawn may also hold copies of other projects this home has cloned, such as a contract or specification repository, or the server beside a client: pass `--member <name>=<project-dir>:<role>` once per member.
+Each member is a durable Treehouse lease from that project's own pool under this home's pool root, and the member project's own setup hook runs in its copy.
+The worker sees every member in its launch brief, in the pane variable `FM_MEMBER_<NAME>` (which a [launch environment allowlist](#worker-launch-environment-configlaunch-env-allowlist) always keeps), and, for Claude, through `--add-dir`.
+If any member cannot be leased, pinned, branched, or set up, the spawn returns every member lease it took, drops any branch it started, and publishes no task record.
+A relaunch shows the replacement agent the same members, leaving out a reference member whose copy is gone and refusing when an edit member's copy is gone, since that member's unlanded work may still be on its branch.
 `--member` is refused on a relaunch, which keeps the recorded members, and on secondmate, batch, and Orca spawns, and a member may be neither the task's own project nor share a project with another member.
-[`bin/fm-task-members-lib.sh`](../bin/fm-task-members-lib.sh) owns the spec, the lease identity, the task-record fields, and the brief section, while the headers of `bin/fm-spawn.sh` and `bin/fm-teardown.sh` own the spawn and cleanup mechanics.
+
+A reference member, `:ref[@<ref>]`, is read-only context for a ship or scout, listed under "Reference worktrees".
+It is pinned detached at `<ref>` (a branch, tag, commit, or fetchable ref such as `refs/pull/<n>/head`, resolved against what origin has now before any local branch of the same name), or at origin's current default-branch tip when no ref is given.
+The brief tells the worker never to edit, commit in, or push from it, to rely only on the contract it defines, and to keep changes to anything another repository relies on additive.
+Cleanup discards whatever is left in each reference member and returns it before the task's own copy, leaving alone a slot another task now holds or this task no longer holds.
+
+An edit member, `:edit`, lets one ship worker change several repositories, with one branch and one PR per repository, listed under "Edit worktrees".
+It starts on a new `fm/<task-id>` branch at origin's current default-branch tip, and it takes no ref.
+Its delivery mode and merge posture come from that project's own registry entry, read mechanically when the task spawns, so the brief carries a definition of done for each mode the task's repositories use.
+Repositories deliver one at a time in land order, providers before consumers, with each change additive so each PR is safe alone, and a consumer validates only after its provider has merged.
+Firstmate states that land order in the brief, and after each repository lands it steers the worker to the next one, whose worker pauses until then.
+With several repositories, the worker's validation intent may carry one factual companion note that describes the other repositories only by contract ([`bin/fm-dod-lib.sh`](../bin/fm-dod-lib.sh)).
+The task record's `pr=` names the one PR currently in delivery, which the merge poll and merge helper bind to, while `member.<name>.pr=` and `anchor_pr=` keep each repository's own PR.
+`bin/fm-pr-check.sh` resolves a PR to its repository by origin and refuses to move `pr=` to another repository until the current PR's merge has been recorded or the forge reports it closed without merging.
+`bin/fm-merge-local.sh --member <name>` lands a local-only edit member, and `bin/fm-review-diff.sh --member <name>` reviews one.
+Cleanup refuses while any edit member holds unlanded work, applying the task's own landed-work test to each member, until it lands, `bin/fm-teardown.sh --discard-member <name>` names that repository for discard, or a forced cleanup discards the whole task.
+Once an edit member is landed or discarded, cleanup ends its no-mistakes run, drops its branch, and returns its copy.
+
+[`bin/fm-task-members-lib.sh`](../bin/fm-task-members-lib.sh) owns the spec, the lease identity, the task-record fields, the brief sections, and PR-to-repository resolution, while the headers of `bin/fm-spawn.sh`, `bin/fm-teardown.sh`, and `bin/fm-pr-check.sh` own the spawn, cleanup, and PR registration mechanics.
 
 ## Worker launch environment (config/launch-env-allowlist)
 

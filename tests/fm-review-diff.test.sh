@@ -11,6 +11,9 @@
 #   (d) pr= present but PR head unreachable -> fallback to local branch + warning
 #   (e) pr= + STALE recorded pr_head= + newer remote pull head -> must use fetched head
 #       (this is the class that bit reviewers holding merges over "missing" fixes)
+#   (f) a task with an edit member: --member <name> reviews that member's copy
+#       against its own PR, and without it the task's own copy is reviewed
+#       against its own PR rather than the PR in delivery
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -169,8 +172,69 @@ test_unreachable_pr_head_falls_back_with_warning() {
   pass "fm-review-diff falls back to local branch with a warning when PR head is unreachable"
 }
 
+# add_edit_member <case-dir>: edit member api of task-x1, a copy of its own
+# project on branch fm/task-x1 whose PR 3 head changes api.txt.
+add_edit_member() {
+  local case_dir=$1
+  git init -q --bare "$case_dir/api-origin.git"
+  git -C "$case_dir/api-origin.git" symbolic-ref HEAD refs/heads/main
+  git clone -q "$case_dir/api-origin.git" "$case_dir/_api-seed" 2>/dev/null
+  printf 'api base\n' > "$case_dir/_api-seed/api.txt"
+  git -C "$case_dir/_api-seed" add api.txt
+  git -C "$case_dir/_api-seed" -c user.email=t@t -c user.name=t commit -qm "api baseline"
+  git -C "$case_dir/_api-seed" push -q origin main
+  rm -rf "$case_dir/_api-seed"
+  git clone -q "$case_dir/api-origin.git" "$case_dir/api-project"
+  git -C "$case_dir/api-project" remote set-head origin main 2>/dev/null || true
+  git -C "$case_dir/api-project" worktree add -q -b fm/task-x1 "$case_dir/api-wt" main
+  printf 'api-change\n' > "$case_dir/api-wt/api.txt"
+  git -C "$case_dir/api-wt" add api.txt
+  git -C "$case_dir/api-wt" commit -qm "api change"
+  git -C "$case_dir/api-wt" push -q origin "fm/task-x1:refs/pull/3/head"
+}
+
+test_edit_member_reviews_its_own_copy_and_pr() {
+  local case_dir out err
+  case_dir=$(make_case edit-member)
+  stale_and_pr_commits "$case_dir"
+  git -C "$case_dir/wt" push -q origin "pr-head-tmp:refs/pull/9/head"
+  add_edit_member "$case_dir"
+  # The member's PR is the one in delivery; the task's own PR keeps anchor_pr=.
+  write_task_meta "$case_dir" \
+    "member.api.project=$case_dir/api-project" "member.api.worktree=$case_dir/api-wt" \
+    "member.api.role=edit" "member.api.mode=no-mistakes" "member.api.yolo=off" \
+    "anchor_pr=https://github.com/example/repo/pull/9" \
+    "member.api.pr=https://github.com/example/api/pull/3" \
+    "pr=https://github.com/example/api/pull/3"
+
+  out=$(run_review_diff "$case_dir" task-x1 --member api 2> "$case_dir/stderr")
+  assert_contains "$out" '+api-change' "edit-member: --member api did not review the member's PR"
+  assert_not_contains "$out" 'feature.txt' "edit-member: --member api reviewed the task's own copy"
+  assert_not_contains "$(cat "$case_dir/stderr")" 'warning: PR head unavailable' \
+    "edit-member: the member's own PR head should be fetched"
+
+  out=$(run_review_diff "$case_dir" task-x1 --stat --member api 2> "$case_dir/stderr")
+  assert_contains "$out" 'api.txt' "edit-member: --stat before --member did not review the member"
+  assert_not_contains "$out" '+api-change' "edit-member: --stat still printed the full diff"
+
+  out=$(run_review_diff "$case_dir" task-x1 2> "$case_dir/stderr")
+  assert_contains "$out" '+pr-fixed' "edit-member: the task's own copy was not reviewed against its own PR"
+  assert_not_contains "$out" 'api.txt' "edit-member: the task's own review showed the member's change"
+  assert_not_contains "$(cat "$case_dir/stderr")" 'warning: PR head unavailable' \
+    "edit-member: the task's own review used the PR in delivery instead of its own"
+
+  set +e
+  run_review_diff "$case_dir" task-x1 --member nope > /dev/null 2> "$case_dir/stderr"
+  expect_code 1 "$?" "edit-member: an unknown member should refuse"
+  set -e
+  err=$(cat "$case_dir/stderr")
+  assert_contains "$err" "has no edit member named nope" "edit-member: the refusal did not name the unknown member"
+  pass "fm-review-diff reviews an edit member's copy against its own PR, and the task's own copy against its own"
+}
+
 test_pr_meta_uses_pr_head_not_stale_local
 test_pr_meta_fetches_pull_head_without_recorded_sha
 test_stale_recorded_pr_head_loses_to_fetched_pull_head
 test_no_pr_meta_uses_local_branch
 test_unreachable_pr_head_falls_back_with_warning
+test_edit_member_reviews_its_own_copy_and_pr
