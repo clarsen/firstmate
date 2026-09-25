@@ -7,7 +7,8 @@
 #     copy and delivery mode;
 #   - a PR of no repository of the task is refused;
 #   - a PR is matched against every remote of a repository, so a fork's
-#     upstream and an ssh host alias (resolved with `ssh -G`) both place it,
+#     upstream, an ssh host alias (resolved with `ssh -G`), and a literal host
+#     whose ssh configuration names another hostname all place it,
 #     and a PR two repositories of the task both match is refused;
 #   - pr= moves to another repository only once the PR in delivery has a
 #     recorded merge or the forge reports it closed without merging, and a
@@ -46,7 +47,9 @@ make_repo() {
 # (direct-PR, yolo on), each with a clone and a copy on branch fm/task-a. The
 # fake forge reports each PR's state from FM_TEST_PR_<number>_STATE and
 # _MERGED (OPEN and false by default), reports a PR it merged as merged, and
-# logs every call.
+# logs every call. A stub ssh reports `ssh -G` hostnames from
+# FM_TEST_SSH_HOSTNAMES (space-separated <host>=<hostname>), each other host as
+# itself, so no case reads the machine's own ssh configuration.
 make_case() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/home/state" "$dir/home/data" "$dir/home/config" "$dir/root/bin" "$dir/fakebin"
@@ -128,8 +131,17 @@ case " $* " in
     ;;
 esac
 SH
+  cat > "$dir/fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = -G ] || exit 255
+hostname=$2
+for pair in ${FM_TEST_SSH_HOSTNAMES:-}; do
+  [ "${pair%%=*}" != "$2" ] || hostname=${pair#*=}
+done
+printf 'user git\nhostname %s\nport 22\n' "$hostname"
+SH
   ln -s "$REAL_JQ" "$dir/fakebin/jq"
-  chmod +x "$dir/root/bin/fm-guard.sh" "$dir/fakebin/gh"
+  chmod +x "$dir/root/bin/fm-guard.sh" "$dir/fakebin/gh" "$dir/fakebin/ssh"
   : > "$dir/gh.log"
   fm_write_meta "$dir/home/state/task-a.meta" \
     "window=firstmate:fm-task-a" "endpoint_task_id=task-a" "worktree=$dir/wt" "project=$dir/proj" \
@@ -217,18 +229,14 @@ test_pr_matches_any_remote_of_a_repository() {
 
   dir=$(make_case alias)
   git -C "$dir/api-project" remote set-url origin git@github-work:o/api.git
-  cat > "$dir/fakebin/ssh" <<'SH'
-#!/usr/bin/env bash
-[ "$1" = -G ] || exit 255
-case "$2" in
-  github-work) printf 'user git\nhostname github.com\nport 22\n' ;;
-  *) printf 'user git\nhostname %s\nport 22\n' "$2" ;;
-esac
-SH
-  chmod +x "$dir/fakebin/ssh"
-  run_entry "$dir" "$PR_CHECK" task-a "$API_URL" > "$dir/out" 2> "$dir/err" \
+  FM_TEST_SSH_HOSTNAMES=github-work=github.com run_entry "$dir" "$PR_CHECK" task-a "$API_URL" > "$dir/out" 2> "$dir/err" \
     || fail "a member PR whose origin uses an ssh host alias was refused: $(cat "$dir/err")"
   assert_line "member.api.pr=$API_URL" "$dir/home/state/task-a.meta" "the aliased origin's PR is not recorded under its repository"
+
+  dir=$(make_case port-443)
+  FM_TEST_SSH_HOSTNAMES=github.com=ssh.github.com run_entry "$dir" "$PR_CHECK" task-a "$API_URL" > "$dir/out" 2> "$dir/err" \
+    || fail "a member PR whose origin host ssh reaches through another hostname was refused: $(cat "$dir/err")"
+  assert_line "member.api.pr=$API_URL" "$dir/home/state/task-a.meta" "the literal origin host no longer places the PR"
 
   dir=$(make_case ambiguous)
   git -C "$dir/proj" remote add api https://github.com/o/api.git
@@ -239,7 +247,7 @@ SH
   assert_grep "is a remote of both this task's own repository and edit member api, so its repository is ambiguous" "$dir/err" \
     "the refusal did not say the PR's repository is ambiguous"
   cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" || fail "a refused registration changed the task record"
-  pass "a PR is placed by any remote of its repository, through an ssh host alias too, and refused when ambiguous"
+  pass "a PR is placed by any remote of its repository, through an ssh host alias or its literal host, and refused when ambiguous"
 }
 
 test_delivery_moves_between_repositories_only_after_merge() {

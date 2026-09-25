@@ -346,11 +346,13 @@ fm_member_brief_section() {  # <task-id>
   fi
 }
 
-# The host/path identity of a remote URL, lower-cased and without a trailing
-# .git or slash, or nothing when it is not a network URL. Accepts https, http,
-# ssh, and git URLs and the scp-like user@host:path form. An ssh or scp host
-# is resolved to its real hostname with `ssh -G` (configuration only, no
-# connection), so a host alias such as git@github-work:o/r names github.com.
+# The host/path identities of a remote URL, one per line, lower-cased and
+# without a trailing .git or slash, or nothing when it is not a network URL.
+# Accepts https, http, ssh, and git URLs and the scp-like user@host:path form.
+# The URL's literal host comes first; an ssh or scp host adds a second line
+# with the real hostname `ssh -G` reports (configuration only, no connection)
+# when that differs, so a host alias such as git@github-work:o/r also names
+# github.com.
 fm_member_url_identity() {  # <url>
   local url=$1 rest host path ssh_host=0 real
   case "$url" in
@@ -376,22 +378,25 @@ fm_member_url_identity() {  # <url>
     [ "$path" != "$rest" ] || return 0
     host=${host%%:*}
   fi
-  if [ "$ssh_host" = 1 ] && [ -n "$host" ]; then
-    real=$(ssh -G "$host" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }') || real=
-    [ -z "$real" ] || host=$real
-  fi
   path=${path%/}
   path=${path%.git}
   [ -n "$host" ] && [ -n "$path" ] || return 0
   printf '%s/%s\n' "$host" "$path" | tr '[:upper:]' '[:lower:]'
+  [ "$ssh_host" = 1 ] || return 0
+  real=$(ssh -G "$host" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }') || real=
+  [ -n "$real" ] || return 0
+  real=$(printf '%s/%s' "$real" "$path" | tr '[:upper:]' '[:lower:]')
+  [ "$real" = "$(printf '%s/%s' "$host" "$path" | tr '[:upper:]' '[:lower:]')" ] || printf '%s\n' "$real"
 }
 
 # 0 when some remote of <dir> has the host/path identity <want>.
 fm_member_has_remote() {  # <dir> <want>
-  local remote url
+  local remote url identity
   while IFS= read -r remote; do
     url=$(git -C "$1" remote get-url "$remote" 2>/dev/null) || continue
-    [ "$(fm_member_url_identity "$url")" != "$2" ] || return 0
+    while IFS= read -r identity; do
+      [ "$identity" != "$2" ] || return 0
+    done < <(fm_member_url_identity "$url")
   done < <(git -C "$1" remote 2>/dev/null)
   return 1
 }
