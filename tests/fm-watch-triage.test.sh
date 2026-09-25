@@ -2122,6 +2122,107 @@ test_stale_terminal_status_overridden_by_active_run() {
   pass "a stale terminal-looking status is overridden and absorbed while a run is actively working, then wedge-escalated"
 }
 
+# --- stale pane of finished, handed-on work: absorbed, never re-alarmed ---
+# A ship that reported its PR ready and whose merge poll firstmate registered, or
+# a scout whose report exists, has nothing left to say while it idles: its done:
+# status already woke firstmate, and the merge poll or report carries the outcome.
+# Re-alarming on every new pane hash forced a no-op supervision turn every few
+# minutes for each such task. The companion cases keep a still-live lane under
+# the same registered poll alarming when its current state is not done, and a
+# dead agent alarming as the liveness failure it is.
+
+# Register the task's PR merge poll through the same library fm-pr-check.sh uses,
+# so the fixture carries exactly the artifacts the watcher itself authenticates.
+arm_fixture_merge_poll() {  # <state> <id> <pr-url>
+  printf 'pr=%s\n' "$3" >> "$1/$2.meta"
+  bash -c '
+    . "$1/bin/fm-pr-lib.sh"
+    fm_pr_url_parse "$4" || exit 1
+    fm_pr_poll_prepare "$2" "$3" "$FM_PR_PROVIDER" "$4" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" \
+      "$1/bin/fm-pr-poll.sh" || exit 1
+    fm_pr_poll_publish_prepared
+  ' _ "$ROOT" "$1" "$2" "$3"
+}
+
+# Build a stale-ready finished task and echo its case dir. The pane is primed one
+# identical hash short of stale, the done: line is marked seen so only the stale
+# path can speak, and the check sweep is marked fresh so the registered poll never
+# runs against a real forge.
+make_finished_stale_case() {  # <name> <ship|scout>
+  local name=$1 kind=$2 dir state key
+  dir=$(make_case "$name"); state="$dir/state"
+  printf 'idle, finished' > "$dir/pane.txt"
+  printf 'window=test:fm-%s\nkind=%s\n' "$name" "$kind" > "$state/$name.meta"
+  if [ "$kind" = scout ]; then
+    printf 'done: report written\n' > "$state/$name.status"
+    mkdir -p "$dir/data/$name"
+    printf 'findings\n' > "$dir/data/$name/report.md"
+  else
+    printf 'done: PR https://github.com/example/repo/pull/7 checks green\n' > "$state/$name.status"
+    arm_fixture_merge_poll "$state" "$name" https://github.com/example/repo/pull/7 \
+      || fail "[$name] could not register the fixture merge poll"
+  fi
+  printf '%s' "$(seen_sig "$state/$name.status")" > "$state/.seen-${name}_status"
+  key=$(printf '%s' "test:fm-$name" | tr ':/.' '___')
+  printf '%s' "$(hash_text 'idle, finished')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  touch "$state/.last-check"
+  printf '%s\n' "$dir"
+}
+
+finished_stale_watch() {  # <dir> <name> <agent-command> [extra env assignments...]
+  local dir=$1 name=$2 cmd=$3
+  shift 3
+  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="test:fm-$name" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_FAKE_TMUX_CURRENT_COMMAND="$cmd" FM_STATE_OVERRIDE="$dir/state" FM_DATA_OVERRIDE="$dir/data" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 env "$@" "$WATCH" > "$dir/watch.out" &
+}
+
+test_finished_handed_on_stale_absorbed() {
+  local spec name kind dir state key pid round
+  for spec in ship-merge-watched:ship scout-report-written:scout; do
+    name=${spec%%:*}; kind=${spec#*:}
+    dir=$(make_finished_stale_case "$name" "$kind"); state="$dir/state"
+    key=$(printf '%s' "test:fm-$name" | tr ':/.' '___')
+    finished_stale_watch "$dir" "$name" claude FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+    pid=$!
+    # The first sighting, then two fresh pane hashes (a ticking idle display):
+    # each one reaches the stale path and none may wake firstmate.
+    for round in 1 2 3; do
+      [ "$round" -eq 1 ] || printf 'idle, finished, tick %s' "$round" > "$dir/pane.txt"
+      if ! { wait_poll_cycle "$state" "$pid" && wait_poll_cycle "$state" "$pid" && wait_poll_cycle "$state" "$pid"; }; then
+        reap "$pid"; fail "[$name] watcher exited on round $round for finished, handed-on work: $(cat "$dir/watch.out")"
+      fi
+    done
+    reap "$pid"
+    [ ! -s "$dir/watch.out" ] || fail "[$name] finished, handed-on work printed a wake: $(cat "$dir/watch.out")"
+    [ ! -s "$state/.wake-queue" ] || fail "[$name] finished, handed-on work queued a wake"
+    [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$(hash_text 'idle, finished, tick 3')" ] \
+      || fail "[$name] the stale path never classified the churned pane, so the absorb was not exercised"
+    [ ! -e "$state/.stale-since-$key" ] || fail "[$name] finished work started a wedge timer"
+  done
+  pass "a finished ship with a registered merge poll, or a scout with its report, idles without stale wakes"
+}
+
+test_handed_on_stale_still_alarms_when_not_done_or_dead() {
+  local spec name verdict cmd dir pid
+  for spec in \
+    'poll-worker-resumed|state: working · source: status-log · working: addressing review|claude' \
+    'poll-worker-blocked|state: blocked · source: status-log · head not pushed|claude' \
+    'poll-agent-dead|state: done · source: run-step · checks green|zsh'
+  do
+    name=${spec%%|*}; verdict=${spec#*|}; cmd=${verdict##*|}; verdict=${verdict%|*}
+    dir=$(make_finished_stale_case "$name" ship)
+    finished_stale_watch "$dir" "$name" "$cmd" FM_FAKE_CREW_STATE="$verdict"
+    pid=$!
+    wait_for_exit "$pid" 100 || { reap "$pid"; fail "[$name] a registered merge poll silenced a stale pane that must alarm"; }
+    grep -F "stale: test:fm-$name" "$dir/watch.out" >/dev/null \
+      || fail "[$name] watcher exited without the stale wake: $(cat "$dir/watch.out")"
+  done
+  pass "a registered merge poll does not silence a lane that is not done, or whose agent is dead"
+}
+
 # --- non-terminal stale, crew provably working: absorbed, then wedge-escalated ---
 # A provably-working crew (an actively-running pipeline) legitimately sits on a
 # static pane (e.g. waiting on CI), so a non-terminal stale is absorbed and only
@@ -6126,6 +6227,8 @@ test_unreadable_status_reports_once_per_file_state
 test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
 test_stale_terminal_status_overridden_by_active_run
+test_finished_handed_on_stale_absorbed
+test_handed_on_stale_still_alarms_when_not_done_or_dead
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
