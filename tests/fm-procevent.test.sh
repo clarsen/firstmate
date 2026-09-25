@@ -3120,6 +3120,65 @@ assert_contains "$out" "| Complete annotation" \
   "a valid annotation beside a malformed row was not presented"
 pass "read never certifies rows missing declared fields as complete"
 
+# Real captures from one Lavish page in the shapes lavish-axi emits: tabular
+# rows, a `prompts[N]:` list with text-range items, and a second tabular block.
+# A reader that reports zero items here hides the captain's answers.
+FIX="$ROOT/tests/fixtures-lavish"
+for spec in "1 6" "2 3" "3 2"; do
+  read -r fixture_no fixture_items <<<"$spec"
+  READ="$FIX/recap-$fixture_no.result"
+  out=$(read_out) || fail "read failed on recap fixture $fixture_no"
+  assert_contains "$out" "declared_items: $fixture_items" "fixture $fixture_no lost its declared count"
+  assert_contains "$out" "presented_items: $fixture_items" "fixture $fixture_no did not enumerate every prompt"
+  assert_contains "$out" "complete: yes" "fixture $fixture_no was not certified complete"
+  assert_contains "$out" "annotation_count: $fixture_items" "fixture $fixture_no lost annotations"
+done
+READ="$FIX/recap-2.result"
+out=$(read_out)
+assert_contains "$out" "element_selector: body > main > section:nth-of-type(3) > div > pre" \
+  "the list-form text annotation lost its selector"
+assert_contains "$out" "| launchctl bootstrap gui/" "the list-form text annotation lost its element text"
+assert_contains "$out" "| Bootstrap failed: 5: Input/output error" "the list-form typed comment was dropped"
+assert_contains "$out" "tag: text" "the list-form text annotation lost its tag"
+assert_not_contains "$out" "element_selector: body > main > section:nth-of-type(3) > div > pre
+tag: text
+text:
+prompt:" "the typed comment was reduced to an empty field"
+# A prompts header this reader cannot parse must be loud, never zero items.
+READ="$TMP_ROOT/read-result"
+cat > "$READ" <<'EOF2'
+session:
+  file: /review.html
+  status: feedback
+  session_ended: true
+prompts[2]{uid,prompt
+  "1","x"
+EOF2
+if out=$(read_out); then fail "an unreadable prompts header was reported as a successful read"; fi
+assert_contains "$out" "LAVISH RESULT UNREADABLE" "an unreadable prompts header did not say so"
+assert_not_contains "$out" "declared_items: 0" "an unreadable prompts header was reported as zero items"
+# A list-form result carrying a declared item that never arrives is incomplete.
+cat > "$READ" <<'EOF2'
+session:
+  file: /review.html
+  status: feedback
+prompts[2]:
+  - uid: "1"
+    prompt: "only one"
+    selector: "body"
+    tag: text
+    text: "only one"
+EOF2
+out=$(read_out) || fail "read failed on a short list-form block"
+assert_contains "$out" "complete: no" "a short list-form block was certified complete"
+assert_contains "$out" "presented_items: 1" "a short list-form block miscounted its items"
+# A list-form block is queued content, so an ended result carrying one is announced.
+printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[1]:\n  - uid: "1"\n    tag: text\n' > "$READ"
+if "$ROOT/bin/fm-procevent-lavish.sh" silent "$READ" >/dev/null 2>&1; then
+  fail "an ended result carrying a list-form prompts block was treated as silent"
+fi
+pass "read enumerates every captured prompt in every lavish-axi result shape and says so when it cannot"
+
 cat > "$READ" <<'EOF'
 session:
   file: /review.html

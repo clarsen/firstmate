@@ -1,0 +1,36 @@
+session:
+  file: /Users/clarsen/lsrc/firstmate/data/outstanding-requests/recap.html
+  status: feedback
+  session_ended: true
+  ended_by: user
+prompts[3]:
+  - uid: "1"
+    prompt: "dispatch.fm-stale-finished-noise: start\n\nContext data:\n{\n  \"question\": \"dispatch.fm-stale-finished-noise\",\n  \"answer\": \"start\",\n  \"note\": \"\"\n}"
+    selector: "body > main > section:nth-of-type(2) > div > form"
+    tag: choice
+    text: "dispatch.fm-stale-finished-noise: start"
+  - uid: "2"
+    prompt: "merge.muster-codex-dashboard: merge\n\nContext data:\n{\n  \"question\": \"merge.muster-codex-dashboard\",\n  \"answer\": \"merge\",\n  \"note\": \"\"\n}"
+    selector: "body > main > section:nth-of-type(1) > div > form"
+    tag: choice
+    text: "merge.muster-codex-dashboard: merge"
+  - uid: "3"
+    prompt: "I get \nsudo launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.clarsen.backup-restic.plist\nPassword:\nBootstrap failed: 5: Input/output error"
+    selector: "body > main > section:nth-of-type(3) > div > pre"
+    tag: text
+    text: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.clarsen.backup-restic.plist
+    target:
+      type: text-range
+      text: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.clarsen.backup-restic.plist
+      selector: "body > main > section:nth-of-type(3) > div > pre"
+      commonAncestorSelector: "body > main > section:nth-of-type(3) > div > pre"
+      start:
+        selector: "body > main > section:nth-of-type(3) > div > pre"
+        path[1]: 0
+        offset: 14
+      end:
+        selector: "body > main > section:nth-of-type(3) > div > pre"
+        path[1]: 0
+        offset: 101
+next_step: This was the last feedback before the user ended the session. Stop polling /Users/clarsen/lsrc/firstmate/data/outstanding-requests/recap.html and do not reopen it - deliver any remaining updates directly in this conversation instead. Only run `lavish-axi /Users/clarsen/lsrc/firstmate/data/outstanding-requests/recap.html --reopen` if the user explicitly asks for further review or something genuinely important needs their visual attention.
+dom_snapshot: "uid=4 body \"What's waiting on you Two calls for you, then a few steps only you can do on you\"\n  uid=5 main \"What's waiting on you Two calls for you, then a few steps only you can do on you\"\n    uid=6 header \"What's waiting on you Two calls for you, then a few steps only you can do on you\"\n      uid=7 h1 \"What's waiting on you\"\n      uid=8 p \"Two calls for you, then a few steps only you can do on your Mac. Pick an answer \"\n        uid=9 b \"Queue answer\"\n        uid=10 b \"Send to Agent\"\n    uid=11 h2 \"Your calls\"\n    uid=12 section \"Merge: Codex dashboard moved into muster https://github.com/clarsen/muster/pull/\"\n      uid=13 div \"Merge: Codex dashboard moved into muster https://github.com/clarsen/muster/pull/\"\n        uid=14 h3 \"Merge: Codex dashboard moved into muster\"\n        uid=15 a \"https://github.com/clarsen/muster/pull/32\"\n        uid=16 p \"This moves the status dashboard, its build and its Netlify config out of clarsen\"\n          uid=17 code \"harness-status\"\n          uid=18 code \"deploy-status-codex\"\n        uid=2 form \"Merge Not yet Queue answer\"\n          uid=19 div \"Merge Not yet\"\n            uid=20 label \"Merge\"\n            uid=21 label \"Not yet\"\n          uid=22 input\n          uid=23 button \"Queue answer\"\n    uid=24 section \"Start: stop false 'waiting too long' alerts Workers that have finished and are o\"\n      uid=25 div \"Start: stop false 'waiting too long' alerts Workers that have finished and are o\"\n        uid=26 h3 \"Start: stop false 'waiting too long' alerts\"\n        uid=27 p \"Workers that have finished and are only waiting for your merge keep setting off \"\n        uid=1 form \"Start now recommended Later Queue answer\"\n          uid=28 div \"Start now recommended Later\"\n            uid=29 label \"Start now recommended\"\n            uid=30 label \"Later\"\n          uid=31 input\n          uid=32 button \"Queue answer\"\n    uid=33 h2 \"Only you can do these\"\n    uid=34 section \"1. Switch on the new nightly backup (merged in dotfiles#4): chezmoi apply launch\"\n      uid=35 div \"1. Switch on the new nightly backup (merged in dotfiles#4): chezmoi apply launch\"\n        uid=36 p \"1. Switch on the new nightly backup (merged in dotfiles#4):\"\n          uid=37 b \"1. Switch on the new nightly backup\"\n          uid=38 a \"dotfiles#4\"\n        uid=3 pre \"chezmoi apply launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.clarse\"\n        uid=39 p \"Then give /bin/bash Full Disk Access in System Settings → Privacy & Security. Wi\"\n          uid=40 code \"/bin/bash\"\n          uid=41 code \"launchctl kickstart gui/$(id -u)/com.clarsen.backup-restic\"\n          uid=42 code \"tail -f ~/tmp/backup-restic.log\"\n          uid=43 code \"SUMMARY\"\n        uid=44 p \"2. Rotate the GitHub token in ~/.config/chezmoi/chezmoi.toml. It showed up in an\"\n          uid=45 b \"2. Rotate the GitHub token\"\n          uid=46 code \"~/.config/chezmoi/chezmoi.toml\"\n    uid=47 h2 \"Done since the last recap\"\n    uid=48 section \"Merged: muster#31, clarsen-env#1, dotfiles#5, taskbase#85. The commons → A migra\"\n      uid=49 div \"Merged: muster#31, clarsen-env#1, dotfiles#5, taskbase#85. The commons → A migra\"\n        uid=50 p \"Merged: muster#31, clarsen-env#1, dotfiles#5, taskbase#85.\"\n          uid=51 a \"muster#31\"\n          uid=52 a \"clarsen-env#1\"\n          uid=53 a \"dotfiles#5\"\n          uid=54 a \"taskbase#85\"\n        uid=55 p \"The commons → A migration is live in production. The key count is now 57, and cl\"\n          uid=56 code \"clarsen-env\"\n        uid=57 p \"The 2021 clone is archived to ~/Tmp/lsrc-clarsen-env-2021-20260924.tar.gz and de\"\n          uid=58 code \"~/Tmp/lsrc-clarsen-env-2021-20260924.tar.gz\"\n        uid=59 p \"Still in progress: firstmate's multi-repo editing.\"\n    uid=60 footer \"When you've queued your answers, press Send to Agent in the Lavish bar.\"\n      uid=61 b \"Send to Agent\"\n  uid=62 script \"function ask(form, q, label) { const fd = new FormData(form); const a = fd.get('\"\n  uid=63 script"

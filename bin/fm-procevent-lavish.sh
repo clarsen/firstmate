@@ -31,7 +31,10 @@
 #            words are never dropped. Choice Context data is not a comment.
 #            Captain-supplied body lines are visibly prefixed so they cannot
 #            forge structural labels. Empty message and annotation sections
-#            are reported explicitly.
+#            are reported explicitly. Both published block shapes are read
+#            through bin/FmLavishPrompts.pm; a block it cannot parse prints
+#            LAVISH RESULT UNREADABLE and exits 3 rather than reporting zero
+#            items, because the raw capture may still hold the captain's words.
 # canonical-path  Print the artifact path exactly as Lavish keys its session,
 #            including the on-disk letter case on a case-insensitive volume.
 #            Other scripts that match a board against Lavish's own records call
@@ -503,7 +506,7 @@ cmd_terminal() {
 # failed" is never proof that nothing was said.
 result_has_queued_content() {  # <result-file>
   awk '
-    /^(prompts|feedback)\[[0-9]+\]\{[^}]*\}:[[:space:]]*$/ {
+    /^(prompts|feedback)\[[0-9]+\](\{[^}]*\})?:[[:space:]]*$/ {
       verdict = "present"
       exit
     }
@@ -541,10 +544,10 @@ cmd_silent() {
 
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
-# card's declared close mode (`done` or `release`) to the keyed-answer intake. The published response frames queued feedback as
-# a `prompts[N]{field,...}:` header followed by exactly N indented CSV rows whose
-# quoted fields carry JSON-style escapes, so this reads the declared field ORDER
-# rather than assuming a fixed column, and takes only rows whose `tag` field is
+# card's declared close mode (`done` or `release`) to the keyed-answer intake. Rows are enumerated by bin/FmLavishPrompts.pm, the
+# one parser shared with `read`, which owns both published shapes (tabular
+# `prompts[N]{...}:` and list `prompts[N]:`); an unreadable block exits 3
+# with an error rather than yielding no rows. This takes only rows whose `tag` field is
 # `choice`. A freeform `message` row is captain prose and is deliberately never a
 # source of decision keys. A row that does not carry both a slug-shaped `question`
 # and the versioned `selection` and `note` fields inside its `Context data:` block
@@ -558,41 +561,17 @@ cmd_choice_rows() {
   local selection=$1 file=${2-}
   [ -n "$file" ] || usage
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
-  perl -MJSON::PP -e '
+  perl -I"$SCRIPT_DIR" -MJSON::PP -MFmLavishPrompts=parse_blocks -e '
     use strict; use warnings;
     my ($selection, $path) = @ARGV;
-    open my $fh, "<", $path or exit 1;
-    my (@fields, $want, @rows);
-    while (my $line = <$fh>) {
-      if (!@fields) {
-        next unless $line =~ /^prompts\[(\d+)\]\{([^}]*)\}:\s*$/;
-        ($want, @fields) = ($1, split /,/, $2);
-        next;
-      }
-      last unless $line =~ /^\s/;
-      last if @rows >= $want;
-      chomp $line;
-      push @rows, $line;
-    }
-    close $fh;
+    my $parsed = parse_blocks($path, "prompts");
+    if ($parsed->{error}) { print STDERR "error: $parsed->{error}\n"; exit 3 }
+    print STDERR "warning: $parsed->{malformed} of $parsed->{declared} captured prompts could not be read\n"
+      if $parsed->{malformed} || @{ $parsed->{rows} } != $parsed->{declared};
     my %seen;
     my @choices;
-    for my $row (@rows) {
-      $row =~ s/^\s+//;
-      my @vals;
-      while (length $row) {
-        if ($row =~ s/^"((?:[^"\\]|\\.)*)"//) {
-          my $v = $1;
-          $v =~ s/\\(.)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : $1 eq "r" ? "\r" : $1/ge;
-          push @vals, $v;
-        } else {
-          $row =~ s/^([^,]*)//;
-          push @vals, $1;
-        }
-        last unless $row =~ s/^,//;
-      }
-      my %f;
-      $f{$fields[$_]} = $vals[$_] for 0 .. $#fields;
+    for my $f (@{ $parsed->{rows} }) {
+      my %f = %$f;
       next unless defined $f{tag} && $f{tag} eq "choice";
       my $prompt = $f{prompt};
       next unless defined $prompt && $prompt =~ /Context data:\s*(\{.*\})/s;
@@ -679,58 +658,20 @@ cmd_read() {
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
   lifecycle=$(cmd_classify "$file")
   session_ended=$(session_field "$file" session_ended)
-  perl -e '
+  perl -I"$SCRIPT_DIR" -MFmLavishPrompts=parse_blocks -e '
     use strict; use warnings;
     my ($path, $lifecycle, $session_ended) = @ARGV;
-    open my $fh, "<", $path or exit 1;
-    my (@fields, $want, @rows);
-    while (my $line = <$fh>) {
-      if (!@fields) {
-        next unless $line =~ /^(?:prompts|feedback)\[(\d+)\]\{([^}]*)\}:\s*$/;
-        ($want, @fields) = ($1, split /,/, $2);
-        next;
-      }
-      last unless $line =~ /^\s/;
-      last if defined($want) && @rows >= $want;
-      chomp $line;
-      push @rows, $line;
+    my $parsed = parse_blocks($path, "prompts", "feedback");
+    if ($parsed->{error}) {
+      print "LAVISH RESULT UNREADABLE: $parsed->{error}\n";
+      print "The captured result may hold the captain'"'"'s answers; read the raw file.\n";
+      exit 3;
     }
-    close $fh;
-    $want = 0 unless defined $want;
-    my @parsed;
-    my $malformed = 0;
-    for my $row (@rows) {
-      $row =~ s/^\s+//;
-      my @vals;
-      while (length $row) {
-        if ($row =~ s/^"((?:[^"\\]|\\.)*)"//) {
-          push @vals, $1;
-        } else {
-          $row =~ s/^([^,]*)//;
-          push @vals, $1;
-        }
-        last unless $row =~ s/^,//;
-      }
-      if (@vals > @fields) {
-        my ($preserve) = grep { $fields[$_] eq "prompt" } 0 .. $#fields;
-        ($preserve) = grep { $fields[$_] eq "text" } 0 .. $#fields unless defined $preserve;
-        if (defined $preserve) {
-          my $count = @vals - @fields + 1;
-          my @parts = splice @vals, $preserve, $count;
-          splice @vals, $preserve, 0, join(",", @parts);
-        }
-      }
-      if (@vals != @fields) {
-        $malformed++;
-        next;
-      }
-      s/\\(.)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : $1 eq "r" ? "\r" : $1/ge for @vals;
-      my %f;
-      $f{$fields[$_]} = $vals[$_] for 0 .. $#fields;
-      push @parsed, \%f;
-    }
+    my $want = $parsed->{declared};
+    my @parsed = @{ $parsed->{rows} };
+    my $malformed = $parsed->{malformed};
+    my $complete = (@parsed == $want && !$malformed) ? "yes" : "no";
     my $presented = scalar @parsed;
-    my $complete = ($presented == $want && !$malformed) ? "yes" : "no";
     my @messages;
     my @annotations;
     for my $f (@parsed) {
