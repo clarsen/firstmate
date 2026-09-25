@@ -31,7 +31,10 @@
 #            words are never dropped. Choice Context data is not a comment.
 #            Captain-supplied body lines are visibly prefixed so they cannot
 #            forge structural labels. Empty message and annotation sections
-#            are reported explicitly.
+#            are reported explicitly. Both published block shapes are read
+#            through bin/FmLavishPrompts.pm; a block it cannot parse prints
+#            LAVISH RESULT UNREADABLE and exits 3 rather than reporting zero
+#            items, because the raw capture may still hold the captain's words.
 # canonical-path  Print the artifact path exactly as Lavish keys its session,
 #            including the on-disk letter case on a case-insensitive volume.
 #            Other scripts that match a board against Lavish's own records call
