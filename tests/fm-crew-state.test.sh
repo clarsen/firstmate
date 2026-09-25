@@ -5111,6 +5111,114 @@ test_captured_completed_history() {
   pass 'captured completed status yields to synthetic subsequent development'
 }
 
+# --- edit members: the run of the repository in delivery -------------------
+
+# A task that changes several repositories: its own worktree at <d>/wt and edit
+# member api at <d>/api, both on branch fm/feat-multi. The fake no-mistakes
+# reports each directory in the colon-separated FM_FAKE_UNINIT_DIR, like the
+# real CLI, as a repository it never initialized.
+make_multi_repo_case() {  # <name> -> echoes the case dir
+  local d fb
+  d=$(new_case "$1")
+  make_repo_on_branch "$d/wt" fm/feat-multi
+  make_repo_on_branch "$d/api" fm/feat-multi
+  make_fakebin "$d" >/dev/null
+  fb="$d/fakebin"
+  mv "$fb/no-mistakes" "$fb/no-mistakes.inner"
+  cat > "$fb/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+if [ -n "${FM_FAKE_UNINIT_DIR:-}" ] && case ":$FM_FAKE_UNINIT_DIR:" in *":$(pwd -P):"*) true ;; *) false ;; esac; then
+  echo "error: repo not initialized (run 'no-mistakes init' first)"
+  echo "help[1]: Run \`no-mistakes init\` to set up the gate in this repository"
+  exit 1
+fi
+exec "$(dirname "$0")/no-mistakes.inner" "$@"
+SH
+  chmod +x "$fb/no-mistakes"
+  fm_write_meta "$d/state/multi.meta" "window=fm:fm-multi" "worktree=$d/wt" "kind=ship" "harness=claude" \
+    "mode=direct-PR" "yolo=off" \
+    "member.api.project=$d/api-project" "member.api.worktree=$d/api" "member.api.role=edit" \
+    "member.api.ref=" "member.api.commit=$FM_FAKE_RUN_HEAD" "member.api.lease_id=lease-api" \
+    "member.api.pool_root=" "member.api.mode=no-mistakes" "member.api.yolo=off"
+  printf '%s\n' "$d"
+}
+
+# One live run on the shared branch, with a ULID id, at the fake run head.
+multi_repo_live_run() {
+  local ulid=01J8ZQ4K5V6W7X8Y9Z0ABCDEFG
+  FM_FAKE_AXI_HOME="count: 1 of 1 total
+runs[1]{id,branch,status,head,pr}:
+  \"$ulid\",fm/feat-multi,running,$FM_FAKE_RUN_HEAD,\"\""
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-multi | sed "s/01RUN/$ulid/")"
+  FM_FAKE_AXI_STATUS_RUN="$FM_FAKE_AXI_STATUS"
+}
+
+test_edit_member_run_is_attributed_to_its_repository() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-member-run)
+  FM_FAKE_RUN_HEAD=$(git -C "$d/api" rev-parse HEAD)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/wt" && pwd -P)
+  export FM_FAKE_UNINIT_DIR
+  multi_repo_live_run
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR
+  assert_contains "$out" "source: run-step" "the edit member's run did not answer"
+  assert_contains "$out" "state: working" "the edit member's live run is not working"
+  assert_contains "$out" "repository: api" "the reading does not name the repository in delivery"
+  pass "an edit member's run answers for the task and names its repository"
+}
+
+test_own_run_of_a_multi_repo_task_names_no_member() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-own-run)
+  FM_FAKE_RUN_HEAD=$(git -C "$d/wt" rev-parse HEAD)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/api" && pwd -P)
+  export FM_FAKE_UNINIT_DIR
+  multi_repo_live_run
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR
+  assert_contains "$out" "source: run-step" "the task's own run did not answer"
+  assert_not_contains "$out" "repository:" "the task's own run was attributed to a member"
+  pass "the task's own run answers a multi-repository task without naming a member"
+}
+
+test_member_handoff_done_is_gated_on_the_member() {
+  reset_fakes
+  local d out sha
+  d=$(make_multi_repo_case multi-handoff)
+  printf 'fix\n' > "$d/wt/fix.txt"
+  git -C "$d/wt" add fix.txt
+  git -C "$d/wt" commit -q -m 'own fix only in the copy'
+  sha=$(git -C "$d/wt" rev-parse HEAD)
+  FM_FAKE_UNINIT_DIR="$(cd "$d/wt" && pwd -P):$(cd "$d/api" && pwd -P)"
+  export FM_FAKE_UNINIT_DIR
+  arm_idle_record "$d/state" multi
+  printf 'done: ready in branch fm/feat-multi of api - handoff for validation\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  assert_contains "$out" "state: done" "a no-mistakes member's handoff was gated on the task's own copy"
+  printf 'done: ready in branch fm/feat-multi\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR
+  assert_contains "$out" "state: blocked" "a done naming no member was not gated on the task's own copy"
+  assert_contains "$out" "named head $sha is unreachable outside the worker copy" \
+    "the task's own refusal did not name its unpushed head"
+  pass "a done naming an edit member is gated on that member's mode, and one naming none on the task's own"
+}
+
+test_live_runs_in_two_repositories_read_unknown() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-two-live)
+  multi_repo_live_run
+  out=$(run_crew_state "$d" multi)
+  assert_contains "$out" "state: unknown" "two live runs of one task did not read unknown"
+  assert_contains "$out" "more than one repository" "the unknown reading does not say why"
+  pass "live runs in two repositories of one task read unknown rather than picking one"
+}
+
+
 test_captured_axi_status_shapes
 test_captured_inventory_replay
 test_captured_authority_transition
@@ -5285,5 +5393,9 @@ test_competing_live_runs_report_unknown_with_both_ids
 test_newer_failed_run_is_not_hidden_by_older_live_run
 test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown
+test_edit_member_run_is_attributed_to_its_repository
+test_own_run_of_a_multi_repo_task_names_no_member
+test_live_runs_in_two_repositories_read_unknown
+test_member_handoff_done_is_gated_on_the_member
 
 echo "all fm-crew-state tests passed"

@@ -13,7 +13,10 @@
 # failed run, and teardown for a run PARKED at a gate, so cleanup concludes it
 # instead of orphaning it. Getting this wrong in either
 # direction is unsafe: a false negative hides a genuinely parked run, and a
-# false positive lets teardown act on a run it does not own.
+# false positive lets teardown act on a run it does not own. For a task that
+# changes several repositories, fm_nm_select_delivery_worktree below picks the
+# one worktree whose run crew-state reads, and teardown concludes each edit
+# member's own run in that member's copy.
 #
 # Bounded call to an arbitrary command in dir $1, timeout $2 seconds, and its
 # `no-mistakes "$@"` specialization. The bounded
@@ -480,4 +483,75 @@ fm_nm_runs_status_for_worktree() {  # <worktree> <branch> <runs-list-output> [ex
   done <<< "$list"
   printf '%s' "$decided"
   return 0
+}
+
+# Which worktree of a task that changes several repositories (edit members,
+# bin/fm-task-members-lib.sh) holds the run a current-state read attributes.
+# Those repositories validate one at a time in land order, so the current run
+# is the one live run among their branches, or, with none live, the most
+# recently created one: no-mistakes run ids are ULIDs, which sort by creation
+# time. Each argument is one worktree of the set, the task's own first; each
+# worktree's own run is chosen by fm_nm_select_run on its branch. Prints
+# selected|<index> (the 0-based argument position), none when no worktree has
+# a run on its branch, or unknown|<reason> when the runs cannot be placed in
+# order: more than one live run, an unreadable inventory or one with no run
+# overview, or a run id that is not a ULID. A repository no-mistakes never
+# initialized holds no run.
+fm_nm_select_delivery_worktree() {  # <timeout_secs> <worktree>...
+  local timeout_secs=$1 i=-1 wt branch overview rc choice id status
+  local live_count=0 live_idx='' best_idx='' best_id=''
+  shift
+  for wt in "$@"; do
+    i=$((i + 1))
+    branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=
+    [ -n "$branch" ] || continue
+    rc=0
+    overview=$(fm_nm_run_checked "$wt" "$timeout_secs" axi) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      if printf '%s\n' "$overview" | grep -q '^error: repo not initialized'; then
+        continue
+      fi
+      printf 'unknown|run inventory unreadable in %s\n' "$wt"
+      return 0
+    fi
+    choice=$(fm_nm_select_run "$branch" "$overview" "$wt" "$timeout_secs")
+    case "$choice" in
+      selected\|*)
+        IFS='|' read -r _ id status _ <<< "$choice"
+        if ! [[ "$id" =~ ^[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          printf 'unknown|run id %s in %s does not sort by creation time\n' "$id" "$wt"
+          return 0
+        fi
+        case "$status" in
+          running|pending)
+            live_count=$((live_count + 1))
+            live_idx=$i
+            ;;
+        esac
+        if [ -z "$best_id" ] \
+          || [ "$(printf '%s\n%s\n' "$best_id" "$id" | LC_ALL=C sort | tail -n 1)" = "$id" ]; then
+          best_id=$id
+          best_idx=$i
+        fi
+        ;;
+      absent) ;;
+      unavailable)
+        printf 'unknown|no run overview in %s to place its runs in order\n' "$wt"
+        return 0
+        ;;
+      *)
+        printf 'unknown|%s in %s\n' "${choice#unknown|}" "$wt"
+        return 0
+        ;;
+    esac
+  done
+  if [ "$live_count" -gt 1 ]; then
+    printf 'unknown|validation runs are live in more than one repository of the task\n'
+  elif [ "$live_count" -eq 1 ]; then
+    printf 'selected|%s\n' "$live_idx"
+  elif [ -n "$best_idx" ]; then
+    printf 'selected|%s\n' "$best_idx"
+  else
+    printf 'none\n'
+  fi
 }

@@ -727,6 +727,28 @@ test_teardown_closes_the_backlog_item_itself() {
   pass "teardown closes its own backlog item before reporting success"
 }
 
+# A task with edit members records its own repository's PR as anchor_pr=,
+# while pr= names the last PR it delivered; its backlog item closes on its own.
+test_teardown_closes_a_multi_repo_task_on_its_own_pr() {
+  local case_dir
+  case_dir=$(make_case tasks-axi-close-anchor)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' "member.api.project=$case_dir/api-project-gone" "member.api.worktree=$case_dir/api-copy-gone" \
+    'member.api.role=edit' 'member.api.mode=no-mistakes' 'member.api.yolo=off' \
+    'anchor_pr=https://github.com/example/repo/pull/7' 'member.api.pr=https://github.com/example/api/pull/9' \
+    'pr=https://github.com/example/api/pull/9' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+
+  run_teardown "$case_dir" >/dev/null || fail "teardown of a multi-repository task failed with a real backlog"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] \
+    || fail "the multi-repository task's backlog item was not closed: $(backlog_row_state "$case_dir")"
+  assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "the closed backlog item did not record the task's own PR"
+  assert_no_grep 'https://github.com/example/api/pull/9' "$case_dir/data/backlog.md" \
+    "the closed backlog item recorded a member's PR instead of the task's own"
+  pass "teardown closes a multi-repository task's backlog item on its own repository's PR"
+}
+
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
   local case_dir out backlog_path
   case_dir=$(make_case tasks-axi-manual-optout)
@@ -3861,6 +3883,7 @@ EOF
 
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
+test_teardown_closes_a_multi_repo_task_on_its_own_pr
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

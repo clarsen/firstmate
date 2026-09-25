@@ -92,7 +92,12 @@
 # short-option cluster such as -yR, because the repository comes only from the
 # URL, nor --sha or --match-head-commit because the head comes only from the
 # live read. An existing task-meta pr= must equal the requested canonical URL;
-# a task cannot be rebound here. Auto-merge (--auto), a protection bypass
+# a task cannot be rebound here. The one exception is a task with edit members
+# (bin/fm-task-members-lib.sh), which ships one PR per repository: a PR of
+# another repository of the task may be requested, and bin/fm-pr-check.sh,
+# which records it, owns whether delivery may move to it; a different PR of the
+# same repository, or a PR of no repository of the task, still refuses.
+# Auto-merge (--auto), a protection bypass
 # (--admin), and branch
 # deletion (--delete-branch, -d and short-flag clusters, and GitLab's
 # --remove-source-branch) are refused by default; --attended-override, parsed
@@ -125,6 +130,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-task-members-lib.sh
+. "$SCRIPT_DIR/fm-task-members-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -381,9 +388,14 @@ fi
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
+# A head recorded beside another PR is not this one's; in a task with edit
+# members pr_head= may still belong to another repository's PR.
 RECORDED_HEAD=
 if [ "$PROVIDER" = gitlab ]; then
-  RECORDED_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
+  RECORDED_PR=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+  if [ -z "$RECORDED_PR" ] || [ "$RECORDED_PR" = "$URL" ]; then
+    RECORDED_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
+  fi
 fi
 
 # Pre-merge conditions for a GitLab merge request, read from one live view of
@@ -979,10 +991,24 @@ refuse_github_queue_while_away() {
 }
 
 require_recorded_pr_identity() {
-  local existing
+  local existing requested_name existing_name='<none>'
   existing=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
   [ -n "$existing" ] || return 0
   [ "$existing" = "$URL" ] && return 0
+  if fm_member_has_edit "$META"; then
+    if ! fm_member_resolve_pr_repo "$META" "$PR_HOST" "$PR_PATH"; then
+      echo "error: task $ID cannot merge $URL: $FM_MEMBER_ERROR" >&2
+      return 1
+    fi
+    requested_name=$FM_MEMBER_MATCH_NAME
+    # A subshell, so parsing the recorded URL leaves this merge's own parse intact.
+    if ! existing_name=$(fm_pr_url_parse "$existing" \
+      && fm_member_resolve_pr_repo "$META" "$FM_PR_HOST" "$FM_PR_PATH" \
+      && printf '%s' "$FM_MEMBER_MATCH_NAME"); then
+      existing_name='<none>'
+    fi
+    [ "$existing_name" = "$requested_name" ] || return 0
+  fi
   echo "error: task $ID is bound to $existing, not $URL" >&2
   return 1
 }

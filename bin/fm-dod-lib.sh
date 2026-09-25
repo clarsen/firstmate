@@ -17,7 +17,10 @@
 # recorded pr= passes when the forge holds that head: a forge-reported
 # pr_head= in no-mistakes mode, or a recorded merge
 # (state/<id>.pr-poll-merge-notified). Teardown's landed-work test remains the
-# complete discard gate.
+# complete discard gate. In a task with edit members
+# (bin/fm-task-members-lib.sh), a done that names one of its repositories - by
+# PR URL, or by `ready in branch fm/<id> of <name>` - is gated on that
+# repository's copy, delivery mode, and recorded PR instead of the task's own.
 # fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> prints the block on
 # stdout with no trailing blank line. The caller validates the mode; an unknown
 # mode is refused rather than silently rendered as the pipeline contract.
@@ -39,6 +42,15 @@
 # The string passed must be self-sufficient - it plus the codebase reconstructs
 # roughly the same specification - so a report, decision, or PR the intent
 # refers to is written into it as substance, never left as a pointer.
+# A task with edit members runs one no-mistakes validation per repository, and
+# each run reviews only its own repository, so its --intent may also carry one
+# factual companion note after the captain's words: which part of the change
+# this repository carries, with every other repository described only by
+# contract (what this one provides to or relies on from it, and a provider's
+# merged PR URL), never by code, diff, or build instruction. That note is the
+# one Firstmate-shaped addition the contract allows; fm_brief_intent_overlay
+# states it to the worker, and fm_dod_member_block renders the Definition of
+# done for an edit member whose delivery mode the task's own does not cover.
 # bin/fm-brief.sh scaffolds those two `# Task` subsections; bin/fm-spawn.sh and
 # bin/fm-promote.sh refuse leftover `{TASK}` / `{FIRSTMATE_SPEC}` placeholders
 # and a `## Captain's intent` line opening with a Captain label or address
@@ -60,6 +72,8 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-classify-lib.sh"
+# shellcheck source=bin/fm-task-members-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-task-members-lib.sh"
 
 fm_brief_worker_role() {  # <state-dir> <task-id>
   local state=$1 task_id=$2
@@ -202,7 +216,7 @@ fm_brief_marked_captain_words() {  # <task-body>
   '
 }
 
-fm_brief_intent_overlay() {  # <captain-intent>
+fm_brief_intent_overlay() {  # <captain-intent> <several-repositories: 0|1>
   cat <<'EOF'
 
 # Current no-mistakes intent contract
@@ -211,9 +225,15 @@ Use everything under `## Captain intent authorized for --intent` through the end
 Preserve those words without adding speaker labels or direct address.
 Firstmate-authored constraints, acceptance criteria, implementation details, decisions, and tradeoffs are specification, not captain intent.
 The Definition of done's rule that `--intent` must be self-sufficient still governs the string you pass: resolve any report, decision, or PR the intent below refers to into its substance rather than passing the pointer.
-
-## Captain intent authorized for --intent
 EOF
+  if [ "$2" = 1 ]; then
+    cat <<'EOF'
+This task changes several repositories, and each no-mistakes run reviews only the repository it runs in.
+So the `--intent` of each run may end with one factual companion note after the captain's words: a final paragraph starting `Companion note:` that says which part of the change this repository carries and describes every other repository only by contract - what this repository provides to it or relies on from it (an endpoint, an optional parameter, a schema) and, for a repository it relies on, that repository's merged PR URL.
+Never describe another repository's code, diff, or build steps in that note, and never put Firstmate specification or your own decisions in it.
+EOF
+  fi
+  printf '\n## Captain intent authorized for --intent\n'
   printf '%s\n' "$1"
 }
 
@@ -341,6 +361,17 @@ EOF
   esac
 }
 
+# The Definition of done for an edit member (bin/fm-task-members-lib.sh) whose
+# delivery mode differs from the task's own: fm_dod_block's contract for that
+# mode under its own heading, without the machine-readable contract line that
+# bin/fm-spawn.sh checks the task's own brief against.
+fm_dod_member_block() {  # <mode> <task-id>
+  local block
+  block=$(fm_dod_block "$1" "$2") || return 1
+  printf '\n## Definition of done for %s repositories\n' "$1"
+  printf '%s\n' "$block" | sed '1,2d'
+}
+
 # 0 when <sha> is contained in a ref under <namespace> in <repo>.
 # --contains tests that exact commit, so a branch that moved to a different
 # tip does not count.
@@ -410,12 +441,18 @@ fm_dod_forge_head_is_named_head() {  # <mode>
 # or the merge poll recorded it merged (<state>/<id>.pr-poll-merge-notified,
 # bin/fm-pr-lib.sh). That head is stored outside the worker copy even when
 # this clone never fetched it or fleet sync pruned its branch after a squash
-# merge.
-fm_dod_recorded_pr_on_forge() {  # <state> <id> <meta> <mode> <url>
-  local state=$1 id=$2 meta=$3 mode=$4 url=$5
+# merge. In a task with edit members, <url> may instead be the PR recorded for
+# one of its repositories (<pr-key> is member.<name>.pr or anchor_pr), whose
+# own recorded head counts the same way.
+fm_dod_recorded_pr_on_forge() {  # <state> <id> <meta> <mode> <url> [<pr-key>]
+  local state=$1 id=$2 meta=$3 mode=$4 url=$5 key=${6:-pr}
   [ -n "$meta" ] && [ -f "$meta" ] || return 1
-  [ "$(fm_dod_meta_value "$meta" pr)" = "$url" ] || return 1
-  if fm_dod_forge_head_is_named_head "$mode" && [ -n "$(fm_dod_meta_value "$meta" pr_head)" ]; then
+  if [ "$(fm_dod_meta_value "$meta" pr)" = "$url" ]; then
+    key='pr'
+  elif [ "$key" = pr ] || [ "$(fm_dod_meta_value "$meta" "$key")" != "$url" ]; then
+    return 1
+  fi
+  if fm_dod_forge_head_is_named_head "$mode" && [ -n "$(fm_dod_meta_value "$meta" "${key}_head")" ]; then
     return 0
   fi
   ( fm_pr_url_parse "$url" \
@@ -441,10 +478,22 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha pr_key=pr
+  # A task with edit members gates a done on the repository it names.
+  if [ "$kind" = ship ] && [ -n "$meta" ] && [ -f "$meta" ] && fm_member_has_edit "$meta" \
+    && fm_member_resolve_done_note "$meta" "$(status_line_note "$line")"; then
+    wt=$FM_MEMBER_MATCH_WORKTREE
+    project=$FM_MEMBER_MATCH_PROJECT
+    mode=$FM_MEMBER_MATCH_MODE
+    if [ -n "$FM_MEMBER_MATCH_NAME" ]; then
+      pr_key="member.$FM_MEMBER_MATCH_NAME.pr"
+    else
+      pr_key=anchor_pr
+    fi
+  fi
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
-    && fm_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
+    && fm_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url" "$pr_key"; then
     return 0
   fi
   if [ -z "$wt" ] || [ ! -d "$wt" ]; then

@@ -16,6 +16,19 @@
 # draft state does not refuse, matching how the head read below is optional.
 # bin/fm-pr-merge.sh records through this script with FM_PR_CHECK_MERGE=1 and
 # skips this refusal, because its own merge-time draft refusal is authoritative.
+# A task with edit members (bin/fm-task-members-lib.sh owns that delivery
+# model) ships one PR per repository. Here the PR's repository is resolved by
+# remote - the task's own or one edit member's; a PR matching no repository of
+# the task, or several, refuses - and its copy, clone, and delivery mode stand in for the
+# task's own in the head read, the named-head gate, and the ready line. The PR
+# is also recorded for its repository (member.<name>.pr= and .pr_head=, or
+# anchor_pr= and anchor_pr_head= for the task's own), while pr= and pr_head=
+# name the PR currently in delivery, which the merge poll watches. Moving pr=
+# to another repository's PR refuses until the PR it names has merged -
+# recorded by its merge outcome - or the forge reports it closed unmerged, so
+# delivery stays one repository at a time and no open PR loses its poll. A PR
+# the forge reports merged whose merge outcome has not been recorded yet also
+# refuses: register again once that merge notification arrives.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -32,6 +45,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-task-members-lib.sh
+. "$SCRIPT_DIR/fm-task-members-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -64,6 +79,69 @@ fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || 
   exit 1
 }
 
+# A task with edit members: resolve the PR's repository (header above) and
+# refuse to move pr= off a PR that is still in delivery.
+REPO_PR_KEY=
+REPO_NAME=
+if fm_member_has_edit "$META"; then
+  if ! fm_member_resolve_pr_repo "$META" "$HOST" "$PROJECT_PATH"; then
+    echo "error: $URL: $FM_MEMBER_ERROR" >&2
+    exit 1
+  fi
+  REPO_NAME=$FM_MEMBER_MATCH_NAME
+  if [ -n "$REPO_NAME" ]; then
+    REPO_PR_KEY="member.$REPO_NAME.pr"
+  else
+    REPO_PR_KEY=anchor_pr
+  fi
+  MATCH_WORKTREE=$FM_MEMBER_MATCH_WORKTREE
+  MATCH_PROJECT=$FM_MEMBER_MATCH_PROJECT
+  MATCH_MODE=$FM_MEMBER_MATCH_MODE
+  MATCH_YOLO=$FM_MEMBER_MATCH_YOLO
+  CURRENT_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+  if [ -n "$CURRENT_URL" ] && [ "$CURRENT_URL" != "$URL" ] && fm_pr_url_parse "$CURRENT_URL"; then
+    CURRENT_PROVIDER=$FM_PR_PROVIDER
+    CURRENT_HOST=$FM_PR_HOST
+    CURRENT_PATH=$FM_PR_PATH
+    CURRENT_OWNER=$FM_PR_OWNER
+    CURRENT_REPO=$FM_PR_REPO
+    CURRENT_NUMBER=$FM_PR_NUMBER
+    CURRENT_NAME='<none>'
+    if fm_member_resolve_pr_repo "$META" "$CURRENT_HOST" "$CURRENT_PATH"; then
+      CURRENT_NAME=$FM_MEMBER_MATCH_NAME
+    fi
+    if [ "$CURRENT_NAME" != "$REPO_NAME" ] \
+      && ! fm_pr_poll_merge_already_notified "$STATE" "$ID" \
+        "$CURRENT_PROVIDER" "$CURRENT_HOST" "$CURRENT_PATH" "$CURRENT_NUMBER"; then
+      CURRENT_READ=0
+      case "$CURRENT_PROVIDER" in
+        github) fm_pr_github_read_record "$CURRENT_OWNER" "$CURRENT_REPO" "$CURRENT_NUMBER" && CURRENT_READ=1 ;;
+        gitlab) fm_pr_gitlab_read_record "$CURRENT_HOST" "$CURRENT_PATH" "$CURRENT_NUMBER" && CURRENT_READ=1 ;;
+      esac
+      if [ "$CURRENT_READ" = 1 ] && [ "$FM_PR_RECORD_MERGED" = false ]; then
+        case "$FM_PR_RECORD_STATE" in
+          CLOSED | closed) CURRENT_READ=closed ;;
+        esac
+      fi
+      case "$CURRENT_READ" in
+        closed) ;;
+        1)
+          if [ "$FM_PR_RECORD_MERGED" = true ]; then
+            echo "error: task $ID's current PR $CURRENT_URL has merged, but its merge outcome is not recorded yet; register $URL again once that merge notification arrives" >&2
+          else
+            echo "error: task $ID's current PR $CURRENT_URL (another repository of the task) is still open; repositories deliver one at a time, so register $URL once that PR has merged or closed" >&2
+          fi
+          exit 1
+          ;;
+        *)
+          echo "error: could not read whether task $ID's current PR $CURRENT_URL (another repository of the task) has merged or closed; refusing to move delivery to $URL" >&2
+          exit 1
+          ;;
+      esac
+    fi
+  fi
+fi
+
 # Refuse to arm a GitLab watch with no glab on PATH. The poll is silent on
 # every error by design, so a missing CLI would be indistinguishable from a
 # merge request that is never merged. Arming is the one point where that can be
@@ -95,6 +173,7 @@ fi
 # bin/fm-pr-merge.sh reads a GitLab head live at merge time for the same reason,
 # and treats a recorded value that disagrees as stale rather than authoritative.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
+[ -z "$REPO_PR_KEY" ] || WT=$MATCH_WORKTREE
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
   if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
@@ -105,7 +184,13 @@ fi
 
 KIND=$(grep '^kind=' "$META" | tail -1 | cut -d= -f2- || true)
 MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+YOLO=$(grep '^yolo=' "$META" | tail -1 | cut -d= -f2- || true)
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+if [ -n "$REPO_PR_KEY" ]; then
+  MODE=$MATCH_MODE
+  YOLO=$MATCH_YOLO
+  PROJECT=$MATCH_PROJECT
+fi
 case "$MODE" in
   no-mistakes|'') DONE_LINE="done: PR $URL checks green" ;;
   *) DONE_LINE="done: PR $URL" ;;
@@ -150,9 +235,22 @@ META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     pr=*|pr_head=*) ;;
-    *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
+    *)
+      if [ -n "$REPO_PR_KEY" ]; then
+        case "$line" in
+          "$REPO_PR_KEY="*|"${REPO_PR_KEY}_head="*) continue ;;
+        esac
+      fi
+      printf '%s\n' "$line" >> "$META_TMP" || exit 1
+      ;;
   esac
 done < "$META"
+# The PR's own repository record precedes pr=, after which
+# fm_pr_metadata_identity_parse accepts only pr_head= and Relay lines.
+if [ -n "$REPO_PR_KEY" ]; then
+  printf '%s=%s\n' "$REPO_PR_KEY" "$URL" >> "$META_TMP" || exit 1
+  [ -z "$PR_HEAD" ] || printf '%s_head=%s\n' "$REPO_PR_KEY" "$PR_HEAD" >> "$META_TMP" || exit 1
+fi
 printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
 [ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
 chmod 0600 "$META_TMP" || exit 1
@@ -201,10 +299,8 @@ fi
 # written is reported as actionable, and bin/fm-inactive-reconcile.sh still
 # delivers the child's own ready line on the next supervision poll.
 READY_LINE="done [key=child-pr-$ID]: child $ID PR ready: $URL"
-PR_MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
-PR_YOLO=$(grep '^yolo=' "$META" | tail -1 | cut -d= -f2- || true)
-[ -z "$PR_MODE" ] || READY_LINE="$READY_LINE mode=$(fm_parent_channel_clean_note "$PR_MODE")"
-[ -z "$PR_YOLO" ] || READY_LINE="$READY_LINE yolo=$(fm_parent_channel_clean_note "$PR_YOLO")"
+[ -z "$MODE" ] || READY_LINE="$READY_LINE mode=$(fm_parent_channel_clean_note "$MODE")"
+[ -z "$YOLO" ] || READY_LINE="$READY_LINE yolo=$(fm_parent_channel_clean_note "$YOLO")"
 READY_RC=0
 fm_parent_channel_report "$FM_HOME" "$STATE" "$READY_LINE" || READY_RC=$?
 case "$READY_RC" in

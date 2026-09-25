@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--member <name>=<project-dir>:ref[@<ref>]]...
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--member <name>=<project-dir>:ref[@<ref>]|<name>=<project-dir>:edit]...
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--member <name>=<project-dir>:ref[@<ref>]]...
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -256,7 +256,7 @@
 #   worktree exists; a nonzero exit, a timeout, or setup output git can see
 #   refuses the launch and leaves the worktree for inspection, as every other
 #   post-allocation refusal does. The Treehouse project lock is released while
-#   the hook and any reference members' allocation run and waited for again
+#   the hook and any members' allocation run and waited for again
 #   afterwards, so a slow hook does not make an ordinary return of the project
 #   refuse; the home's task-set lock stays
 #   held, so another spawn from this home (any project) and a forced secondmate
@@ -264,24 +264,34 @@
 #   --relaunch reuses its worktree untouched and never reruns the hook;
 #   --secondmate spawns never run it.
 #   docs/configuration.md owns the operator contract.
-# Reference members (--member <name>=<project-dir>:ref[@<ref>], repeatable):
+# Task members (--member <name>=<project-dir>:ref[@<ref>] or
+# --member <name>=<project-dir>:edit, repeatable):
 #   A fresh ship or scout spawn may also hold read-only copies of other
-#   projects this home has cloned. bin/fm-task-members-lib.sh owns the spec,
-#   the durable lease, the record lines, and the brief section. After the
+#   projects this home has cloned, and a ship spawn may hold edit copies it
+#   delivers. bin/fm-task-members-lib.sh owns the spec, the durable lease, the
+#   record lines, the delivery model, and the brief sections. After the
 #   task's own worktree is set up, each member in turn is leased from its own
 #   project's pool (this home's pool root, as above) under the task's lease
-#   holder, claimed like the task's own slot, refreshed like it, pinned
-#   detached at <ref>, and set up by that project's own
-#   config/project-setup/<member project>.sh with FM_MEMBER=<name> exported.
-#   The launch brief then lists every member, the pane exports
-#   FM_MEMBER_<NAME>=<path>, and a Claude launch adds --add-dir <path>.
+#   holder, claimed like the task's own slot, refreshed like it, and set up by
+#   that project's own config/project-setup/<member project>.sh with
+#   FM_MEMBER=<name> exported; a ref member is then pinned detached at <ref>,
+#   while an edit member starts a new branch fm/<task-id> at origin's
+#   default-branch tip and records that project's registered delivery mode and
+#   merge posture (bin/fm-project-mode.sh). The launch brief then lists every
+#   member - for edit members with the per-repository delivery rules, the
+#   Definition of done for any member mode the task's own does not cover, and
+#   the companion-note clause of the no-mistakes intent contract, which then
+#   renders whenever any repository of the task ships no-mistakes - the pane
+#   exports FM_MEMBER_<NAME>=<path>, and a Claude launch adds --add-dir <path>.
 #   Any member failure before the task record survives returns every member
 #   lease this spawn took. Refused: on --relaunch (which reuses the recorded
-#   members, leaving out one whose copy is gone), --secondmate, batch
-#   dispatch, and the orca backend; a malformed or repeated name; a member
+#   members, leaving out a ref member whose copy is gone and refusing when an
+#   edit member's copy is gone), --secondmate, batch dispatch, and the orca
+#   backend; an edit member on a scout; a malformed or repeated name; a member
 #   that is the task's own project or shares a project with another member;
-#   and a member project lock another allocation or return holds.
-#   bin/fm-teardown.sh returns the members.
+#   an edit member whose fm/<task-id> branch already exists; and a member
+#   project lock another allocation or return holds.
+#   bin/fm-teardown.sh proves edit members landed and returns every member.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -321,8 +331,8 @@
 #   compact-adviser kill switch COMPACT_ADVISER_DISABLE, which the floor also
 #   pins to 1 with a literal assignment so it survives the cleared environment
 #   even on a host that never had it set.
-#   An enabled task trace also retains TRACEPARENT, and a task with reference
-#   members retains each member's FM_MEMBER_<NAME>. Explicit Firstmate launch
+#   An enabled task trace also retains TRACEPARENT, and a task with members
+#   retains each member's FM_MEMBER_<NAME>. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment. Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.
 #   This is an exec environment boundary, not a sandbox for the pane's startup
@@ -342,7 +352,7 @@
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
-#     __CLAUDEADDDIRS__ one `--add-dir <path> ` per reference member, else empty
+#     __CLAUDEADDDIRS__ one `--add-dir <path> ` per member, else empty
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
 #     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
@@ -788,14 +798,15 @@ case "$EFFORT" in
   exit 1
   ;;
 esac
-# Reference members (header above; bin/fm-task-members-lib.sh owns the spec).
+# Task members (header above; bin/fm-task-members-lib.sh owns the spec).
 # Every spec is parsed here so a malformed one refuses before anything exists.
 MEMBER_NAMES=()
 MEMBER_PROJECT_ARGS=()
+MEMBER_ROLES=()
 MEMBER_REFS=()
 if [ "${#MEMBER_SPECS[@]}" -gt 0 ]; then
   [ "$RELAUNCH" -eq 0 ] || {
-    echo "error: --relaunch reuses the task's recorded reference members; --member cannot change them" >&2
+    echo "error: --relaunch reuses the task's recorded members; --member cannot change them" >&2
     exit 1
   }
   [ "$KIND" != secondmate ] || {
@@ -813,8 +824,14 @@ if [ "${#MEMBER_SPECS[@]}" -gt 0 ]; then
         exit 1
       }
     done
+    # An edit member is a delivered change; a scout delivers only its report.
+    if [ "$FM_MEMBER_SPEC_ROLE" = edit ] && [ "$KIND" = scout ]; then
+      echo "error: --member $FM_MEMBER_SPEC_NAME is an edit member, which only a ship spawn delivers; give a scout ref members" >&2
+      exit 1
+    fi
     MEMBER_NAMES+=("$FM_MEMBER_SPEC_NAME")
     MEMBER_PROJECT_ARGS+=("$FM_MEMBER_SPEC_PROJECT")
+    MEMBER_ROLES+=("$FM_MEMBER_SPEC_ROLE")
     MEMBER_REFS+=("$FM_MEMBER_SPEC_REF")
   done
 fi
@@ -1195,13 +1212,17 @@ SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
-# Reference members (bin/fm-task-members-lib.sh). SPAWN_MEMBER_ROWS holds the
+# Task members (bin/fm-task-members-lib.sh). SPAWN_MEMBER_ROWS holds the
 # launch's member rows; the LEASED arrays name every lease this spawn took, so
 # an abort can return them; SPAWN_MEMBER_LOCK_HELD is the member project lock
-# held right now, if any.
+# held right now, if any. SPAWN_INTENT_OVERLAY is 1 when the launch brief
+# carries the no-mistakes intent contract, which spawn_render_launch_brief
+# renders after every member section so it stays the brief's last section.
 MEMBER_PROJECTS=()
 MEMBER_LOCKS=()
 MEMBER_SETUP_SCRIPTS=()
+MEMBER_MODES=()
+MEMBER_YOLOS=()
 SPAWN_MEMBER_ROWS=
 SPAWN_MEMBER_ENV_NAMES=
 SPAWN_MEMBER_HOLDER=
@@ -1210,7 +1231,11 @@ SPAWN_MEMBER_LEASED_PROJECTS=()
 SPAWN_MEMBER_LEASED_LOCKS=()
 SPAWN_MEMBER_LEASED_WTS=()
 SPAWN_MEMBER_LEASED_IDS=()
+SPAWN_MEMBER_LEASED_BASES=()
 SPAWN_MEMBER_LOCK_HELD=
+SPAWN_INTENT_OVERLAY=0
+SPAWN_SEVERAL_REPOS=0
+CAPTAIN_INTENT=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -1251,9 +1276,11 @@ parse_orca_worktree_result() {
 # no record describes would never go back to its pool. The claim is dropped
 # before the lease, while the lease still keeps every other allocation off the
 # slot, and both run under the member project lock that teardown's own proof
-# and return take.
+# and return take. An edit member's fm/<task-id> branch this spawn started is
+# deleted first while it still names only its base commit, since no worker
+# ever ran on it; a branch that moved is left for inspection.
 spawn_member_rollback() {
-  local i lock project wt lease held
+  local i lock project wt lease held base
   if [ "${#SPAWN_MEMBER_LEASED_WTS[@]}" -eq 0 ]; then
     [ -z "$SPAWN_MEMBER_LOCK_HELD" ] || fm_lock_release "$SPAWN_MEMBER_LOCK_HELD" || true
     SPAWN_MEMBER_LOCK_HELD=
@@ -1269,6 +1296,16 @@ spawn_member_rollback() {
     project=${SPAWN_MEMBER_LEASED_PROJECTS[$i]}
     wt=${SPAWN_MEMBER_LEASED_WTS[$i]}
     lease=${SPAWN_MEMBER_LEASED_IDS[$i]}
+    base=${SPAWN_MEMBER_LEASED_BASES[$i]:-}
+    if [ -n "$base" ]; then
+      if [ "$(git -C "$wt" rev-parse --verify --quiet "refs/heads/fm/$ID" 2>/dev/null)" = "$base" ] &&
+        git -C "$wt" checkout --quiet --detach "$base" >/dev/null 2>&1 &&
+        git -C "$wt" branch -D "fm/$ID" >/dev/null 2>&1; then
+        :
+      else
+        echo "warning: could not drop branch fm/$ID that the aborted spawn of $ID started in edit member copy $wt; inspect it in $project" >&2
+      fi
+    fi
     held=0
     if [ "$SPAWN_MEMBER_LOCK_HELD" = "$lock" ]; then
       held=1
@@ -1278,14 +1315,14 @@ spawn_member_rollback() {
     if [ "$held" = 1 ]; then
       fm_treehouse_slot_owner_release "$wt" "$ID" || true
       if fm_member_return "$project" "$wt" "$lease"; then
-        echo "spawn aborted: returned reference member copy $wt to its pool" >&2
+        echo "spawn aborted: returned member copy $wt to its pool" >&2
       else
-        echo "warning: could not return reference member copy $wt (lease $lease) after the aborted spawn of $ID: $FM_MEMBER_ERROR; return it with: (cd $(shell_quote "$project") && treehouse return --force --if-lease-id $(shell_quote "$lease") $(shell_quote "$wt"))" >&2
+        echo "warning: could not return member copy $wt (lease $lease) after the aborted spawn of $ID: $FM_MEMBER_ERROR; return it with: (cd $(shell_quote "$project") && treehouse return --force --if-lease-id $(shell_quote "$lease") $(shell_quote "$wt"))" >&2
       fi
       fm_lock_release "$lock" || true
       [ "$SPAWN_MEMBER_LOCK_HELD" != "$lock" ] || SPAWN_MEMBER_LOCK_HELD=
     else
-      echo "warning: the Treehouse project lock for $project stayed busy, so reference member copy $wt (lease $lease) was not returned after the aborted spawn of $ID; return it with: (cd $(shell_quote "$project") && treehouse return --force --if-lease-id $(shell_quote "$lease") $(shell_quote "$wt"))" >&2
+      echo "warning: the Treehouse project lock for $project stayed busy, so member copy $wt (lease $lease) was not returned after the aborted spawn of $ID; return it with: (cd $(shell_quote "$project") && treehouse return --force --if-lease-id $(shell_quote "$lease") $(shell_quote "$wt"))" >&2
     fi
   done
   SPAWN_MEMBER_LEASED_WTS=()
@@ -1507,7 +1544,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   if [ "${#MEMBER_SPECS[@]}" -gt 0 ]; then
-    echo "error: batch dispatch does not support --member; spawn each task with reference members explicitly" >&2
+    echo "error: batch dispatch does not support --member; spawn each task with members explicitly" >&2
     exit 1
   fi
   # One delivery contract applies to every pair in a batch, exactly like the shared
@@ -1837,14 +1874,19 @@ if [ "$RELAUNCH" -eq 1 ]; then
       echo "error: task $ID has no recorded project; refusing to relaunch" >&2
       exit 1
     }
-    # The replacement sees the same reference members as the agent it
-    # replaces; a member copy that has since disappeared is left out of its
-    # launch with a warning rather than blocking the task's own recovery.
+    # The replacement sees the same members as the agent it replaces. A
+    # reference member copy that has since disappeared is left out of its
+    # launch with a warning rather than blocking the task's own recovery, but
+    # an edit member's copy held work this task has to deliver, so its absence
+    # stops the relaunch for reconciliation instead of hiding it.
     while IFS= read -r m_row; do
-      IFS=$FM_MEMBER_FS read -r m_name _ m_wt _ <<<"$m_row"
+      IFS=$FM_MEMBER_FS read -r m_name m_project m_wt m_role _ <<<"$m_row"
       [ -n "$m_name" ] || continue
       if [ -d "$m_wt" ]; then
         SPAWN_MEMBER_ROWS="${SPAWN_MEMBER_ROWS:+$SPAWN_MEMBER_ROWS$'\n'}$m_row"
+      elif [ "$m_role" = edit ]; then
+        echo "error: task $ID's edit member $m_name copy '$m_wt' is missing; its unlanded work may still be on branch fm/$ID in $m_project, so reconcile that before relaunching" >&2
+        exit 1
       else
         echo "warning: task $ID's reference member $m_name copy '$m_wt' is missing; relaunching without it" >&2
       fi
@@ -2944,13 +2986,13 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ];
   fi
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
 fi
-# Reference members (header above): every member project is resolved, checked,
+# Task members (header above): every member project is resolved, checked,
 # and given its lock and setup hook here, before any endpoint or copy exists.
 # Two copies of one Treehouse project identity would share one lock and one
 # pool, so a member may be neither the task's own project nor another member's.
 if [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
   if [ "$BACKEND" = orca ]; then
-    echo "error: --member needs Treehouse copies; the orca backend supplies its own worktrees and cannot hold reference members" >&2
+    echo "error: --member needs Treehouse copies; the orca backend supplies its own worktrees and cannot hold members" >&2
     exit 1
   fi
   for i in "${!MEMBER_NAMES[@]}"; do
@@ -2975,7 +3017,7 @@ if [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
       exit 1
     }
     if [ "$m_lock" = "$SPAWN_TREEHOUSE_PROJECT_LOCK" ]; then
-      echo "error: --member $m_name ($m_abs) is the task's own project; a reference member must be another project" >&2
+      echo "error: --member $m_name ($m_abs) is the task's own project; a member must be another project" >&2
       exit 1
     fi
     for j in "${!MEMBER_LOCKS[@]}"; do
@@ -2986,15 +3028,87 @@ if [ "${#MEMBER_NAMES[@]}" -gt 0 ]; then
     done
     m_setup=$(spawn_setup_hook_resolve "$(basename "$m_abs")") || exit 1
     [ -z "$m_setup" ] || spawn_setup_timeout_resolve || exit 1
+    # Delivery is per repository: an edit member ships under its own
+    # project's registered posture, whose mechanical answer maps a conditional
+    # policy to its most rigorous leg and an unregistered project to the
+    # no-mistakes default, with the helper's own warning.
+    m_mode=
+    m_yolo=
+    if [ "${MEMBER_ROLES[$i]}" = edit ]; then
+      m_posture=$("$FM_ROOT/bin/fm-project-mode.sh" "$(basename "$m_abs")") || {
+        echo "error: could not read the registered delivery posture of edit member $m_name ($m_abs)" >&2
+        exit 1
+      }
+      m_mode=${m_posture%% *}
+      m_yolo=${m_posture##* }
+      case "$m_mode:$m_yolo" in
+        no-mistakes:on | no-mistakes:off | direct-PR:on | direct-PR:off | local-only:on | local-only:off) ;;
+        *)
+          echo "error: edit member $m_name ($m_abs) has an unreadable registered posture '$m_posture'" >&2
+          exit 1
+          ;;
+      esac
+    fi
     MEMBER_PROJECTS+=("$m_abs")
     MEMBER_LOCKS+=("$m_lock")
     MEMBER_SETUP_SCRIPTS+=("$m_setup")
+    MEMBER_MODES+=("$m_mode")
+    MEMBER_YOLOS+=("$m_yolo")
   done
 fi
 [ -f "$BRIEF" ] || {
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
 }
+
+# The Definition of done for each of <modes>, validated delivery modes
+# separated by spaces.
+spawn_member_dod_blocks() { # <modes>
+  local mode
+  # shellcheck disable=SC2086 # The mode list is deliberately split on spaces.
+  for mode in $1; do
+    fm_dod_member_block "$mode" "$ID" || return 1
+  done
+}
+
+# Render the launch brief from SOURCE_BRIEF: the worker role scope, the brief,
+# the member sections for SPAWN_MEMBER_ROWS, the Definition of done for every
+# edit member mode the task's own mode does not cover, and last the no-mistakes
+# intent contract, whose captain words run to the end of the brief.
+spawn_render_launch_brief() {
+  local row name role mode tmp extra_modes=''
+  while IFS= read -r row; do
+    IFS=$FM_MEMBER_FS read -r name _ _ role _ _ _ _ mode _ <<<"$row"
+    [ -n "$name" ] && [ "$role" = edit ] && [ "$mode" != "$MODE" ] || continue
+    case " $extra_modes " in
+      *" $mode "*) ;;
+      *) extra_modes="${extra_modes:+$extra_modes }$mode" ;;
+    esac
+  done <<<"$SPAWN_MEMBER_ROWS"
+  tmp="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
+  if ! {
+    fm_brief_worker_role "$STATE" "$ID" &&
+      printf '\n' &&
+      cat "$SOURCE_BRIEF" &&
+      if [ -n "$SPAWN_MEMBER_ROWS" ]; then
+        printf '%s\n' "$SPAWN_MEMBER_ROWS" | fm_member_brief_section "$ID"
+      fi &&
+      spawn_member_dod_blocks "$extra_modes" &&
+      if [ "$SPAWN_INTENT_OVERLAY" = 1 ]; then
+        fm_brief_intent_overlay "$CAPTAIN_INTENT" "$SPAWN_SEVERAL_REPOS"
+      fi
+  } >"$tmp"; then
+    rm -f -- "$tmp"
+    echo "error: could not render current launch contract for $SOURCE_BRIEF" >&2
+    return 1
+  fi
+  if ! mv "$tmp" "$BRIEF"; then
+    rm -f -- "$tmp"
+    echo "error: could not publish current launch contract for $SOURCE_BRIEF" >&2
+    return 1
+  fi
+}
+
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
     echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
@@ -3008,7 +3122,23 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before spawn, since the heading already records provenance" >&2
     exit 1
   fi
-  if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+  # The intent contract applies whenever any repository of the task ships
+  # no-mistakes: the task's own, or an edit member's.
+  if [ "$KIND" = ship ]; then
+    for m_role in "${MEMBER_ROLES[@]+"${MEMBER_ROLES[@]}"}"; do
+      [ "$m_role" != edit ] || SPAWN_SEVERAL_REPOS=1
+    done
+    for m_mode in "$MODE" "${MEMBER_MODES[@]+"${MEMBER_MODES[@]}"}"; do
+      [ "$m_mode" != no-mistakes ] || SPAWN_INTENT_OVERLAY=1
+    done
+    while IFS= read -r m_row; do
+      IFS=$FM_MEMBER_FS read -r m_name _ _ m_role _ _ _ _ m_mode _ <<<"$m_row"
+      [ -n "$m_name" ] && [ "$m_role" = edit ] || continue
+      SPAWN_SEVERAL_REPOS=1
+      [ "$m_mode" != no-mistakes ] || SPAWN_INTENT_OVERLAY=1
+    done <<<"$SPAWN_MEMBER_ROWS"
+  fi
+  if [ "$SPAWN_INTENT_OVERLAY" = 1 ]; then
     if fm_brief_task_heading_present "$BRIEF" "## Captain's intent"; then
       CAPTAIN_INTENT=$(fm_brief_task_heading_body "$BRIEF" "## Captain's intent")
     else
@@ -3022,26 +3152,11 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
+  # A fresh spawn's member sections join it once the members are allocated
+  # (spawn_launch_brief_finish).
   SOURCE_BRIEF=$BRIEF
   BRIEF="$DATA/$ID/launch-brief.md"
-  BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
-  {
-    fm_brief_worker_role "$STATE" "$ID" &&
-      printf '\n' &&
-      cat "$SOURCE_BRIEF" &&
-      if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
-        fm_brief_intent_overlay "$CAPTAIN_INTENT"
-      fi
-  } >"$BRIEF_TMP" || {
-    rm -f -- "$BRIEF_TMP"
-    echo "error: could not render current launch contract for $SOURCE_BRIEF" >&2
-    exit 1
-  }
-  if ! mv "$BRIEF_TMP" "$BRIEF"; then
-    rm -f -- "$BRIEF_TMP"
-    echo "error: could not publish current launch contract for $SOURCE_BRIEF" >&2
-    exit 1
-  fi
+  spawn_render_launch_brief || exit 1
 fi
 
 delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
@@ -3263,7 +3378,7 @@ spawn_worktree_has_origin_config() { # <worktree>
 }
 
 # Runs <project>'s config/project-setup script (header above) in <worktree>, a
-# fresh copy of that project: the task's own, or a reference member's, whose
+# fresh copy of that project: the task's own, or a member's, whose
 # name is then exported as FM_MEMBER. Its output goes to stderr so the success
 # line stays the only stdout.
 run_project_setup() { # <worktree> <project> <script> <member-name-or-empty>
@@ -3297,19 +3412,23 @@ run_project_setup() { # <worktree> <project> <script> <member-name-or-empty>
   fi
 }
 
-# Lease, claim, refresh, pin, and set up reference member <index> (header
-# above; bin/fm-task-members-lib.sh owns the lease and record contract). Each
-# lease is recorded for spawn_member_rollback the moment it exists. The member
-# project lock covers only the lease and the claim - the claim is what keeps
-# another task's stale record off this slot, and the durable lease keeps every
-# other allocation off it - so a slow refresh or setup hook never holds it.
+# Lease, claim, refresh, and set up member <index>, then pin a ref member or
+# start an edit member's branch (header above; bin/fm-task-members-lib.sh owns
+# the lease and record contract). Each lease is recorded for
+# spawn_member_rollback the moment it exists. The member project lock covers
+# only the lease and the claim - the claim is what keeps another task's stale
+# record off this slot, and the durable lease keeps every other allocation off
+# it - so a slow refresh or setup hook never holds it.
 spawn_member_allocate() { # <index>
-  local i=$1 name project lock setup ref wt lease
+  local i=$1 name project lock setup role ref mode yolo wt lease base
   name=${MEMBER_NAMES[$i]}
   project=${MEMBER_PROJECTS[$i]}
   lock=${MEMBER_LOCKS[$i]}
   setup=${MEMBER_SETUP_SCRIPTS[$i]}
+  role=${MEMBER_ROLES[$i]}
   ref=${MEMBER_REFS[$i]}
+  mode=${MEMBER_MODES[$i]}
+  yolo=${MEMBER_YOLOS[$i]}
   if ! fm_lock_try_acquire "$lock"; then
     echo "error: another Treehouse slot allocation or return is in progress for member $name ($project); refusing to race it" >&2
     return 1
@@ -3325,6 +3444,7 @@ spawn_member_allocate() { # <index>
   SPAWN_MEMBER_LEASED_LOCKS+=("$lock")
   SPAWN_MEMBER_LEASED_WTS+=("$wt")
   SPAWN_MEMBER_LEASED_IDS+=("$lease")
+  SPAWN_MEMBER_LEASED_BASES+=("")
   if ! spawn_worktree_isolated "$wt" "$project" || ! spawn_worktree_of_project "$wt" "$project"; then
     echo "error: member $name: Treehouse leased '$wt', which is not an isolated copy of $project ($SPAWN_WT_REASON)" >&2
     return 1
@@ -3340,33 +3460,47 @@ spawn_member_allocate() { # <index>
   fm_lock_release "$lock" || true
   SPAWN_MEMBER_LOCK_HELD=
   freshen_spawn_worktree_base "$wt" || return 1
-  if ! fm_member_pin "$wt" "$ref"; then
-    echo "error: member $name: $FM_MEMBER_ERROR" >&2
-    return 1
-  fi
-  if [ -n "$setup" ]; then
-    run_project_setup "$wt" "$project" "$setup" "$name" || return 1
-    # The hook may move HEAD; the member is only ever shown at its pin.
-    if [ "$(git -C "$wt" rev-parse --verify --quiet HEAD 2>/dev/null)" != "$FM_MEMBER_PIN_COMMIT" ]; then
-      echo "error: member $name: project setup script $setup moved $wt off its pinned commit $FM_MEMBER_PIN_COMMIT" >&2
+  if [ "$role" = edit ]; then
+    # The refreshed default-branch tip is the edit member's base. The setup
+    # hook runs there, and the branch starts only once the hook left it.
+    base=$(git -C "$wt" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || base=
+    if [ -n "$setup" ]; then
+      run_project_setup "$wt" "$project" "$setup" "$name" || return 1
+      if [ "$(git -C "$wt" rev-parse --verify --quiet HEAD 2>/dev/null)" != "$base" ]; then
+        echo "error: member $name: project setup script $setup moved $wt off its base commit ${base:-<none>}" >&2
+        return 1
+      fi
+    fi
+    if ! fm_member_branch_start "$wt" "$ID"; then
+      echo "error: member $name: $FM_MEMBER_ERROR" >&2
       return 1
     fi
+    # An abort before the record survives drops the branch it just started.
+    SPAWN_MEMBER_LEASED_BASES[${#SPAWN_MEMBER_LEASED_BASES[@]} - 1]=$FM_MEMBER_PIN_COMMIT
+  else
+    if ! fm_member_pin "$wt" "$ref"; then
+      echo "error: member $name: $FM_MEMBER_ERROR" >&2
+      return 1
+    fi
+    if [ -n "$setup" ]; then
+      run_project_setup "$wt" "$project" "$setup" "$name" || return 1
+      # The hook may move HEAD; the member is only ever shown at its pin.
+      if [ "$(git -C "$wt" rev-parse --verify --quiet HEAD 2>/dev/null)" != "$FM_MEMBER_PIN_COMMIT" ]; then
+        echo "error: member $name: project setup script $setup moved $wt off its pinned commit $FM_MEMBER_PIN_COMMIT" >&2
+        return 1
+      fi
+    fi
   fi
-  SPAWN_MEMBER_ROWS="${SPAWN_MEMBER_ROWS:+$SPAWN_MEMBER_ROWS$'\n'}$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt${FM_MEMBER_FS}ref$FM_MEMBER_FS$ref$FM_MEMBER_FS$FM_MEMBER_PIN_COMMIT$FM_MEMBER_FS$lease$FM_MEMBER_FS$SPAWN_TREEHOUSE_ROOT"
+  SPAWN_MEMBER_ROWS="${SPAWN_MEMBER_ROWS:+$SPAWN_MEMBER_ROWS$'\n'}$name$FM_MEMBER_FS$project$FM_MEMBER_FS$wt$FM_MEMBER_FS$role$FM_MEMBER_FS$ref$FM_MEMBER_FS$FM_MEMBER_PIN_COMMIT$FM_MEMBER_FS$lease$FM_MEMBER_FS$SPAWN_TREEHOUSE_ROOT$FM_MEMBER_FS$mode$FM_MEMBER_FS$yolo"
 }
 
-# Append the reference-member section to the rendered launch brief, and derive
-# the pane variables and Claude directory grants the launch carries for them.
-spawn_member_launch_prepare() {
-  local row name wt tmp
+# Once a fresh spawn's members are allocated, render the launch brief again
+# with their sections, then derive the pane variables and Claude directory
+# grants the launch carries for the members.
+spawn_launch_brief_finish() {
+  local row name wt
   [ -n "$SPAWN_MEMBER_ROWS" ] || return 0
-  tmp="$DATA/$ID/.launch-brief.md.members.${BASHPID:-$$}"
-  if ! { cat "$BRIEF" && printf '%s\n' "$SPAWN_MEMBER_ROWS" | fm_member_brief_section; } >"$tmp" ||
-    ! mv "$tmp" "$BRIEF"; then
-    rm -f -- "$tmp"
-    echo "error: could not add the reference members to the launch contract $BRIEF" >&2
-    return 1
-  fi
+  spawn_render_launch_brief || return 1
   while IFS= read -r row; do
     IFS=$FM_MEMBER_FS read -r name _ wt _ <<<"$row"
     [ -n "$name" ] || continue
@@ -4364,7 +4498,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
           spawn_member_allocate "$i" || { project_setup_rc=1; break; }
         done
       else
-        echo "error: could not derive the reference-member lease holder for task $ID" >&2
+        echo "error: could not derive the member lease holder for task $ID" >&2
         project_setup_rc=1
       fi
     fi
@@ -4375,7 +4509,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
     [ "$project_setup_rc" -eq 0 ] || exit 1
   fi
 fi
-spawn_member_launch_prepare || exit 1
+spawn_launch_brief_finish || exit 1
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
 # at the first point that directory is known and before any per-task state is
@@ -5202,7 +5336,7 @@ fi
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   spawn_send_text_line "$T" "export FM_TASK_ID=$ID"
 fi
-# Each reference member's path rides the same channel as FM_TASK_ID. Member
+# Each member's path rides the same channel as FM_TASK_ID. Member
 # names reached the validated charset above, so each variable name is safe.
 if [ -n "$SPAWN_MEMBER_ROWS" ]; then
   while IFS= read -r m_row; do

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regression tests for reference members: `fm-spawn.sh --member
-# <name>=<project-dir>:ref[@<ref>]` and the teardown that returns them
-# (bin/fm-task-members-lib.sh owns the contract). They drive the real spawn,
-# relaunch, and teardown entry points and prove:
-#   - a malformed, repeated, or disallowed member refuses before any endpoint,
-#     record, or copy exists;
+# Regression tests for task members: `fm-spawn.sh --member
+# <name>=<project-dir>:ref[@<ref>]` and `<name>=<project-dir>:edit`, and the
+# teardown that returns them (bin/fm-task-members-lib.sh owns the contract).
+# They drive the real spawn, relaunch, and teardown entry points and prove:
+#   - a malformed, repeated, or disallowed member, including an edit member on a
+#     scout or with a ref, refuses before any endpoint, record, or copy exists;
 #   - a relaunch shows the replacement agent the recorded members again: the
 #     launch brief section, the FM_MEMBER_<NAME> pane variables, and Claude's
 #     --add-dir grants, leaving out a member whose copy is gone;
@@ -21,7 +21,22 @@
 #     leaves another task's and a foreign lease untouched, and leaves alone a
 #     slot this task no longer holds;
 #   - a forced secondmate retirement returns its child tasks' members from the
-#     secondmate's own pool, so that pool can be destroyed with the home.
+#     secondmate's own pool, so that pool can be destroyed with the home;
+#   - a relaunch shows the recorded edit members with their delivery rules and
+#     refuses when an edit member's copy is gone;
+#   - with the real treehouse binary, an edit member starts branch fm/<id> at
+#     origin's tip and records its project's own registered delivery posture,
+#     and the brief carries the edit section, a Definition of done for every
+#     member mode the task's own does not cover, and the companion-note clause
+#     ahead of the captain's words;
+#   - an edit member that fails returns every member lease and drops the branch
+#     the spawn started in another member;
+#   - cleanup refuses while any edit member holds unlanded work, refuses a
+#     --discard-member naming no edit member, and otherwise returns each landed
+#     or named member, dropping its branch;
+#   - an edit member whose copy is gone still refuses cleanup while its branch
+#     holds unlanded work, and passes once its recorded PR has merged with that
+#     work, though the branch is on no remote.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -29,7 +44,7 @@ set -u
 # shellcheck source=tests/secondmate-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
 
-TMP_ROOT=$(fm_test_tmproot fm-spawn-ref-members)
+TMP_ROOT=$(fm_test_tmproot fm-spawn-members)
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 # Within a case every spawn and teardown runs as one user, sharing one HOME and
 # so Treehouse's default root under it, exactly as a real main home does. Each
@@ -211,8 +226,10 @@ test_member_refusals_leave_nothing_behind() {
     [ ! -e "$home/state/refuse-$n.meta" ] || fail "$label: the refusal published a task record"
   done <<EOF
 bad name|must be 1-32 characters|--member Api=projects/contract:ref
-other role|only ref members are supported|--member api=projects/contract:edit
+other role|a member is ref or edit|--member api=projects/contract:review
 no role|names no role|--member api=projects/contract
+edit on scout|only a ship spawn delivers|--member api=projects/contract:edit
+edit with ref|gives an edit member a ref|--member api=projects/contract:edit@v1
 empty ref|empty ref|--member api=projects/contract:ref@
 option ref|ref starting with -|--member api=projects/contract:ref@--upload-pack=x
 repeated name|given twice|--member api=projects/contract:ref --member api=projects/notes:ref
@@ -238,7 +255,7 @@ EOF
   if out=$(fm_test_run_spawn "$home" "$dir/none" "$fakebin" refuse-relaunch --relaunch --member api=projects/contract:ref); then
     fail "a relaunch accepted --member"$'\n'"$out"
   fi
-  assert_contains "$out" "reuses the task's recorded reference members" "the relaunch refusal did not say why"
+  assert_contains "$out" "reuses the task's recorded members" "the relaunch refusal did not say why"
   pass "malformed, repeated, same-project, batch, secondmate, and relaunch members refuse before any endpoint or record"
 }
 
@@ -431,7 +448,7 @@ test_real_member_failure_returns_every_lease() {
   status=$?
   [ "$status" -ne 0 ] || fail "a spawn whose member ref does not exist still launched"$'\n'"$out"
   assert_contains "$out" "member notes: ref 'no-such-ref' does not name a commit" "the refusal did not name the failing member"
-  assert_contains "$out" "returned reference member copy" "the refusal did not report returning the leases it took"
+  assert_contains "$out" "returned member copy" "the refusal did not report returning the leases it took"
   [ ! -e "$home/state/$id.meta" ] || fail "a failed member spawn published a task record"
   [ -z "$(pool_leases_for_task "$home/projects/contract" "$id")" ] \
     || fail "the api member lease survived the failed spawn"
@@ -591,6 +608,297 @@ test_real_forced_retirement_returns_child_members() {
   pass "a forced secondmate retirement returns its child tasks' members, so its own pool is destroyed with it"
 }
 
+# --- edit members -----------------------------------------------------------
+
+test_relaunch_shows_edit_members_and_refuses_a_missing_one() {
+  local dir="$TMP_ROOT/relaunch-edit" home proj wt api id=relaunch-e1 out status brief commit
+  home="$dir/home"; proj="$dir/proj"; wt="$dir/wt"; api="$dir/api-copy"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$dir/fake"
+  touch "$home/state/.last-watcher-beat"
+  make_relaunch_stub "$dir"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  git -C "$proj" worktree add --quiet --detach "$api" HEAD
+  commit=$(git -C "$api" rev-parse HEAD)
+  fm_test_spawn_brief "$home" "$id" "change the contract and its client together"
+  : > "$dir/fake/literal"; : > "$dir/fake/keys"
+  printf '%s\n' "fm-$id" > "$dir/fake/windows"
+  printf '%s' "$wt" > "$dir/fake/cwd"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fmses:fm-$id" "endpoint_task_id=$id" "worktree=$wt" "project=$proj" \
+    "harness=claude" "kind=ship" "mode=direct-PR" "yolo=off" "tasktmp=$dir/tasktmp" "model=default" "effort=default" \
+    "member.api.project=$dir/contract" "member.api.worktree=$api" "member.api.role=edit" \
+    "member.api.ref=" "member.api.commit=$commit" "member.api.lease_id=lease-api" "member.api.pool_root=" \
+    "member.api.mode=no-mistakes" "member.api.yolo=off"
+  mkdir -p "$dir/user-home"
+  out=$(env "${CLEAR_TERMINAL_ENV[@]}" PATH="$dir/fakebin:$PATH" FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_FAKE_DIR="$dir/fake" \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1)
+  status=$?
+  expect_code 0 "$status" "the relaunch with an edit member should succeed"$'\n'"$out"
+  brief=$(cat "$home/data/$id/launch-brief.md")
+  assert_contains "$brief" "# Edit worktrees" "the relaunch brief has no edit member section"
+  assert_contains "$brief" "- \`api\`: $api (\`\$FM_MEMBER_API\`), a copy of $dir/contract, on branch \`fm/$id\` from $commit, delivery mode=no-mistakes" \
+    "the relaunch brief does not list the recorded edit member"
+  assert_contains "$brief" "## Definition of done for no-mistakes repositories" \
+    "the relaunch brief lacks the Definition of done for the edit member's mode"
+  assert_contains "$brief" "Companion note:" "the relaunch brief lacks the companion-note clause"
+  assert_equals "change the contract and its client together" "$(tail -n 1 "$home/data/$id/launch-brief.md")" \
+    "the captain's words do not close the relaunch brief"
+  grep -Fxq "export FM_MEMBER_API='$api'" "$dir/fake/keys" \
+    || fail "the relaunch did not export the edit member path into the pane"$'\n'"$(cat "$dir/fake/keys")"
+
+  git -C "$proj" worktree remove --force "$api"
+  : > "$dir/fake/literal"
+  if out=$(env "${CLEAR_TERMINAL_ENV[@]}" PATH="$dir/fakebin:$PATH" FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_FAKE_DIR="$dir/fake" \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1); then
+    fail "a relaunch whose edit member copy is gone still launched"$'\n'"$out"
+  fi
+  assert_contains "$out" "edit member api copy '$api' is missing" "the relaunch refusal did not name the missing edit member"
+  ! grep -Fq 'encode launch-brief' "$dir/fake/literal" || fail "the refused relaunch still launched an agent"
+  pass "a relaunch lists an edit member with its delivery rules, and refuses when its copy is gone"
+}
+
+# make_edit_home <home>: make_home plus a registry giving each project its own
+# delivery posture.
+make_edit_home() {
+  make_home "$1"
+  cat > "$1/data/projects.md" <<'EOF'
+- proj [direct-PR] - task project (added 2026-09-24)
+- contract [no-mistakes] - contract project (added 2026-09-24)
+- notes [local-only +yolo] - notes project (added 2026-09-24)
+EOF
+}
+
+# The real pool fakebin plus a no-mistakes that, like the real one, reports an
+# uninitialized repository, so cleanup's run checks read no run anywhere.
+make_edit_fakebin() {  # <dir>
+  local fakebin
+  fakebin=$(make_real_pool_fakebin "$1")
+  cat > "$fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+echo "error: repo not initialized (run 'no-mistakes init' first)"
+exit 1
+SH
+  chmod +x "$fakebin/no-mistakes"
+  printf '%s\n' "$fakebin"
+}
+
+# run_ship_spawn <home> <fakebin> <pane-state> <id> [--member ...]: a direct-PR
+# ship spawn of <home>'s proj under the shared USER_HOME.
+run_ship_spawn() {
+  local home=$1 fakebin=$2 pane=$3 id=$4
+  shift 4
+  fm_test_spawn_brief "$home" "$id" "change the contract and its client together"
+  env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME "${CLEAR_TERMINAL_ENV[@]}" \
+    FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$USER_HOME" CLAUDE_CONFIG_DIR='' \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_STATE="$pane" TMUX="fake,1,0" \
+    PATH="$fakebin:$PATH" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$home/projects/proj" --mode direct-PR --yolo off "$@" 2>&1
+}
+
+# run_plain_teardown <home> <fakebin> <id> [args...]: teardown with no --force.
+run_plain_teardown() {
+  local home=$1 fakebin=$2 id=$3
+  shift 3
+  env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME "${CLEAR_TERMINAL_ENV[@]}" TMUX="fake,1,0" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" HOME="$USER_HOME" \
+    FM_STATE_OVERRIDE="$home/state" PATH="$fakebin:$PATH" \
+    "$TEARDOWN" "$id" "$@" 2>&1
+}
+
+# A commit that changes a file: cleanup reads a branch whose tree matches its
+# default branch as landed, so an empty commit would not be unlanded work.
+member_commit() {  # <worktree> <message>
+  printf '%s\n' "$2" >> "$1/CHANGES.md"
+  git -C "$1" add CHANGES.md
+  git -C "$1" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q -m "$2"
+}
+
+test_real_edit_members_are_branched_recorded_and_briefed() {
+  local dir="$TMP_ROOT/edit" home fakebin id=edit-a1 out status meta api notes brief tip n_edit n_intent n_words
+  real_treehouse_available || { printf '# real-treehouse edit member cases not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_edit_home "$home"
+  fakebin=$(make_edit_fakebin "$dir/fake")
+  out=$(run_ship_spawn "$home" "$fakebin" "$dir/pane" "$id" \
+    --member api=projects/contract:edit --member notes=projects/notes:edit)
+  status=$?
+  expect_code 0 "$status" "a ship spawn with two edit members should launch"$'\n'"$out"$'\n'"$(cat "$dir/pane.log" 2>/dev/null)"
+  meta="$home/state/$id.meta"
+  api=$(meta_value "$meta" member.api.worktree)
+  notes=$(meta_value "$meta" member.notes.worktree)
+  [ -n "$api" ] && [ -d "$api" ] && [ -n "$notes" ] && [ -d "$notes" ] \
+    || fail "the task record does not name both edit member copies"$'\n'"$(cat "$meta")"
+  tip=$(commit_of "$TMP_ROOT/contract.origin.git" main)
+  assert_equals "fm/$id" "$(git -C "$api" symbolic-ref --quiet --short HEAD)" "the api edit member is not on branch fm/$id"
+  assert_equals "$tip" "$(git -C "$api" rev-parse HEAD)" "the api edit member does not start at origin's default-branch tip"
+  assert_equals "$tip" "$(meta_value "$meta" member.api.commit)" "the record names another api base"
+  assert_equals "fm/$id" "$(git -C "$notes" symbolic-ref --quiet --short HEAD)" "the notes edit member is not on branch fm/$id"
+  assert_equals edit "$(meta_value "$meta" member.api.role)" "the record names another api role"
+  assert_equals no-mistakes "$(meta_value "$meta" member.api.mode)" "the api member does not carry its project's registered mode"
+  assert_equals off "$(meta_value "$meta" member.api.yolo)" "the api member does not carry its project's registered merge posture"
+  assert_equals local-only "$(meta_value "$meta" member.notes.mode)" "the notes member does not carry its project's registered mode"
+  assert_equals on "$(meta_value "$meta" member.notes.yolo)" "the notes member does not carry its project's registered merge posture"
+  assert_equals leased "$(pool_field "$home/projects/contract" "$api" status)" "the api copy is not durably leased"
+  brief=$(cat "$home/data/$id/launch-brief.md")
+  assert_contains "$brief" "# Edit worktrees" "the launch brief has no edit member section"
+  assert_contains "$brief" "- \`api\`: $api (\`\$FM_MEMBER_API\`), a copy of $home/projects/contract, on branch \`fm/$id\` from $tip, delivery mode=no-mistakes" \
+    "the launch brief does not list the api edit member"
+  assert_contains "$brief" "delivery mode=local-only" "the launch brief does not give the notes member its mode"
+  assert_contains "$brief" "never run more than one no-mistakes validation for this task at once" \
+    "the edit section does not keep validation to one repository at a time"
+  assert_contains "$brief" "## Definition of done for no-mistakes repositories" "the brief lacks the no-mistakes member Definition of done"
+  assert_contains "$brief" "## Definition of done for local-only repositories" "the brief lacks the local-only member Definition of done"
+  assert_not_contains "$brief" "## Definition of done for direct-PR repositories" \
+    "the brief repeats the task's own Definition of done as a member one"
+  assert_contains "$brief" "Companion note:" "the brief lacks the companion-note clause"
+  n_edit=$(grep -n '^# Edit worktrees$' "$home/data/$id/launch-brief.md" | cut -d: -f1)
+  n_intent=$(grep -n '^# Current no-mistakes intent contract$' "$home/data/$id/launch-brief.md" | cut -d: -f1)
+  n_words=$(grep -n '^## Captain intent authorized for --intent$' "$home/data/$id/launch-brief.md" | cut -d: -f1)
+  [ -n "$n_edit" ] && [ -n "$n_intent" ] && [ -n "$n_words" ] && [ "$n_edit" -lt "$n_intent" ] && [ "$n_intent" -lt "$n_words" ] \
+    || fail "the edit section, intent contract, and captain's words are not in that order ($n_edit, $n_intent, $n_words)"
+  assert_equals "change the contract and its client together" "$(tail -n 1 "$home/data/$id/launch-brief.md")" \
+    "the captain's words do not close the launch brief"
+  if ! grep -Fxq "export FM_MEMBER_API='$api'" "$dir/pane.keys" ||
+    ! grep -Fxq "export FM_MEMBER_NOTES='$notes'" "$dir/pane.keys"; then
+    fail "the pane did not receive both edit member paths"$'\n'"$(cat "$dir/pane.keys")"
+  fi
+
+  # An unpushed commit in an edit member is unlanded work: cleanup refuses and
+  # keeps every copy.
+  member_commit "$api" "api change"
+  if out=$(run_plain_teardown "$home" "$fakebin" "$id"); then
+    fail "cleanup returned a task whose edit member holds unlanded work"$'\n'"$out"
+  fi
+  assert_contains "$out" "edit member api ($api) holds work that has not landed" "the refusal did not name the unlanded edit member"
+  [ -f "$meta" ] || fail "a refused cleanup removed the task record"
+  assert_equals leased "$(pool_field "$home/projects/contract" "$api" status)" "a refused cleanup returned the api copy"
+  if out=$(run_plain_teardown "$home" "$fakebin" "$id" --discard-member nothing-here); then
+    fail "cleanup accepted --discard-member naming no edit member"$'\n'"$out"
+  fi
+  assert_contains "$out" "names no edit member" "the refusal did not say the discard named no edit member"
+
+  # Pushed, the api work is on a remote; the notes member's local-only commit
+  # lands through the member merge into its own clone.
+  git -C "$api" push --quiet origin "fm/$id" || fail "could not push the api branch"
+  member_commit "$notes" "notes change"
+  if out=$(run_plain_teardown "$home" "$fakebin" "$id"); then
+    fail "cleanup returned a task whose local-only edit member is not merged"$'\n'"$out"
+  fi
+  assert_contains "$out" "edit member notes ($notes) holds work that has not landed" "the refusal did not name the unmerged notes member"
+  out=$(env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" HOME="$USER_HOME" \
+    FM_STATE_OVERRIDE="$home/state" PATH="$fakebin:$PATH" "$ROOT/bin/fm-merge-local.sh" "$id" --member notes 2>&1)
+  expect_code 0 "$?" "the notes member's local merge should land it"$'\n'"$out"
+  assert_contains "$out" "in $home/projects/notes" "the member merge did not land in the notes clone"
+  assert_equals "$(git -C "$notes" rev-parse HEAD)" "$(git -C "$home/projects/notes" rev-parse main)" \
+    "the notes clone's default branch did not take the member's work"
+  if out=$(env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" HOME="$USER_HOME" \
+    FM_STATE_OVERRIDE="$home/state" PATH="$fakebin:$PATH" "$ROOT/bin/fm-merge-local.sh" "$id" --member api 2>&1); then
+    fail "a local merge landed a no-mistakes edit member"$'\n'"$out"
+  fi
+  assert_contains "$out" "is mode=no-mistakes, not local-only" "the member merge refusal did not name the member's mode"
+
+  out=$(run_plain_teardown "$home" "$fakebin" "$id")
+  expect_code 0 "$?" "cleanup should return a task whose edit members all landed"$'\n'"$out"
+  assert_contains "$out" "returned task $id's edit member api copy" "cleanup did not return the api member"
+  assert_contains "$out" "returned task $id's edit member notes copy" "cleanup did not return the notes member"
+  assert_equals available "$(pool_field "$home/projects/contract" "$api" status)" "the api copy was not returned"
+  assert_equals available "$(pool_field "$home/projects/notes" "$notes" status)" "the notes copy was not returned"
+  ! git -C "$home/projects/contract" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "cleanup left the api member's branch behind"
+  ! git -C "$home/projects/notes" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "cleanup left the notes member's branch behind"
+  [ ! -e "$meta" ] || fail "cleanup kept the task record"
+  pass "edit members start fm/<id> at origin's tip with their own posture, are briefed and exported, block cleanup until landed, and land and return per repository"
+}
+
+test_real_edit_member_discard_names_one_repository() {
+  local dir="$TMP_ROOT/edit-discard" home fakebin id=edit-d1 out meta api
+  real_treehouse_available || { printf '# real-treehouse edit member discard case not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_edit_home "$home"
+  fakebin=$(make_edit_fakebin "$dir/fake")
+  out=$(run_ship_spawn "$home" "$fakebin" "$dir/pane" "$id" --member api=projects/contract:edit)
+  expect_code 0 "$?" "a ship spawn with an edit member should launch"$'\n'"$out"
+  meta="$home/state/$id.meta"
+  api=$(meta_value "$meta" member.api.worktree)
+  member_commit "$api" "abandoned change"
+  out=$(run_plain_teardown "$home" "$fakebin" "$id" --discard-member api)
+  expect_code 0 "$?" "cleanup should discard the named edit member's work"$'\n'"$out"
+  assert_contains "$out" "discarding any unlanded work in task $id's edit member api copy" \
+    "cleanup did not say it discarded the named member's work"
+  assert_equals available "$(pool_field "$home/projects/contract" "$api" status)" "the discarded api copy was not returned"
+  ! git -C "$home/projects/contract" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "cleanup left the discarded member's branch behind"
+  pass "--discard-member discards exactly the named edit member's unlanded work and returns it"
+}
+
+test_real_edit_member_gone_copy_passes_on_its_merged_pr() {
+  local dir="$TMP_ROOT/edit-gone" home fakebin id=edit-g1 out meta api head
+  local url=https://github.com/o/contract/pull/3
+  real_treehouse_available || { printf '# real-treehouse edit member gone-copy case not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_edit_home "$home"
+  fakebin=$(make_edit_fakebin "$dir/fake")
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1 $2" = "pr view" ] || exit 1
+printf '%s\t%s\t%s\n' "${FM_TEST_PR_STATE:?}" "${FM_TEST_PR_HEAD:?}" "$3"
+SH
+  chmod +x "$fakebin/gh"
+  out=$(run_ship_spawn "$home" "$fakebin" "$dir/pane" "$id" --member api=projects/contract:edit)
+  expect_code 0 "$?" "a ship spawn with an edit member should launch"$'\n'"$out"
+  meta="$home/state/$id.meta"
+  api=$(meta_value "$meta" member.api.worktree)
+  member_commit "$api" "api change"
+  head=$(git -C "$api" rev-parse HEAD)
+  printf 'member.api.pr=%s\n' "$url" >> "$meta"
+  git -C "$home/projects/contract" worktree remove --force "$api" || fail "could not remove the api copy"
+  git -C "$home/projects/contract" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "removing the api copy dropped its branch"
+
+  if out=$(FM_TEST_PR_STATE=OPEN FM_TEST_PR_HEAD=$head run_plain_teardown "$home" "$fakebin" "$id"); then
+    fail "cleanup returned a task whose gone edit member's branch holds work its open PR has not landed"$'\n'"$out"
+  fi
+  assert_contains "$out" "edit member api has no copy this task still holds" "the refusal did not name the gone edit member"
+  [ -f "$meta" ] || fail "a refused cleanup removed the task record"
+
+  out=$(FM_TEST_PR_STATE=MERGED FM_TEST_PR_HEAD=$head run_plain_teardown "$home" "$fakebin" "$id")
+  expect_code 0 "$?" "cleanup should pass a gone edit member whose recorded PR merged its branch's work"$'\n'"$out"
+  [ ! -e "$meta" ] || fail "cleanup kept the task record"
+  pass "a gone edit member's branch refuses cleanup until its recorded PR has merged that work"
+}
+
+test_real_edit_member_failure_returns_every_lease_and_branch() {
+  local dir="$TMP_ROOT/edit-rollback" home fakebin id=edit-r1 out status
+  real_treehouse_available || { printf '# real-treehouse edit member rollback case not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_edit_home "$home"
+  git -C "$home/projects/notes" branch "fm/$id"
+  fakebin=$(make_edit_fakebin "$dir/fake")
+  out=$(run_ship_spawn "$home" "$fakebin" "$dir/pane" "$id" \
+    --member api=projects/contract:edit --member notes=projects/notes:edit)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a spawn whose edit member branch already exists still launched"$'\n'"$out"
+  assert_contains "$out" "member notes: branch fm/$id already exists" "the refusal did not name the failing edit member"
+  assert_contains "$out" "returned member copy" "the refusal did not report returning the leases it took"
+  [ ! -e "$home/state/$id.meta" ] || fail "a failed edit member spawn published a task record"
+  [ -z "$(pool_leases_for_task "$home/projects/contract" "$id")" ] || fail "the api member lease survived the failed spawn"
+  [ -z "$(pool_leases_for_task "$home/projects/notes" "$id")" ] || fail "the notes member lease survived the failed spawn"
+  ! git -C "$home/projects/contract" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "the failed spawn left the branch it started in the api member"
+  git -C "$home/projects/notes" rev-parse --verify --quiet "refs/heads/fm/$id" >/dev/null \
+    || fail "the failed spawn removed a branch it did not start"
+  pass "an edit member that fails returns every member lease, drops the branch the spawn started, and keeps one it did not"
+}
+
 test_member_refusals_leave_nothing_behind
 test_relaunch_shows_the_recorded_members_again
 test_real_members_are_leased_pinned_set_up_and_shown
@@ -598,5 +906,10 @@ test_real_member_failure_returns_every_lease
 test_real_member_branch_pins_origin_tip_over_a_stale_local_branch
 test_real_teardown_returns_only_this_tasks_members
 test_real_forced_retirement_returns_child_members
+test_relaunch_shows_edit_members_and_refuses_a_missing_one
+test_real_edit_members_are_branched_recorded_and_briefed
+test_real_edit_member_discard_names_one_repository
+test_real_edit_member_gone_copy_passes_on_its_merged_pr
+test_real_edit_member_failure_returns_every_lease_and_branch
 
-echo "# all fm-spawn-ref-members tests passed"
+echo "# all fm-spawn-members tests passed"
