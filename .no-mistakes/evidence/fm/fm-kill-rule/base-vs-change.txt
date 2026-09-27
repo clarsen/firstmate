@@ -1,0 +1,3 @@
+=== base 827516d scaffold (pre-change) ship + scout
+base-ship count(Never use pkill)=0
+base-scout count(Never use pkill)=0

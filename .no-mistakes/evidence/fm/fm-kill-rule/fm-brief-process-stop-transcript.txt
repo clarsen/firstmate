@@ -1,0 +1,50 @@
+=== $ FM_HOME=<tmp> bin/fm-brief.sh ship-no-mistakes demo-repo --mode no-mistakes
+scaffolded: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.wIMKpIICMT/data/ship-no-mistakes/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+=== $ FM_HOME=<tmp> bin/fm-brief.sh ship-direct-PR demo-repo --mode direct-PR
+scaffolded: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.wIMKpIICMT/data/ship-direct-PR/brief.md (ship, mode=direct-PR; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+=== $ FM_HOME=<tmp> bin/fm-brief.sh ship-local-only demo-repo --mode local-only
+scaffolded: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.wIMKpIICMT/data/ship-local-only/brief.md (ship, mode=local-only; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+=== $ bin/fm-brief.sh scout-1 demo-repo --scout
+scaffolded: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.wIMKpIICMT/data/scout-1/brief.md (scout; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+=== $ bin/fm-brief.sh lab-1 demo-repo --mode no-mistakes --herdr-lab
+scaffolded: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.wIMKpIICMT/data/lab-1/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+=== $ FM_SECONDMATE_CHARTER=x bin/fm-brief.sh sm-1 --secondmate --no-projects
+scaffolded: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.wIMKpIICMT/data/sm-1/brief.md (secondmate charter)
+exit=0
+=== ship-no-mistakes/brief.md: # Rules section (first 4 lines) and pkill-rule count
+# Rules
+Never use pkill, killall, pattern-based or process-group kills, or commands that quit or signal GUI apps; stop only processes you started by their recorded PID or the confirmed owner PID of a port you bound.
+1. Never push to the default branch. Never merge a PR.
+2. Stay inside this worktree; modify nothing outside it.
+count(Never use pkill)=1
+=== ship-direct-PR/brief.md: # Rules section (first 4 lines) and pkill-rule count
+# Rules
+Never use pkill, killall, pattern-based or process-group kills, or commands that quit or signal GUI apps; stop only processes you started by their recorded PID or the confirmed owner PID of a port you bound.
+1. Never push to the default branch (push only your `fm/ship-direct-PR` branch). Never merge a PR.
+2. Stay inside this worktree; modify nothing outside it.
+count(Never use pkill)=1
+=== ship-local-only/brief.md: # Rules section (first 4 lines) and pkill-rule count
+# Rules
+Never use pkill, killall, pattern-based or process-group kills, or commands that quit or signal GUI apps; stop only processes you started by their recorded PID or the confirmed owner PID of a port you bound.
+1. Never push to any remote and never open a PR. Work only on your `fm/ship-local-only` branch; firstmate handles the merge into local `main`.
+2. Stay inside this worktree; modify nothing outside it.
+count(Never use pkill)=1
+=== scout-1/brief.md: # Rules section (first 4 lines) and pkill-rule count
+# Rules
+Never use pkill, killall, pattern-based or process-group kills, or commands that quit or signal GUI apps; stop only processes you started by their recorded PID or the confirmed owner PID of a port you bound.
+1. Never push to any remote and never open a PR.
+2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
+count(Never use pkill)=1
+=== lab-1/brief.md: # Rules section (first 4 lines) and pkill-rule count
+# Rules
+Never use pkill, killall, pattern-based or process-group kills, or commands that quit or signal GUI apps; stop only processes you started by their recorded PID or the confirmed owner PID of a port you bound.
+1. Never push to the default branch. Never merge a PR.
+2. Stay inside this worktree; modify nothing outside it.
+count(Never use pkill)=1
+=== sm-1/brief.md: # Rules section (first 4 lines) and pkill-rule count
+count(Never use pkill)=0
