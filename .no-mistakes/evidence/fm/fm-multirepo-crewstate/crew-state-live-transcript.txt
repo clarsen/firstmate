@@ -1,0 +1,15 @@
+# Live fixture: primary /tmp/fmlive.q9JF/r (no-mistakes initialized, 0 runs -> 'runs: 0 runs yet'), edit member /tmp/fmlive.q9JF/api (not initialized); both heads pushed to origin
+# status log: done: delivered changes across both repositories (3 PRs)
+## S1 idle pane, landed heads
+base:   state: unknown · source: run-step · no run overview in /tmp/fmlive.q9JF/r to place its runs in order
+target: state: done · source: status-log · delivered changes across both repositories (3 PRs)
+## S2 captain follow-up: pane busy (user-prompt-submit), log still ends in done:
+target: state: working · source: pane · harness busy (claude-hook)
+## S3 idle pane, primary has an unpushed commit after done:
+target: state: blocked · source: status-log · named head 10bcb66c3824506eeae75106eb1e5b1ad8a414bc is unreachable outside the worker copy
+## S3b unpushed commit in the edit member instead
+target: state: done · source: status-log · delivered changes across both repositories (3 PRs)
+## S1 again after restoring landed heads
+target: state: done · source: status-log · delivered changes across both repositories (3 PRs)
+## Parity check: same fixture with neither repo initialized (fresh NM_HOME -> choice 'none', pre-existing path), unpushed commit in the edit member
+base:   state: unknown · source: none · backend target gone: fm:fm-multi

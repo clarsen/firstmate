@@ -1,0 +1,22 @@
+# Live: real bin/fm-crew-state.sh against a real Herdr lab pane (fm-lab-crewstate-52548-6936:w1:p1)
+# Multi-repo ship: primary wt (no-mistakes not initialized) + edit member api (initialized, no run overview)
+# status log: done: delivered changes across both repositories (3 PRs)
+
+## S0: no busy-event record (harness never reported idle)
+HEAD: state: unknown · source: run-step · no run overview in /tmp/fm-crewstate-live/cases/live/api to place its runs in order
+
+## S1: harness reported idle (claude stop hook) - reported bug scenario
+BASE (827516d): state: unknown · source: run-step · no run overview in /tmp/fm-crewstate-live/cases/live/api to place its runs in order
+HEAD (b624660): state: done · source: status-log · delivered changes across both repositories (3 PRs)
+
+## S2: captain sent follow-up, harness busy again, status log still says done
+HEAD: state: working · source: pane · harness busy (claude-hook)
+
+## S3 (adversarial): pane idle, done declared, but primary worktree has an unlanded commit
+HEAD: state: blocked · source: status-log · named head de8d01f98d9889bec1671d67446fc9a2cc10b87d is unreachable outside the worker copy
+HEAD after dropping the unlanded commit: state: done · source: status-log · delivered changes across both repositories (3 PRs)
+
+## S4 (adversarial): pane idle record present, done declared, but the Herdr lab pane is closed
+{"id":"cli:pane:list","result":{"panes":[],"type":"pane_list"}}
+HEAD: state: unknown · source: none · backend target gone: fm-lab-crewstate-52548-6936:w1:p1
+BASE: state: unknown · source: run-step · no run overview in /tmp/fm-crewstate-live/cases/live/api to place its runs in order

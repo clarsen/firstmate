@@ -1,0 +1,9 @@
+ok - an edit member's run answers for the task and names its repository
+ok - live runs in two repositories of one task read unknown rather than picking one
+ok - a completed multi-repository task keeps its done declaration without run overviews
+ok - a busy multi-repository task is not reported done from a stale declaration
+ok - a multi-repository done without run overviews still reads a gone backend target as unknown
+ok - a multi-repository done without run overviews still enforces the ship gate
+ok - a stale multi-repository done does not hide ambiguous live runs
+ok - an active member run prevents terminal fallback when the anchor overview is absent
+selected-ok
