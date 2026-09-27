@@ -5257,6 +5257,23 @@ test_multi_repo_done_yields_to_busy_pane_without_run_overview() {
   pass 'a busy multi-repository task is not reported done from a stale declaration'
 }
 
+test_multi_repo_done_reads_gone_target_as_unknown_without_run_overview() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-done-gone-no-overview)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/wt" && pwd -P)
+  FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
+  export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  FM_FAKE_TMUX_MISSING=1
+  arm_idle_record "$d/state" multi
+  printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  assert_contains "$out" 'state: unknown' 'a multi-repository task with a gone backend target was reported done'
+  assert_contains "$out" 'backend target gone: fm:fm-multi' 'the gone backend target was not named'
+  pass 'a multi-repository done without run overviews still reads a gone backend target as unknown'
+}
+
 test_multi_repo_unlanded_done_stays_blocked_without_run_overview() {
   reset_fakes
   local d out
@@ -5481,6 +5498,7 @@ test_live_runs_in_two_repositories_read_unknown
 test_member_handoff_done_is_gated_on_the_member
 test_multi_repo_done_survives_missing_run_overview
 test_multi_repo_done_yields_to_busy_pane_without_run_overview
+test_multi_repo_done_reads_gone_target_as_unknown_without_run_overview
 test_multi_repo_unlanded_done_stays_blocked_without_run_overview
 test_multi_repo_done_does_not_hide_ambiguous_live_runs
 test_multi_repo_done_does_not_hide_a_member_run_without_anchor_overview
