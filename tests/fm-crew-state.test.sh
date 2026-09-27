@@ -5127,6 +5127,11 @@ make_multi_repo_case() {  # <name> -> echoes the case dir
   mv "$fb/no-mistakes" "$fb/no-mistakes.inner"
   cat > "$fb/no-mistakes" <<'SH'
 #!/usr/bin/env bash
+if [ "${FM_FAKE_NO_OVERVIEW_DIR:-}" = "$(pwd -P)" ]; then
+  case "$*" in
+    axi|"axi status") exit 0 ;;
+  esac
+fi
 if [ -n "${FM_FAKE_UNINIT_DIR:-}" ] && case ":$FM_FAKE_UNINIT_DIR:" in *":$(pwd -P):"*) true ;; *) false ;; esac; then
   echo "error: repo not initialized (run 'no-mistakes init' first)"
   echo "help[1]: Run \`no-mistakes init\` to set up the gate in this repository"
@@ -5216,6 +5221,100 @@ test_live_runs_in_two_repositories_read_unknown() {
   assert_contains "$out" "state: unknown" "two live runs of one task did not read unknown"
   assert_contains "$out" "more than one repository" "the unknown reading does not say why"
   pass "live runs in two repositories of one task read unknown rather than picking one"
+}
+
+test_multi_repo_done_survives_missing_run_overview() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-done-no-overview)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/wt" && pwd -P)
+  FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
+  export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  arm_idle_record "$d/state" multi
+  printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  assert_contains "$out" 'state: done' 'a delivered multi-repository task lost its terminal declaration'
+  assert_contains "$out" 'source: status-log' 'the completion did not come from the terminal declaration'
+  pass 'a completed multi-repository task keeps its done declaration without run overviews'
+}
+
+test_multi_repo_done_yields_to_busy_pane_without_run_overview() {
+  reset_fakes
+  local d out gen
+  d=$(make_multi_repo_case multi-done-busy-no-overview)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/wt" && pwd -P)
+  FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
+  export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" multi)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" multi busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  assert_contains "$out" 'state: working' 'a busy multi-repository task was not reported working'
+  assert_not_contains "$out" 'state: done' 'a stale done declaration hid a busy multi-repository task'
+  pass 'a busy multi-repository task is not reported done from a stale declaration'
+}
+
+test_multi_repo_done_reads_gone_target_as_unknown_without_run_overview() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-done-gone-no-overview)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/wt" && pwd -P)
+  FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
+  export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  FM_FAKE_TMUX_MISSING=1
+  arm_idle_record "$d/state" multi
+  printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  assert_contains "$out" 'state: unknown' 'a multi-repository task with a gone backend target was reported done'
+  assert_contains "$out" 'backend target gone: fm:fm-multi' 'the gone backend target was not named'
+  pass 'a multi-repository done without run overviews still reads a gone backend target as unknown'
+}
+
+test_multi_repo_unlanded_done_stays_blocked_without_run_overview() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-unlanded-no-overview)
+  printf 'unlanded\n' > "$d/wt/unlanded.txt"
+  git -C "$d/wt" add unlanded.txt
+  git -C "$d/wt" commit -q -m 'unlanded work'
+  arm_idle_record "$d/state" multi
+  printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  assert_contains "$out" 'state: blocked' 'an unlanded multi-repository task was accepted as done'
+  assert_contains "$out" 'unreachable outside the worker copy' 'the ship done gate was skipped'
+  pass 'a multi-repository done without run overviews still enforces the ship gate'
+}
+
+test_multi_repo_done_does_not_hide_ambiguous_live_runs() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-done-two-live)
+  multi_repo_live_run
+  printf 'done: earlier delivery\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  assert_contains "$out" 'state: unknown' 'a stale done declaration hid competing live runs'
+  assert_contains "$out" 'more than one repository' 'the run ambiguity was not preserved'
+  pass 'a stale multi-repository done does not hide ambiguous live runs'
+}
+
+test_multi_repo_done_does_not_hide_a_member_run_without_anchor_overview() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-done-active-member)
+  FM_FAKE_RUN_HEAD=$(git -C "$d/api" rev-parse HEAD)
+  multi_repo_live_run
+  FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/wt" && pwd -P)
+  export FM_FAKE_NO_OVERVIEW_DIR
+  printf 'done: earlier delivery\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_NO_OVERVIEW_DIR
+  assert_contains "$out" 'state: unknown' 'a stale done declaration hid an active member run'
+  assert_not_contains "$out" 'state: done' 'the missing anchor overview was treated as terminal during member validation'
+  pass 'an active member run prevents terminal fallback when the anchor overview is absent'
 }
 
 
@@ -5397,5 +5496,11 @@ test_edit_member_run_is_attributed_to_its_repository
 test_own_run_of_a_multi_repo_task_names_no_member
 test_live_runs_in_two_repositories_read_unknown
 test_member_handoff_done_is_gated_on_the_member
+test_multi_repo_done_survives_missing_run_overview
+test_multi_repo_done_yields_to_busy_pane_without_run_overview
+test_multi_repo_done_reads_gone_target_as_unknown_without_run_overview
+test_multi_repo_unlanded_done_stays_blocked_without_run_overview
+test_multi_repo_done_does_not_hide_ambiguous_live_runs
+test_multi_repo_done_does_not_hide_a_member_run_without_anchor_overview
 
 echo "all fm-crew-state tests passed"
