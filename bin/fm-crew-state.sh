@@ -920,9 +920,9 @@ nm_runs_list() {
 # run exactly as a single repository's; an edit member's is named in the output
 # as its repository. Runs that cannot be placed in order report unknown, except
 # a ship's recorded done declaration when a repository has no run overview;
-# a bounded status read must first rule out an active run in every repository
-# and the pane must read idle, while
-# the normal named-head gate still decides whether the declaration is done.
+# a bounded status read must first rule out an active run in every repository,
+# the backend target must be live, and the pane must read idle, while the
+# normal named-head gate still decides whether the declaration is done.
 multi_repo_has_no_active_run() {
   local candidate candidate_branch candidate_status
   for candidate in "${DELIVERY_WTS[@]}"; do
