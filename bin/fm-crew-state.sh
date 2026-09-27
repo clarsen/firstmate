@@ -863,7 +863,29 @@ nm_runs_list() {
 # the run to attribute is the one fm_nm_select_delivery_worktree picks among
 # its worktrees - its own first. Everything below then reads that worktree's
 # run exactly as a single repository's; an edit member's is named in the output
-# as its repository. Runs that cannot be placed in order report unknown.
+# as its repository. Runs that cannot be placed in order report unknown, except
+# a ship's recorded done declaration when a repository has no run overview;
+# a bounded status read must first rule out an active run in every repository,
+# and the normal named-head gate still decides whether the declaration is done.
+multi_repo_has_no_active_run() {
+  local candidate candidate_branch candidate_status
+  for candidate in "${DELIVERY_WTS[@]}"; do
+    candidate_branch=$(git -C "$candidate" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
+    if candidate_status=$(fm_nm_run_checked "$candidate" "$NM_TIMEOUT" axi status); then
+      :
+    elif [[ "$candidate_status" = 'error: repo not initialized'* ]]; then
+      continue
+    else
+      return 1
+    fi
+    [ -n "$candidate_status" ] || continue
+    if [ "$(fm_nm_strip_quotes "$(fm_nm_field "$candidate_status" branch)")" = "$candidate_branch" ] \
+      && fm_nm_run_is_active "$candidate_status"; then
+      return 1
+    fi
+  done
+  return 0
+}
 if [ "$KIND" = ship ] && [ -z "$REMOTE_HOST" ] && fm_member_has_edit "$META" \
   && command -v no-mistakes >/dev/null 2>&1; then
   DELIVERY_WTS=("$WT")
@@ -882,6 +904,10 @@ if [ "$KIND" = ship ] && [ -z "$REMOTE_HOST" ] && fm_member_has_edit "$META" \
       DELIVERY_REPOSITORY=${DELIVERY_NAMES[$DELIVERY_INDEX]}
       ;;
     unknown\|*)
+      if [ "$LOG_VERB" = "done" ] && [[ "$DELIVERY_CHOICE" = 'unknown|no run overview in '* ]] \
+        && multi_repo_has_no_active_run; then
+        emit_ship_status_done
+      fi
       emit unknown run-step "${DELIVERY_CHOICE#unknown|}"
       ;;
   esac
