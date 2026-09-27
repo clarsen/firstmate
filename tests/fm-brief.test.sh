@@ -1029,6 +1029,21 @@ test_worker_role_scope() {
   pass "fm-brief: scaffolds leave the worker role scope to the launch boundary and keep the secondmate contract"
 }
 
+test_worker_process_stop_rule() {
+  local kind home brief
+  home="$TMP_ROOT/process-stop"
+  for kind in no-mistakes direct-PR local-only scout; do
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" arbitrary-project-name --scout >/dev/null || fail "scout scaffold failed"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" arbitrary-project-name --mode "$kind" >/dev/null || fail "$kind scaffold failed"
+    fi
+    brief="$home/data/$kind/brief.md"
+    assert_grep 'Never use pkill, killall, pattern-based or process-group kills, or commands that quit or signal GUI apps; stop only processes you started by their recorded PID or the confirmed owner PID of a port you bound.' "$brief" "$kind brief lost its PID-only process-stop rule"
+  done
+  pass "fm-brief: every worker brief limits process stops to recorded PIDs"
+}
+
 # A home can carry standing worker instructions in its gitignored
 # config/brief-include.md. The include must land last on ship and scout
 # scaffolds, stay out of charters, change nothing when absent or blank, and stop
@@ -1089,6 +1104,7 @@ test_home_brief_include_is_appended_last() {
 }
 
 test_worker_role_scope
+test_worker_process_stop_rule
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
