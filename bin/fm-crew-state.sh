@@ -865,8 +865,9 @@ nm_runs_list() {
 # run exactly as a single repository's; an edit member's is named in the output
 # as its repository. Runs that cannot be placed in order report unknown, except
 # a ship's recorded done declaration when a repository has no run overview;
-# a bounded status read must first rule out an active run in every repository,
-# and the normal named-head gate still decides whether the declaration is done.
+# a bounded status read must first rule out an active run in every repository
+# and the pane must read idle, while
+# the normal named-head gate still decides whether the declaration is done.
 multi_repo_has_no_active_run() {
   local candidate candidate_branch candidate_status
   for candidate in "${DELIVERY_WTS[@]}"; do
@@ -906,7 +907,11 @@ if [ "$KIND" = ship ] && [ -z "$REMOTE_HOST" ] && fm_member_has_edit "$META" \
     unknown\|*)
       if [ "$LOG_VERB" = "done" ] && [[ "$DELIVERY_CHOICE" = 'unknown|no run overview in '* ]] \
         && multi_repo_has_no_active_run; then
-        emit_ship_status_done
+        BUSY_VERDICT=$(crew_busy_verdict "$BACKEND_TARGET")
+        case "${BUSY_VERDICT%% *}" in
+          busy) emit working pane "harness busy (${BUSY_VERDICT#* })" ;;
+          idle) emit_ship_status_done ;;
+        esac
       fi
       emit unknown run-step "${DELIVERY_CHOICE#unknown|}"
       ;;

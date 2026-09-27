@@ -5239,6 +5239,24 @@ test_multi_repo_done_survives_missing_run_overview() {
   pass 'a completed multi-repository task keeps its done declaration without run overviews'
 }
 
+test_multi_repo_done_yields_to_busy_pane_without_run_overview() {
+  reset_fakes
+  local d out gen
+  d=$(make_multi_repo_case multi-done-busy-no-overview)
+  FM_FAKE_UNINIT_DIR=$(cd "$d/wt" && pwd -P)
+  FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
+  export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" multi)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" multi busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
+  assert_contains "$out" 'state: working' 'a busy multi-repository task was not reported working'
+  assert_not_contains "$out" 'state: done' 'a stale done declaration hid a busy multi-repository task'
+  pass 'a busy multi-repository task is not reported done from a stale declaration'
+}
+
 test_multi_repo_unlanded_done_stays_blocked_without_run_overview() {
   reset_fakes
   local d out
@@ -5462,6 +5480,7 @@ test_own_run_of_a_multi_repo_task_names_no_member
 test_live_runs_in_two_repositories_read_unknown
 test_member_handoff_done_is_gated_on_the_member
 test_multi_repo_done_survives_missing_run_overview
+test_multi_repo_done_yields_to_busy_pane_without_run_overview
 test_multi_repo_unlanded_done_stays_blocked_without_run_overview
 test_multi_repo_done_does_not_hide_ambiguous_live_runs
 test_multi_repo_done_does_not_hide_a_member_run_without_anchor_overview
