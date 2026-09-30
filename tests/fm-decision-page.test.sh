@@ -52,7 +52,15 @@ case "${1-}" in
 esac
 file=$1
 shift
+reopen=0
+[ "${1-}" = --reopen ] && reopen=1
 real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$file")
+if [ -e "$state/ended" ] && [ "$reopen" = 0 ]; then
+  : > "$state/open"
+  emit "$real" ended
+  exit 0
+fi
+rm -f "$state/ended"
 printf '%s\n' "$real" > "$state/open"
 jq -n --arg file "$real" \
   '{sessions:{"0123456789abcdef":{file:$file,url:"http://127.0.0.1:4387/session/0123456789abcdef"}}}' \
@@ -285,8 +293,31 @@ test_build_arms_a_firstmate_owned_source_never_a_task_owned_one() {
   pass "the page source is a firstmate-owned listener, never task-owned"
 }
 
+test_rebuild_after_the_session_ended_arms_a_fresh_source() {
+  local home data page out sid row
+  home=$(make_home reopen)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_valid_payload "$data"
+
+  out=$(run_page "$home" build "$data" --label "$LABEL") || fail "first build failed: $out"
+  touch "$home/lavish-state/ended"
+  out=$(run_page "$home" build "$data" --label "$LABEL") || fail "rebuild after the session ended failed: $out"
+  assert_contains "$out" "session: reopened" "the rebuild did not reopen the ended session: $out"
+  assert_contains "$out" "armed: " "the rebuild did not arm a fresh source: $out"
+  case "$out" in
+    *already-armed*) fail "the rebuild kept the pre-reopen source generation: $out" ;;
+  esac
+  sid=$(run_lavish_source_id "$home" "$page")
+  row=$(run_procevent "$home" list | awk -v sid="$sid" 'NR > 1 && $1 == sid')
+  printf '%s\n' "$row" | awk '{ print $3 }' | grep -qx live \
+    || fail "the rebuilt page source is not live: $row"
+  pass "a rebuild after the session ended retires and re-arms the source"
+}
+
 test_path_is_label_scoped
 test_build_refuses_malformed_payloads_before_touching_the_page
 test_build_refuses_a_page_that_does_not_render_its_controls
 test_build_renders_the_right_radio_groups_and_answer_keys
 test_build_arms_a_firstmate_owned_source_never_a_task_owned_one
+test_rebuild_after_the_session_ended_arms_a_fresh_source

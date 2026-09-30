@@ -184,6 +184,7 @@ lavish_page_live() {  # <establish output> <canonical-page-path>
 
 establish_page_session() {  # <page>
   local page=$1 real out status version
+  PAGE_SESSION_REOPENED=0
   real=$(page_realpath "$page") || fail "cannot resolve the page path: $page"
   out=$(lavish-axi "$page") || fail "cannot establish the page Lavish session"
   printf '%s\n' "$out"
@@ -196,6 +197,7 @@ establish_page_session() {  # <page>
   printf '%s\n' "$out"
   if lavish_page_live "$out" "$real"; then
     printf 'session: reopened\n'
+    PAGE_SESSION_REOPENED=1
     ESTABLISH_OUT=$out
     return 0
   fi
@@ -251,7 +253,7 @@ verify_render() {  # <data.json> <built-page>
 }
 
 command_build() {
-  local data=${1-} label='' page json tmp sid extracted owner
+  local data=${1-} label='' page json tmp sid extracted owner pre_reopen_owner
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -308,7 +310,14 @@ command_build() {
   printf 'page: %s\n' "$page"
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
+  sid=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$page") \
+    || fail "cannot derive the page source id"
+  pre_reopen_owner=$(source_owner "$sid")
   establish_page_session "$page"
+  if [ "$PAGE_SESSION_REOPENED" = 1 ]; then
+    "$SCRIPT_DIR/fm-procevent-lavish.sh" retire "$page" >/dev/null \
+      || fail "cannot retire the pre-reopen source generation (observed owner: ${pre_reopen_owner:-none})"
+  fi
   printf 'link: %s\n' "$(lavish_url_field "$ESTABLISH_OUT")"
   if ! lavish_session_listed_open "$(page_realpath "$page")"; then
     local version
@@ -322,14 +331,12 @@ command_build() {
   # a steer into some task's worker inbox, where it can sit unread for as long
   # as that worker is parked at a gate. Bind before arm, so the source can
   # never produce an answer with nowhere to go.
-  sid=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$page") \
-    || fail "cannot derive the page source id"
   "$SCRIPT_DIR/fm-captain-hold.sh" bind "$sid" >/dev/null \
     || fail "cannot bind the page source to the keyed-answer intake"
   printf 'bound: %s\n' "$sid"
 
   owner=$(source_owner "$sid")
-  if [ -n "$owner" ]; then
+  if [ "$PAGE_SESSION_REOPENED" != 1 ] && [ -n "$owner" ]; then
     printf 'already-armed: %s\n' "$sid"
   else
     "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "$page" >/dev/null \
