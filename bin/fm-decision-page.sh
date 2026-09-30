@@ -17,33 +17,41 @@
 # proves its own page renders working controls, or it refuses with no link.
 #
 # Usage:
-#   fm-decision-page.sh build <data.json> --for <task-id>
-#   fm-decision-page.sh path --for <task-id>
+#   fm-decision-page.sh build <data.json> --label <label>
+#   fm-decision-page.sh path --label <label>
 #
 # build      Validate the payload, inject it into a fresh copy of the shipped
-#            template at the task-scoped page path, PROVE under a real
+#            template at the label-scoped page path, PROVE under a real
 #            headless DOM execution (bin/fm-decision-page-render.mjs, node)
 #            that every question rendered exactly one radio-button group with
 #            at least one option before doing anything visible to the
 #            captain, establish the Lavish session on that page and PROVE it
-#            is live BEFORE arming its answer source (the same order
-#            bin/fm-bearings-board.sh enforces, for the same reason: a
+#            is live BEFORE binding and arming its answer source (the same
+#            order bin/fm-bearings-board.sh enforces, for the same reason: a
 #            registered poll must never race a session that does not exist or
-#            attach to one that has ended), then arm the source bound to
-#            <task-id> through bin/fm-procevent-lavish.sh's register-task
-#            path so an answered page wakes that task directly. Output:
+#            attach to one that has ended), then bind and arm it as a
+#            FIRSTMATE-OWNED process-event source - the same path
+#            bin/fm-bearings-board.sh uses, never `register-task`. These pages
+#            exist for firstmate to act on, so an answer must always reach
+#            firstmate as its own `check:` wake (bin/fm-procevent-lavish.sh
+#            read/answers), never a steer delivered into some task's worker
+#            inbox, where it can sit unread for as long as that worker stays
+#            parked at a gate. <label> only scopes the page's on-disk path and
+#            is never passed to the process-event registration. Output:
 #              page: <path>
 #              (lavish-axi's own establish output, including its own `url:`
 #               field)
 #              session: live | reopened
 #              link: <url>              the captain-facing page URL
 #              served: <path>
-#              armed: <source-id>
+#              bound: <source-id>
+#              armed: <source-id> | already-armed: <source-id>
+#              listening: live         (only when a replacement was needed)
 #            A payload that fails validation, or a built page whose render
 #            check fails, is refused with a clear message: no page is
-#            published, no session is established, nothing is armed, and no
-#            link is printed.
-#   path       Print the stable page path for <task-id>.
+#            published, no session is established, nothing is bound or
+#            armed, and no link is printed.
+#   path       Print the stable page path for <label>.
 #
 # Payload schema fm-decision-page.v1 (validated fail-closed with jq, exactly
 # as bin/fm-bearings-board.sh's fm-bearings-board.v1 payload is):
@@ -52,7 +60,11 @@
 #   eyebrow     optional string: the small label above the title
 #   lead        optional string: intro copy under the title
 #   questions   non-empty array, each:
-#     key           slug, 1-128 chars of [A-Za-z0-9._-]: the answer's question id
+#     key           slug, 1-128 chars of [A-Za-z0-9._-]: the answer's question id.
+#                   bin/fm-captain-hold.sh binds this source any-origin, so a
+#                   key that happens to be a captain-held task id resolves
+#                   that hold directly; any other key still delivers as an
+#                   ordinary answer on the source's check wake.
 #     title         non-empty string
 #     body          optional string
 #     options       non-empty array of { value: slug, label: non-empty string,
@@ -76,7 +88,7 @@
 # <file>` exits 0 even when it refuses to reopen a session the captain ended
 # from the browser, reporting `status: user-ended` with the same session id,
 # so the server's fresh session listing must show the page open before this
-# build may arm anything.
+# build may bind or arm anything.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,7 +113,7 @@ fail() {
   exit 1
 }
 
-page_path() {  # <task-id>
+page_path() {  # <label>
   printf '%s/data/%s/decision-page.html\n' "$FM_HOME" "$1"
 }
 
@@ -192,6 +204,26 @@ establish_page_session() {  # <page>
   fail "the page Lavish session is not live after reopening it (lavish-axi ${version:-version-unknown} reported status ${status:-none}); refusing to arm a poll on an ended session"
 }
 
+# The OWNER column bin/fm-procevent.sh already publishes: live, none,
+# orphaned, or uncertain. Empty means the source is not registered at all.
+source_owner() {  # <source-id>
+  "$SCRIPT_DIR/fm-procevent.sh" list 2>/dev/null \
+    | awk -v id="$1" 'NR > 1 && $1 == id { print $3 }'
+}
+
+# A replacement listener is started detached, so it claims the source shortly
+# after reconcile returns. Wait for that claim rather than reporting the race.
+await_source_owner() {  # <source-id>
+  local owner i=0
+  while [ "$i" -lt 50 ]; do
+    owner=$(source_owner "$1")
+    [ "$owner" != live ] || { printf '%s\n' "$owner"; return 0; }
+    sleep 0.1
+    i=$((i + 1))
+  done
+  printf '%s\n' "${owner:-none}"
+}
+
 # Run the built page through a real headless DOM execution and refuse unless
 # every payload question rendered exactly one radio group with options and no
 # fail-closed render error fired.
@@ -219,20 +251,20 @@ verify_render() {  # <data.json> <built-page>
 }
 
 command_build() {
-  local data=${1-} task='' page json tmp sid extracted
+  local data=${1-} label='' page json tmp sid extracted owner
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --for)
+      --label)
         [ "$#" -ge 2 ] || { usage >&2; exit 2; }
-        task=$2
+        label=$2
         shift 2
         ;;
       *) usage >&2; exit 2 ;;
     esac
   done
-  [ -n "$task" ] || { usage >&2; exit 2; }
+  [ -n "$label" ] || { usage >&2; exit 2; }
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$data" ] || fail "page data does not exist: $data"
   jq empty "$data" 2>/dev/null || fail "page data is not valid JSON: $data"
@@ -246,7 +278,7 @@ command_build() {
   # occurrence keeps the payload valid JSON while making </script> inert.
   json=${json//</\\u003c}
 
-  page=$(page_path "$task")
+  page=$(page_path "$label")
   (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
   tmp=$(umask 077; mktemp "${page%/*}/.page.XXXXXX") || fail "cannot stage the page"
   # A staged page that never reaches `mv` - any refusal below - is cleaned up
@@ -285,11 +317,33 @@ command_build() {
   fi
   printf 'served: %s\n' "$page"
 
+  # Firstmate-owned, exactly like bin/fm-bearings-board.sh: `register`, never
+  # `register-task`. An answer must reach firstmate as its own check wake, not
+  # a steer into some task's worker inbox, where it can sit unread for as long
+  # as that worker is parked at a gate. Bind before arm, so the source can
+  # never produce an answer with nowhere to go.
   sid=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$page") \
     || fail "cannot derive the page source id"
-  "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "$page" --for "$task" >/dev/null \
-    || fail "cannot arm the page as a process-event source for $task"
-  printf 'armed: %s\n' "$sid"
+  "$SCRIPT_DIR/fm-captain-hold.sh" bind "$sid" >/dev/null \
+    || fail "cannot bind the page source to the keyed-answer intake"
+  printf 'bound: %s\n' "$sid"
+
+  owner=$(source_owner "$sid")
+  if [ -n "$owner" ]; then
+    printf 'already-armed: %s\n' "$sid"
+  else
+    "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "$page" >/dev/null \
+      || fail "cannot arm the page as a process-event source"
+    printf 'armed: %s\n' "$sid"
+    owner=$(source_owner "$sid")
+  fi
+  if [ "$owner" != live ]; then
+    "$SCRIPT_DIR/fm-procevent.sh" reconcile >/dev/null 2>&1 || true
+    owner=$(await_source_owner "$sid")
+    [ "$owner" = live ] \
+      || fail "source $sid is not listening after reconcile (observed owner: ${owner:-none})"
+    printf 'listening: live\n'
+  fi
 }
 
 case "${1-}" in
@@ -299,15 +353,15 @@ case "${1-}" in
     ;;
   path)
     shift
-    task=''
+    label=''
     while [ "$#" -gt 0 ]; do
       case "$1" in
-        --for) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; task=$2; shift 2 ;;
+        --label) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; label=$2; shift 2 ;;
         *) usage >&2; exit 2 ;;
       esac
     done
-    [ -n "$task" ] || { usage >&2; exit 2; }
-    page_path "$task"
+    [ -n "$label" ] || { usage >&2; exit 2; }
+    page_path "$label"
     ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
