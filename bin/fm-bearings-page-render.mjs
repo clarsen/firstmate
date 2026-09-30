@@ -1,13 +1,13 @@
-// Execute a built decision page's shipped inline script under a minimal DOM
-// shim and report what the renderer actually produced, so
-// bin/fm-decision-page.sh can PROVE every question rendered its answer
-// controls before arming or printing a link, rather than assuming a page
-// that built without error also drew controls. The same pattern - a built
-// page's real <script> run under a tiny DOM shim, asserting on render output
-// rather than on the template's source text - is tests/assets/board-render-
-// harness.mjs's for the /bearings board; this is the decision-page sibling.
+// Execute a built captain-question page's shipped inline scripts under a
+// minimal DOM shim and report what the renderer actually produced, so
+// bin/fm-bearings-board.sh's `page` command can PROVE every question
+// rendered its answer controls before arming or printing a link, rather than
+// assuming a page that built without error also drew controls. The same
+// pattern - a built page's real <script> blocks run under a tiny DOM shim,
+// asserting on render output rather than on the template's source text - is
+// tests/assets/board-render-harness.mjs's for the /bearings board.
 //
-// Usage: node fm-decision-page-render.mjs <built-page.html>
+// Usage: node fm-bearings-page-render.mjs <built-page.html>
 // Prints one JSON document on success:
 //   { title, questions: [{ key, optionCount, radioName, hasNote }], error }
 // A question is counted only when its form renders exactly one radio-button
@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 
 const path = process.argv[2];
 if (!path) {
-  process.stderr.write("usage: fm-decision-page-render.mjs <built-page.html>\n");
+  process.stderr.write("usage: fm-bearings-page-render.mjs <built-page.html>\n");
   process.exit(2);
 }
 const html = readFileSync(path, "utf8");
@@ -97,9 +97,15 @@ globalThis.FormData = class {
   get() { return null; }
 };
 
-const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
+// The built page carries two bare <script> blocks in order: the shared
+// decision-card builder (.agents/skills/bearings/assets/decision-card.js)
+// injected first, then the page's own rendering script, which depends on
+// window.FMDecisionCard existing already. Run every bare script block in
+// document order so both execute against the same window stub.
 try {
-  new Function(script)();
+  for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    new Function(m[1])();
+  }
 } catch (e) {
   process.stdout.write(JSON.stringify({ title: "", questions: [], error: String(e) }) + "\n");
   process.exit(0);

@@ -426,6 +426,8 @@ SH
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
     FM_BEARINGS_BOARD_TEMPLATE="$ROOT/.agents/skills/bearings/assets/board-template.html" \
+    FM_BEARINGS_DECISION_CARD_CSS="$ROOT/.agents/skills/bearings/assets/decision-card.css" \
+    FM_BEARINGS_DECISION_CARD_JS="$ROOT/.agents/skills/bearings/assets/decision-card.js" \
     REAL_LAVISH_ADAPTER="$ROOT/bin/fm-procevent-lavish.sh" \
     REAL_PROCEVENT="$ROOT/bin/fm-procevent.sh" ORDER_PROOF_HOLD="$hold" \
     LAVISH_AXI_STATE_DIR="$home/lavish-state" \

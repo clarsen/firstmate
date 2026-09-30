@@ -81,8 +81,14 @@ globalThis.document = {
 globalThis.window = {};
 globalThis.TextEncoder = TextEncoder;
 
-const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
-new Function(script)();
+// The built page now carries two bare <script> blocks in order: the shared
+// decision-card builder (.agents/skills/bearings/assets/decision-card.js)
+// injected first, then the board's own rendering script, which depends on
+// window.FMDecisionCard existing already. Run every bare script block in
+// document order so both execute against the same window stub.
+for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+  new Function(m[1])();
+}
 
 const badgesOf = (row) =>
   row.children

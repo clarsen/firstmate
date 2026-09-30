@@ -1,32 +1,40 @@
 #!/usr/bin/env bash
-# Behavior tests for the shipped decision-page renderer
-# (bin/fm-decision-page-template.html) and its render-check harness
-# (bin/fm-decision-page-render.mjs), exercised by injecting a payload into the
-# real template exactly as bin/fm-decision-page.sh build does, then executing
-# the built page's own inline script under the minimal DOM shim. Assertions
-# are on what the page renders - radio groups, option counts, note fields,
-# the fail-closed error - never on the template's source text.
+# Behavior tests for the shipped captain question page renderer
+# (.agents/skills/bearings/assets/page-template.html) and its render-check
+# harness (bin/fm-bearings-page-render.mjs), exercised by injecting a payload
+# and the shared decision-card CSS/JS into the real template exactly as
+# bin/fm-bearings-board.sh page does, then executing the built page's own
+# inline scripts under the minimal DOM shim. Assertions are on what the page
+# renders - radio groups, option counts, note fields, the fail-closed error -
+# never on the template's source text.
 set -u
 
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TEMPLATE="$ROOT/bin/fm-decision-page-template.html"
-HARNESS="$ROOT/bin/fm-decision-page-render.mjs"
+TEMPLATE="$ROOT/.agents/skills/bearings/assets/page-template.html"
+CARD_CSS="$ROOT/.agents/skills/bearings/assets/decision-card.css"
+CARD_JS="$ROOT/.agents/skills/bearings/assets/decision-card.js"
+HARNESS="$ROOT/bin/fm-bearings-page-render.mjs"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v node >/dev/null 2>&1 || { echo "skip: node not found"; exit 0; }
 
-# Inject <payload-json> into a copy of the real template (same slot-injection
-# fm-decision-page.sh build uses) and print what the render-check harness
-# reports for it.
+# Inject <payload-json> plus the shared decision-card CSS/JS into a copy of the
+# real template (the same slot-injection bin/fm-bearings-board.sh page uses)
+# and print what the render-check harness reports for it.
 render() {  # <home> <payload-json> [template]
-  local home=$1 payload=$2 template=${3:-$TEMPLATE} page="$1/page.html" json
+  local home=$1 payload=$2 template=${3:-$TEMPLATE} page="$1/page.html" json css js
   json=$(jq -c . <<< "$payload")
   json=${json//</\\u003c}
+  css=$(cat "$CARD_CSS")
+  js=$(cat "$CARD_JS")
   FM_DECISION_PAGE_JSON="$json" perl -pe 's/^\Q__FM_DECISION_PAGE_DATA__\E$/$ENV{FM_DECISION_PAGE_JSON}/' \
-    "$template" > "$page"
+    "$template" \
+    | FM_SHARED_CSS="$css" perl -pe 's/^\Q__FM_DECISION_CARD_CSS__\E$/$ENV{FM_SHARED_CSS}/' \
+    | FM_SHARED_JS="$js" perl -pe 's/^\Q__FM_DECISION_CARD_JS__\E$/$ENV{FM_SHARED_JS}/' \
+    > "$page"
   node "$HARNESS" "$page" || fail "the built page could not be rendered"
 }
 
@@ -57,10 +65,10 @@ test_a_question_with_no_options_never_reaches_the_page() {
   local home out
   home=$(fm_test_tmproot render-empty-options)
   # The template's own fail-closed guard, not payload validation, is under
-  # test here: a payload bin/fm-decision-page.sh would itself refuse (an empty
-  # options array) must also make the shipped renderer refuse rather than
-  # silently draw a control-less card, in case anything ever reaches it with
-  # validation bypassed.
+  # test here: a payload bin/fm-bearings-board.sh page would itself refuse (an
+  # empty options array) must also make the shipped renderer refuse rather
+  # than silently draw a control-less card, in case anything ever reaches it
+  # with validation bypassed.
   out=$(render "$home" '{
     "schema": "fm-decision-page.v1",
     "title": "Broken",

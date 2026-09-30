@@ -5,116 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Bearings - fleet board</title>
 <style>
+__FM_DECISION_CARD_CSS__
+</style>
+<style>
 /* ============================================================
-   Bearings board - Firstmate Design System, inlined for portability.
-   Tokens copied verbatim from myfirstmate priv/static/assets/app.css
-   (the compiled adoption of .agents/skills/firstmate-design).
+   Board chrome (bb-*) - built on the same tokens/resets/primitives and the
+   shared decision-card contract injected above
+   (.agents/skills/bearings/assets/decision-card.css).
    ============================================================ */
-@import url("https://fonts.googleapis.com/css2?family=Chango&family=Jost:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+:root { --container-app: 1180px; }
 
-:root {
-  --rust-700: #8f2f17; --rust-600: #a93a1f; --rust-500: #c0452a;
-  --rust-400: #d35f3f; --rust-300: #e08365; --rust-100: #f4d8c9; --rust-050: #fbece3;
-  --navy-700: #1a2238; --navy-600: #222c49; --navy-500: #2a3656;
-  --navy-300: #6c7796; --navy-100: #d9deea;
-  --gold-600: #b5791c; --gold-500: #e0a52e; --gold-300: #f0d38c; --gold-100: #f8ecc9;
-  --ocean-600: #2f6688; --ocean-500: #3c7ea6; --ocean-200: #b6d4e2; --ocean-050: #e8f1f5;
-  --sea-700: #234e3a; --sea-500: #2f6b4f; --sea-200: #b9d4c5; --sea-050: #e9f2ec;
-  --paper-000: #fbf4e2; --paper-100: #f6ecd3; --paper-200: #f0e3c4; --paper-300: #e7d6ae;
-  --cream-line: #ddc89c;
-  --ink-900: #241c14; --ink-700: #3f3224; --ink-500: #6f5e46; --ink-300: #9c8a6c;
-  --white: #fffdf7;
-  --bg-page: var(--paper-100);
-  --surface-card: var(--white);
-  --surface-card-warm: var(--paper-000);
-  --text-strong: var(--ink-900); --text-body: var(--ink-700);
-  --text-muted: var(--ink-500); --text-faint: var(--ink-300);
-  --border-default: var(--cream-line); --border-soft: var(--paper-300);
-  --status-online: var(--sea-500); --status-online-soft: var(--sea-050);
-  --status-warn: var(--gold-600); --status-warn-soft: var(--gold-100);
-  --status-danger: var(--rust-600); --status-danger-soft: var(--rust-050);
-  --status-info: var(--ocean-500); --status-info-soft: var(--ocean-050);
-  --font-display: "Chango", "Cooper Black", Rockwell, Georgia, serif;
-  --font-sans: "Jost", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --fs-h3: 1.4rem; --fs-h4: 1.15rem; --fs-base: 1rem; --fs-sm: 0.9375rem;
-  --fs-xs: 0.8125rem; --fs-2xs: 0.6875rem;
-  --ls-caps: 0.16em;
-  --radius-xs: 6px; --radius-sm: 9px; --radius-md: 12px; --radius-banner: 7px;
-  --radius-lg: 18px; --radius-pill: 999px;
-  --shadow-sm: 0 1px 2px rgba(36, 28, 20, 0.06), 0 4px 10px rgba(36, 28, 20, 0.06);
-  --shadow-hard: 4px 4px 0 var(--ink-900);
-  --shadow-hard-sm: 3px 3px 0 var(--ink-900);
-  --texture-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
-  --focus-ring: 0 0 0 3px var(--gold-300);
-  --container-app: 1180px;
-}
-
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  font-family: var(--font-sans);
-  color: var(--text-body);
-  background: var(--bg-page);
-  background-image: var(--texture-paper);
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-a { color: inherit; text-decoration: none; }
-
-/* ---- fm-badge (enamel sign-pin), verbatim contract ---- */
-.fm-badge {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: var(--fs-2xs); font-weight: 800; line-height: 1;
-  padding: 5px 9px 4px; text-transform: uppercase; letter-spacing: 0.07em;
-  border-radius: var(--radius-xs); border: 1.5px solid var(--ink-900);
-  box-shadow: 2px 2px 0 var(--ink-900); white-space: nowrap;
-}
-.fm-badge--online  { background: var(--sea-500);  color: var(--paper-000); }
-.fm-badge--warn    { background: var(--gold-500); color: var(--navy-700); }
-.fm-badge--danger  { background: var(--rust-600); color: var(--paper-000); }
-.fm-badge--info    { background: var(--ocean-500); color: var(--paper-000); }
-.fm-badge--neutral { background: var(--paper-000); color: var(--ink-900); }
-.fm-badge--solid   { background: var(--rust-500); color: var(--paper-000); }
-
-/* ---- fm-btn ---- */
-.fm-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  font-family: var(--font-sans); font-weight: 800; line-height: 1; white-space: nowrap;
-  border: 2px solid transparent; border-radius: var(--radius-banner); cursor: pointer;
-  text-decoration: none; transition: background 120ms, border-color 120ms, transform 120ms, box-shadow 120ms;
-}
-.fm-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.fm-btn:active { transform: translateY(1px); }
-.fm-btn--sm { font-size: var(--fs-xs); padding: 8px 16px; }
-.fm-btn--primary { background: var(--rust-500); color: var(--white); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
-.fm-btn--primary:hover { background: var(--rust-600); }
-.fm-btn--gold { background: var(--gold-500); color: var(--navy-700); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
-.fm-btn--gold:hover { background: var(--gold-600); color: var(--white); }
-.fm-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-
-/* ---- fm-card ---- */
-.fm-card {
-  background: var(--surface-card); border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden;
-}
-.fm-card--poster { border: 2px solid var(--ink-900); box-shadow: var(--shadow-hard); border-radius: var(--radius-md); }
-.fm-card--warm { background: var(--surface-card-warm); }
-
-/* ---- fm-sign (eyebrow section label) ---- */
-.fm-sign {
-  display: inline-flex; align-items: center; gap: 8px; font-weight: 800;
-  text-transform: uppercase; letter-spacing: var(--ls-caps); font-size: var(--fs-xs);
-  line-height: 1; white-space: nowrap;
-}
-.fm-sign--eyebrow { color: var(--rust-500); }
-.fm-sign--muted { color: var(--ink-500); }
-.fm-sign svg { width: 14px; height: 14px; }
-.fm-ico { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.18em; }
-
-/* ============================================================
-   Board chrome (bb-*) - built on the same tokens
-   ============================================================ */
 .bb-nav {
   position: sticky; top: 0; z-index: 20;
   background: color-mix(in srgb, var(--paper-100) 86%, transparent);
@@ -186,52 +86,6 @@ a { color: inherit; text-decoration: none; }
 .bb-call--empty::before, .bb-call--empty::after { display: none; }
 .bb-call > .bb-decision { grid-area: 1 / 1; z-index: 1; }
 .bb-call > .bb-decision[hidden] { display: none; }
-.bb-decision { display: flex; flex-direction: column; }
-.bb-decision__pad { padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
-.bb-decision__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.bb-decision__repo { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; }
-.bb-decision__title { margin: 0; font-size: var(--fs-h4); font-weight: 800; color: var(--text-strong); line-height: 1.25; }
-.bb-decision__detail { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45; }
-/* about / decide / recommended - three scannable context rows */
-.bb-ctx { display: flex; flex-direction: column; gap: 6px; }
-.bb-ctx__row { display: grid; grid-template-columns: 78px minmax(0,1fr); gap: 8px; align-items: baseline; }
-.bb-ctx__k { font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 0.04em;
-  text-transform: uppercase; color: var(--text-faint); white-space: nowrap; }
-.bb-ctx__v { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.4; min-width: 0; }
-.bb-decision__link { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ocean-600); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
-.bb-decision__link:hover { text-decoration: underline; }
-/* One rhythm owner: the answer form is a flex column with the same 12px gap as
-   the card pad, and the foot rides margin-top:auto so every Queue answer button
-   sits on the same baseline with identical breathing room. */
-.bb-decision form { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; }
-.bb-opts { display: flex; flex-direction: column; gap: 7px; }
-.bb-opt {
-  display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; cursor: pointer;
-  background: var(--surface-card-warm); border: 1.5px solid var(--border-default);
-  border-radius: var(--radius-sm); transition: border-color 120ms, background 120ms;
-}
-.bb-opt:hover { border-color: var(--ink-300); }
-.bb-opt input { accent-color: var(--rust-500); margin-top: 3px; flex: none; }
-.bb-opt__body { min-width: 0; flex: 1 1 auto; }
-.bb-opt__label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text-strong); line-height: 1.3; }
-.bb-opt__hint { display: block; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.35; margin-top: 1px; }
-.bb-opt__rec { flex: none; align-self: center; font-size: var(--fs-2xs); font-weight: 800; text-transform: uppercase;
-  letter-spacing: 0.07em; color: var(--navy-700); background: var(--gold-300);
-  border: 1px solid var(--gold-600); border-radius: var(--radius-xs); padding: 3px 7px 2px; }
-.bb-opt:has(input:checked) { border-color: var(--rust-500); background: var(--rust-050); box-shadow: inset 0 0 0 1px var(--rust-500); }
-.bb-decision__foot { display: flex; align-items: center; gap: 10px; margin-top: auto; }
-.bb-queued {
-  display: none; align-items: center; gap: 6px;
-  font-size: var(--fs-2xs); font-weight: 800; text-transform: uppercase; letter-spacing: 0.07em;
-  color: var(--sea-700); background: var(--sea-050); border: 1.5px solid var(--sea-200);
-  border-radius: var(--radius-xs); padding: 5px 9px 4px;
-}
-.is-queued .bb-queued { display: inline-flex; }
-.bb-limit { display: none; font-size: var(--fs-xs); font-weight: 700; color: var(--status-danger); }
-.bb-limit.is-visible { display: inline; }
-.bb-freeform { width: 100%; font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--text-strong);
-  background: var(--surface-card); border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 11px; }
-.bb-freeform:focus { outline: none; border-color: var(--rust-400); box-shadow: var(--focus-ring); }
 
 /* ---- compact rows (Underway / Landed / Charted) ---- */
 .bb-rows { display: flex; flex-direction: column; }
@@ -378,6 +232,13 @@ a { color: inherit; text-decoration: none; }
 __FM_BEARINGS_BOARD_DATA__
 </script>
 
+<!-- Shared decision-card builder, injected verbatim; see
+     .agents/skills/bearings/assets/decision-card.js. Defines
+     window.FMDecisionCard before the board's own script below runs. -->
+<script>
+__FM_DECISION_CARD_JS__
+</script>
+
 <script>
 (function () {
   "use strict";
@@ -428,13 +289,13 @@ __FM_BEARINGS_BOARD_DATA__
   }
 
   try {
-  function el(tag, cls, text) {
-    var n = document.createElement(tag);
-    if (cls) n.className = cls;
-    if (text != null) n.textContent = text;
-    return n;
-  }
-  function badge(tone, text) { return el("span", "fm-badge fm-badge--" + tone, text); }
+  /* el/badge/ctxRow/utf8ByteLength/CHECK_SVG are the shared decision-card
+     helpers injected above (.agents/skills/bearings/assets/decision-card.js);
+     aliased locally so the rest of this script reads exactly as before. */
+  var el = window.FMDecisionCard.el;
+  var badge = window.FMDecisionCard.badge;
+  var ctxRow = window.FMDecisionCard.ctxRow;
+  var utf8ByteLength = window.FMDecisionCard.utf8ByteLength;
   /* Warnings ride the charted feed for layout only; they are alarms, not work,
      so every count of queued work excludes them. */
   function isWarning(t) { return t && t.kind === "warning"; }
@@ -452,8 +313,6 @@ __FM_BEARINGS_BOARD_DATA__
   }
   var chartedMoreQueued = data.charted_more || 0;
   var chartedMoreWarnings = data.charted_warning_more || 0;
-  function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
-  var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
   document.getElementById("bb-provenance").textContent = data.schema + " · " + data.generated;
 
@@ -475,120 +334,46 @@ __FM_BEARINGS_BOARD_DATA__
   document.getElementById("bb-call-sub").textContent =
     callTotal ? callTotal + " item" + (callTotal === 1 ? "" : "s") + " wait on you, captain" : "nothing needs you, captain";
 
-  /* Captain's Call deck: every item renders as the same full card */
+  /* Captain's Call deck: every item renders as the same full card, built by
+     the shared FMDecisionCard.build (decision-card.js) so this card is
+     exactly the one a one-off captain question page also renders. Only what
+     genuinely varies by item type - top badges, context rows, a merge's PR
+     link, the button color - is computed here. */
   var deck = document.getElementById("bb-call");
-  function ctxRow(k, v, rec) {
-    var row = el("div", "bb-ctx__row" + (rec ? " bb-ctx__row--rec" : ""));
-    row.appendChild(el("span", "bb-ctx__k", k));
-    row.appendChild(el("span", "bb-ctx__v", v));
-    return row;
-  }
 
   data.captains_call.forEach(function (item) {
-    var card = el("div", "fm-card fm-card--poster bb-decision");
-    var pad = el("div", "bb-decision__pad");
-
-    var top = el("div", "bb-decision__top");
-    if (item.type === "merge") {
-      top.appendChild(badge("online", "checks green"));
-      top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "risk " + item.risk));
-    } else {
-      top.appendChild(badge("solid", "decision"));
-      top.appendChild(el("span", "bb-decision__repo", item.repo));
-    }
-    pad.appendChild(top);
-
-    pad.appendChild(el("h3", "bb-decision__title", item.title));
-
-    if (item.type === "merge") {
-      if (item.detail) pad.appendChild(el("p", "bb-decision__detail", item.detail));
-      if (item.pr_url) {
-        var pr = el("a", "bb-decision__link", item.pr_url);
-        pr.href = item.pr_url; pr.target = "_blank"; pr.rel = "noopener";
-        pad.appendChild(pr);
-      }
-    } else {
-      /* the rec marker on the option itself carries the recommendation */
-      var ctx = el("div", "bb-ctx");
-      if (item.about) ctx.appendChild(ctxRow("about", item.about));
-      if (item.decide) ctx.appendChild(ctxRow("decide", item.decide));
-      pad.appendChild(ctx);
-    }
-
-    var form = document.createElement("form");
-    form.setAttribute("data-lavish-question", item.key);
-    var opts = el("div", "bb-opts");
-    item.options.forEach(function (o) {
-      var lab = el("label", "bb-opt");
-      var input = document.createElement("input");
-      input.type = "radio"; input.name = "answer"; input.value = o.value;
-      lab.appendChild(input);
-      var body = el("span", "bb-opt__body");
-      body.appendChild(el("span", "bb-opt__label", o.label));
-      if (o.hint) body.appendChild(el("span", "bb-opt__hint", o.hint));
-      lab.appendChild(body);
-      if (item.recommend_value && o.value === item.recommend_value) {
-        lab.appendChild(el("span", "bb-opt__rec", "rec"));
-      }
-      opts.appendChild(lab);
-    });
-    form.appendChild(opts);
-
-    if (item.allow_freeform) {
-      var ff = document.createElement("input");
-      ff.type = "text"; ff.name = "note"; ff.className = "bb-freeform";
-      ff.placeholder = item.freeform_hint || "or answer in your own words…";
-      form.appendChild(ff);
-    }
-
-    var foot = el("div", "bb-decision__foot");
-    var btn = el("button", "fm-btn fm-btn--sm " + (item.type === "merge" ? "fm-btn--gold" : "fm-btn--primary"), "Queue answer");
-    btn.type = "submit";
-    foot.appendChild(btn);
-    var q = el("span", "bb-queued");
-    q.innerHTML = CHECK_SVG + " queued";
-    foot.appendChild(q);
-    var answerLimit = el("span", "bb-limit");
-    answerLimit.setAttribute("role", "alert");
-    foot.appendChild(answerLimit);
-    form.appendChild(foot);
-
-    form.addEventListener("submit", function (ev) {
-      ev.preventDefault();
-      answerLimit.classList.remove("is-visible");
-      var fd = new FormData(form);
-      var value = fd.get("answer");
-      var note = (fd.get("note") || "").trim();
-      var displayAnswer = value ? (note ? value + " - " + note : value) : note;
-      if (!displayAnswer) return;
-      if (utf8ByteLength(displayAnswer) > 512) {
-        answerLimit.textContent = "Answer is too long to queue (512 bytes maximum).";
-        answerLimit.classList.add("is-visible");
-        return;
-      }
-      if (window.lavish && window.lavish.queuePrompt) {
-        /* The versioned context keeps the selected option separate from its
-           note, while close carries the composer-declared completion mode. */
-        var ctxData = {
-          schema: "fm-bearings-answer.v1",
-          question: item.key,
-          selection: value || "",
-          note: note
+    var isMerge = item.type === "merge";
+    var normalized = {
+      key: item.key,
+      title: item.title,
+      detail: isMerge ? item.detail : undefined,
+      options: item.options.map(function (o) {
+        return {
+          value: o.value, label: o.label, hint: o.hint,
+          recommended: !!(item.recommend_value && o.value === item.recommend_value)
         };
-        if (item.close) ctxData.close = item.close;
-        window.lavish.queuePrompt(
-          "Captain's Call answer - " + item.title + ": " + displayAnswer,
-          { tag: "choice", text: item.title + " -> " + displayAnswer, element: form,
-            data: ctxData }
-        );
+      }),
+      allowFreeform: item.allow_freeform,
+      freeformHint: item.freeform_hint,
+      close: item.close
+    };
+    var buildOpts = {
+      schema: "fm-bearings-answer.v1",
+      promptLabel: "Captain's Call answer",
+      buttonClass: isMerge ? "fm-btn--gold" : "fm-btn--primary",
+      top: isMerge
+        ? [badge("online", "checks green"), badge(item.risk === "low" ? "neutral" : "warn", "risk " + item.risk)]
+        : [badge("solid", "decision"), el("span", "bb-decision__repo", item.repo)],
+      link: (isMerge && item.pr_url) ? { text: item.pr_url, url: item.pr_url } : null,
+      /* the rec marker on the option itself carries the recommendation */
+      context: isMerge ? [] : [item.about ? ctxRow("about", item.about) : null, item.decide ? ctxRow("decide", item.decide) : null].filter(Boolean),
+      alwaysShowContext: !isMerge,
+      onQueued: function () {
+        /* deal the next card once this one is answered */
+        setTimeout(function () { showCard(active < cards.length - 1 ? active + 1 : active); }, 450);
       }
-      card.classList.add("is-queued");
-      /* deal the next card once this one is answered */
-      setTimeout(function () { showCard(active < cards.length - 1 ? active + 1 : active); }, 450);
-    });
-
-    pad.appendChild(form);
-    card.appendChild(pad);
+    };
+    var card = window.FMDecisionCard.build(normalized, buildOpts);
     deck.appendChild(card);
   });
 
