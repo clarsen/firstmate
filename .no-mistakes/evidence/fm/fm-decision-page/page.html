@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Captain's call</title>
+<style>
+/* ============================================================
+   Decision page - Firstmate Design System, inlined for portability.
+   Tokens and the bb-decision/bb-opt/bb-ctx card rendering are copied
+   verbatim from .agents/skills/bearings/assets/board-template.html, the
+   same decision-card contract the /bearings board renders, so a one-off
+   question page reads and behaves like the fleet board's Captain's Call
+   card rather than inventing a second UI.
+   ============================================================ */
+@import url("https://fonts.googleapis.com/css2?family=Chango&family=Jost:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  --rust-700: #8f2f17; --rust-600: #a93a1f; --rust-500: #c0452a;
+  --rust-400: #d35f3f; --rust-300: #e08365; --rust-100: #f4d8c9; --rust-050: #fbece3;
+  --navy-700: #1a2238; --navy-600: #222c49; --navy-500: #2a3656;
+  --navy-300: #6c7796; --navy-100: #d9deea;
+  --gold-600: #b5791c; --gold-500: #e0a52e; --gold-300: #f0d38c; --gold-100: #f8ecc9;
+  --ocean-600: #2f6688; --ocean-500: #3c7ea6; --ocean-200: #b6d4e2; --ocean-050: #e8f1f5;
+  --sea-700: #234e3a; --sea-500: #2f6b4f; --sea-200: #b9d4c5; --sea-050: #e9f2ec;
+  --paper-000: #fbf4e2; --paper-100: #f6ecd3; --paper-200: #f0e3c4; --paper-300: #e7d6ae;
+  --cream-line: #ddc89c;
+  --ink-900: #241c14; --ink-700: #3f3224; --ink-500: #6f5e46; --ink-300: #9c8a6c;
+  --white: #fffdf7;
+  --bg-page: var(--paper-100);
+  --surface-card: var(--white);
+  --surface-card-warm: var(--paper-000);
+  --text-strong: var(--ink-900); --text-body: var(--ink-700);
+  --text-muted: var(--ink-500); --text-faint: var(--ink-300);
+  --border-default: var(--cream-line); --border-soft: var(--paper-300);
+  --status-danger: var(--rust-600); --status-danger-soft: var(--rust-050);
+  --font-display: "Chango", "Cooper Black", Rockwell, Georgia, serif;
+  --font-sans: "Jost", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs-h3: 1.4rem; --fs-h4: 1.15rem; --fs-base: 1rem; --fs-sm: 0.9375rem;
+  --fs-xs: 0.8125rem; --fs-2xs: 0.6875rem;
+  --ls-caps: 0.16em;
+  --radius-xs: 6px; --radius-sm: 9px; --radius-md: 12px; --radius-banner: 7px;
+  --radius-lg: 18px; --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgba(36, 28, 20, 0.06), 0 4px 10px rgba(36, 28, 20, 0.06);
+  --shadow-hard: 4px 4px 0 var(--ink-900);
+  --shadow-hard-sm: 3px 3px 0 var(--ink-900);
+  --texture-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+  --focus-ring: 0 0 0 3px var(--gold-300);
+  --container-app: 720px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  color: var(--text-body);
+  background: var(--bg-page);
+  background-image: var(--texture-paper);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.fm-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-2xs); font-weight: 800; line-height: 1;
+  padding: 5px 9px 4px; text-transform: uppercase; letter-spacing: 0.07em;
+  border-radius: var(--radius-xs); border: 1.5px solid var(--ink-900);
+  box-shadow: 2px 2px 0 var(--ink-900); white-space: nowrap;
+}
+.fm-badge--solid { background: var(--rust-500); color: var(--paper-000); }
+
+.fm-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--font-sans); font-weight: 800; line-height: 1; white-space: nowrap;
+  border: 2px solid transparent; border-radius: var(--radius-banner); cursor: pointer;
+  text-decoration: none; transition: background 120ms, border-color 120ms, transform 120ms, box-shadow 120ms;
+}
+.fm-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.fm-btn:active { transform: translateY(1px); }
+.fm-btn--sm { font-size: var(--fs-xs); padding: 8px 16px; }
+.fm-btn--primary { background: var(--rust-500); color: var(--white); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
+.fm-btn--primary:hover { background: var(--rust-600); }
+.fm-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.fm-card {
+  background: var(--surface-card); border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.fm-card--poster { border: 2px solid var(--ink-900); box-shadow: var(--shadow-hard); border-radius: var(--radius-md); }
+
+.fm-sign {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: var(--ls-caps); font-size: var(--fs-xs);
+  line-height: 1; white-space: nowrap;
+}
+.fm-sign--eyebrow { color: var(--rust-500); }
+.fm-sign--muted { color: var(--ink-500); }
+
+.dp-nav {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--paper-100) 86%, transparent);
+  backdrop-filter: saturate(150%) blur(10px);
+  border-bottom: 1px solid var(--border-default);
+}
+.dp-nav__inner {
+  max-width: var(--container-app); margin: 0 auto; padding: 0 20px; height: 60px;
+  display: flex; align-items: center; gap: 12px;
+}
+.dp-brand { display: inline-flex; align-items: center; gap: 10px; }
+.dp-brand__disc {
+  display: grid; place-items: center; width: 30px; height: 30px; flex: none;
+  border-radius: 999px; background: var(--rust-500); color: var(--paper-000);
+  border: 2px solid var(--ink-900); box-shadow: var(--shadow-hard-sm);
+}
+.dp-brand__disc svg { width: 60%; height: 60%; }
+.dp-brand__wm { font-family: var(--font-display); font-size: 20px; color: var(--text-strong); line-height: 1; }
+
+.dp-main {
+  max-width: var(--container-app); margin: 0 auto;
+  padding: 24px 20px 64px; display: flex; flex-direction: column; gap: 20px;
+}
+.dp-head { display: flex; flex-direction: column; gap: 8px; }
+.dp-head__title { margin: 0; font-size: var(--fs-h3); font-weight: 800; color: var(--text-strong); line-height: 1.25; }
+.dp-head__lead { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; }
+
+/* ---- decision card, contract shared verbatim with the /bearings board
+   (bb-decision / bb-ctx / bb-opts / bb-opt / bb-freeform / bb-limit /
+   bb-queued) so a captain question page is the same reviewed UI, not a
+   second one. ---- */
+.bb-decision { display: flex; flex-direction: column; }
+.bb-decision__pad { padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+.bb-decision__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bb-decision__title { margin: 0; font-size: var(--fs-h4); font-weight: 800; color: var(--text-strong); line-height: 1.25; }
+.bb-decision__detail { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45; }
+.bb-decision form { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; }
+.bb-opts { display: flex; flex-direction: column; gap: 7px; }
+.bb-opt {
+  display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; cursor: pointer;
+  background: var(--surface-card-warm); border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-sm); transition: border-color 120ms, background 120ms;
+}
+.bb-opt:hover { border-color: var(--ink-300); }
+.bb-opt input { accent-color: var(--rust-500); margin-top: 3px; flex: none; }
+.bb-opt__body { min-width: 0; flex: 1 1 auto; }
+.bb-opt__label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text-strong); line-height: 1.3; }
+.bb-opt__hint { display: block; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.35; margin-top: 1px; }
+.bb-opt__rec { flex: none; align-self: center; font-size: var(--fs-2xs); font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--navy-700); background: var(--gold-300);
+  border: 1px solid var(--gold-600); border-radius: var(--radius-xs); padding: 3px 7px 2px; }
+.bb-opt:has(input:checked) { border-color: var(--rust-500); background: var(--rust-050); box-shadow: inset 0 0 0 1px var(--rust-500); }
+.bb-decision__foot { display: flex; align-items: center; gap: 10px; margin-top: auto; }
+.bb-queued {
+  display: none; align-items: center; gap: 6px;
+  font-size: var(--fs-2xs); font-weight: 800; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--sea-700); background: var(--sea-050); border: 1.5px solid var(--sea-200);
+  border-radius: var(--radius-xs); padding: 5px 9px 4px;
+}
+.is-queued .bb-queued { display: inline-flex; }
+.bb-limit { display: none; font-size: var(--fs-xs); font-weight: 700; color: var(--status-danger); }
+.bb-limit.is-visible { display: inline; }
+.bb-freeform { width: 100%; font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--text-strong);
+  background: var(--surface-card); border: 1.5px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 11px; }
+.bb-freeform:focus { outline: none; border-color: var(--rust-400); box-shadow: var(--focus-ring); }
+
+.dp-empty { padding: 18px; font-size: var(--fs-sm); color: var(--text-muted); }
+.dp-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 14px; }
+.dp-meta-mono { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="dp-nav">
+  <div class="dp-nav__inner">
+    <span class="dp-brand">
+      <span class="dp-brand__disc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/>
+        </svg>
+      </span>
+      <span class="dp-brand__wm">firstmate</span>
+    </span>
+  </div>
+</header>
+
+<main class="dp-main">
+  <div class="dp-head">
+    <span class="fm-sign fm-sign--eyebrow" id="dp-eyebrow"></span>
+    <h1 class="dp-head__title" id="dp-title"></h1>
+    <p class="dp-head__lead" id="dp-lead" hidden></p>
+  </div>
+
+  <div id="dp-questions"></div>
+
+  <footer class="dp-foot">
+    <span class="dp-meta-mono" id="dp-provenance">-</span>
+  </footer>
+</main>
+
+<!-- ONE SLOT. bin/fm-decision-page.sh build injects the fresh
+     fm-decision-page.v1 payload in place of the placeholder below; everything
+     above and below is the shipped template and is never regenerated per
+     run. -->
+<script id="decision-page-data" type="application/json">
+{"schema":"fm-decision-page.v1","title":"Waybill next steps","eyebrow":"Captain decision","lead":"Pick one.","questions":[{"key":"next","title":"Which path?","body":"Choose.","options":[{"value":"a","label":"Ship now","hint":"fast","recommended":true},{"value":"b","label":"Wait"}],"note":"optional"},{"key":"scope","title":"Scope?","options":[{"value":"x","label":"Small"},{"value":"y","label":"Large"}],"note":"required"}]}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  /* Fail closed: a page with unreadable or wrong-schema data says so plainly
+     instead of rendering an empty page that looks like an empty question
+     set. */
+  function renderPageError(msg) {
+    var main = document.querySelector(".dp-main");
+    main.innerHTML = "";
+    var card = document.createElement("div");
+    card.className = "fm-card fm-card--poster bb-decision";
+    var pad = document.createElement("div");
+    pad.className = "bb-decision__pad";
+    var h = document.createElement("h3");
+    h.className = "bb-decision__title";
+    h.textContent = "This page could not load";
+    var d = document.createElement("p");
+    d.className = "bb-decision__detail";
+    d.textContent = msg + " - ask firstmate to rebuild the page.";
+    pad.appendChild(h);
+    pad.appendChild(d);
+    card.appendChild(pad);
+    main.appendChild(card);
+  }
+
+  var data;
+  try {
+    data = JSON.parse(document.getElementById("decision-page-data").textContent);
+  } catch (e) {
+    renderPageError("The page data is not valid JSON");
+    return;
+  }
+  if (!data || data.schema !== "fm-decision-page.v1") {
+    renderPageError("Unsupported page data schema: " + (data && data.schema ? data.schema : "(none)"));
+    return;
+  }
+  var questionsValid = Array.isArray(data.questions) && data.questions.length > 0 &&
+    data.questions.every(function (item) {
+      return item && typeof item === "object" &&
+        typeof item.key === "string" && item.key.length > 0 &&
+        typeof item.title === "string" && item.title.length > 0 &&
+        Array.isArray(item.options) && item.options.length > 0;
+    });
+  if (typeof data.title !== "string" || !data.title || !questionsValid) {
+    renderPageError("The page data does not have the required structure");
+    return;
+  }
+
+  try {
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
+  var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+  document.title = data.title;
+  document.getElementById("dp-provenance").textContent = data.schema + " · " + (data.generated || "");
+  var eyebrow = document.getElementById("dp-eyebrow");
+  if (data.eyebrow) { eyebrow.textContent = data.eyebrow; } else { eyebrow.hidden = true; }
+  document.getElementById("dp-title").textContent = data.title;
+  var lead = document.getElementById("dp-lead");
+  if (data.lead) { lead.textContent = data.lead; lead.hidden = false; }
+
+  var container = document.getElementById("dp-questions");
+  data.questions.forEach(function (item) {
+    var noteMode = item.note === "required" || item.note === "optional" ? item.note : "none";
+    var card = el("div", "fm-card fm-card--poster bb-decision");
+    var pad = el("div", "bb-decision__pad");
+
+    var top = el("div", "bb-decision__top");
+    top.appendChild(el("span", "fm-badge fm-badge--solid", "decision"));
+    pad.appendChild(top);
+
+    pad.appendChild(el("h3", "bb-decision__title", item.title));
+    if (item.body) pad.appendChild(el("p", "bb-decision__detail", item.body));
+
+    var form = document.createElement("form");
+    form.setAttribute("data-lavish-question", item.key);
+    var opts = el("div", "bb-opts");
+    item.options.forEach(function (o) {
+      var lab = el("label", "bb-opt");
+      var input = document.createElement("input");
+      input.type = "radio"; input.name = "answer"; input.value = o.value;
+      lab.appendChild(input);
+      var body = el("span", "bb-opt__body");
+      body.appendChild(el("span", "bb-opt__label", o.label));
+      if (o.hint) body.appendChild(el("span", "bb-opt__hint", o.hint));
+      lab.appendChild(body);
+      if (o.recommended) lab.appendChild(el("span", "bb-opt__rec", "rec"));
+      opts.appendChild(lab);
+    });
+    form.appendChild(opts);
+
+    var ff = null;
+    if (noteMode !== "none") {
+      ff = document.createElement("input");
+      ff.type = "text"; ff.name = "note"; ff.className = "bb-freeform";
+      ff.placeholder = noteMode === "required" ? "add a note (required)…" : "or add a note…";
+      form.appendChild(ff);
+    }
+
+    var foot = el("div", "bb-decision__foot");
+    var btn = el("button", "fm-btn fm-btn--sm fm-btn--primary", "Queue answer");
+    btn.type = "submit";
+    foot.appendChild(btn);
+    var q = el("span", "bb-queued");
+    q.innerHTML = CHECK_SVG + " queued";
+    foot.appendChild(q);
+    var limit = el("span", "bb-limit");
+    limit.setAttribute("role", "alert");
+    foot.appendChild(limit);
+    form.appendChild(foot);
+
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      limit.classList.remove("is-visible");
+      var fd = new FormData(form);
+      var value = fd.get("answer");
+      var note = (fd.get("note") || "").trim();
+      if (!value) {
+        limit.textContent = "Pick one option first.";
+        limit.classList.add("is-visible");
+        return;
+      }
+      if (noteMode === "required" && !note) {
+        limit.textContent = "A note is required for this question.";
+        limit.classList.add("is-visible");
+        return;
+      }
+      var displayAnswer = note ? value + " - " + note : value;
+      if (utf8ByteLength(displayAnswer) > 512) {
+        limit.textContent = "Answer is too long to queue (512 bytes maximum).";
+        limit.classList.add("is-visible");
+        return;
+      }
+      if (window.lavish && window.lavish.queuePrompt) {
+        window.lavish.queuePrompt(
+          "Answer - " + item.title + ": " + displayAnswer,
+          { tag: "choice", text: item.title + " -> " + displayAnswer, element: form,
+            data: { schema: "fm-decision-page-answer.v1", question: item.key,
+              selection: value, note: note } }
+        );
+      }
+      card.classList.add("is-queued");
+    });
+
+    pad.appendChild(form);
+    card.appendChild(pad);
+    container.appendChild(card);
+  });
+  } catch (e) {
+    renderPageError("The page data could not be rendered");
+  }
+})();
+</script>
+</body>
+</html>
