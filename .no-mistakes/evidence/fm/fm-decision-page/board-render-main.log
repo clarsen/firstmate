@@ -1,0 +1,4 @@
+fm-bearings-board: the board Lavish session is not live after reopening it (lavish-axi 0.1.77 reported status opened); refusing to arm a poll on an ended session
+not ok - the board did not build
+not ok - an underway row did not lead with the task name: 
+rc=0

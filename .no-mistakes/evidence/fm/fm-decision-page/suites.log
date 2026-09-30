@@ -1,0 +1,37 @@
+== fm-bearings-page
+ok - page-path prints the stable label-scoped page location
+ok - page refuses malformed payloads before touching the page
+ok - page refuses a page that fails to render its controls, before any session or link
+ok - page renders one radio group per question and arms its answer source
+ok - the page source is a firstmate-owned listener, never task-owned
+ok - a rebuild after the session ended retires and re-arms the source
+rc=
+== fm-bearings-page-render
+ok - two questions each render exactly one radio group with their own answer key
+ok - a question with no options renders the fail-closed error, not an empty control
+ok - a wrong-schema payload renders the fail-closed error
+ok - a hinted option and a recommended option both still render
+ok - deleting the questions container is caught, not silently tolerated
+rc=
+== fm-bearings-board
+not-autohandled: lavish-dec038c367224095 (left for the handler; still unacknowledged)
+ok - registration can consume answers only after any-origin binding exists
+ok - build establishes the Lavish session before binding and arming
+ok - rebuild refreshes the board in place without double-arming
+ok - build refuses a template without exactly one data slot
+ok - a board build reopens a session the captain ended instead of arming a dead one
+ok - build reopens a session that ends between establish and listing
+ok - build refuses to arm a poll on a session that stays ended
+ok - a rebuild starts a listener when an already-armed board has none
+ok - build drops decision cards whose subject already landed and keeps open ones
+ok - build keeps remote decisions absent from the main backlog
+ok - build fails when reconcile cannot prove a live listener
+ok - every decision card carries exactly one reconcile choice
+ok - build refuses a payload that occupies the reserved reconcile value
+ok - build reserves reconcile across non-decision cards
+rc=
+== fm-bearings-board-render
+fm-bearings-board: the board Lavish session is not live after reopening it (lavish-axi 0.1.77 reported status opened); refusing to arm a poll on an ended session
+not ok - the board did not build
+not ok - an underway row did not lead with the task name: 
+rc=
