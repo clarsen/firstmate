@@ -39,6 +39,15 @@ emit() {  # <canonical-file> <status>
 }
 case "${1-}" in
   --version) printf '0.1.61\n'; exit 0 ;;
+  poll)
+    # A real blocking listener: without this the fake treated `poll` as an
+    # artifact path and returned at once, so the armed listener exited and a
+    # "live" owner was only a timing artifact. Bounded so an escaped listener
+    # cannot outlive its test.
+    limit=${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}
+    while [ "$SECONDS" -lt "$limit" ]; do sleep 0.05; done
+    exit 75
+    ;;
   '')
     printf 'sessions[1]{file,status,url,pending_prompts}:\n'
     if [ -s "$state/open" ]; then
