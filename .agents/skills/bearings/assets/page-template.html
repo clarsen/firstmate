@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Captain's call</title>
+<style>
+__FM_DECISION_CARD_CSS__
+</style>
+<style>
+/* ============================================================
+   Captain question page chrome (dp-*) - built on the same tokens/resets/
+   primitives and the shared decision-card contract injected above
+   (.agents/skills/bearings/assets/decision-card.css). This is a one-off
+   question page, not the /bearings fleet board, so its own chrome is just
+   a narrow header and a stack of question cards.
+   ============================================================ */
+:root { --container-app: 720px; }
+
+.dp-nav {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--paper-100) 86%, transparent);
+  backdrop-filter: saturate(150%) blur(10px);
+  border-bottom: 1px solid var(--border-default);
+}
+.dp-nav__inner {
+  max-width: var(--container-app); margin: 0 auto; padding: 0 20px; height: 60px;
+  display: flex; align-items: center; gap: 12px;
+}
+.dp-brand { display: inline-flex; align-items: center; gap: 10px; }
+.dp-brand__disc {
+  display: grid; place-items: center; width: 30px; height: 30px; flex: none;
+  border-radius: 999px; background: var(--rust-500); color: var(--paper-000);
+  border: 2px solid var(--ink-900); box-shadow: var(--shadow-hard-sm);
+}
+.dp-brand__disc svg { width: 60%; height: 60%; }
+.dp-brand__wm { font-family: var(--font-display); font-size: 20px; color: var(--text-strong); line-height: 1; }
+
+.dp-main {
+  max-width: var(--container-app); margin: 0 auto;
+  padding: 24px 20px 64px; display: flex; flex-direction: column; gap: 20px;
+}
+.dp-head { display: flex; flex-direction: column; gap: 8px; }
+.dp-head__title { margin: 0; font-size: var(--fs-h3); font-weight: 800; color: var(--text-strong); line-height: 1.25; }
+.dp-head__lead { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; }
+
+.dp-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 14px; }
+.dp-meta-mono { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="dp-nav">
+  <div class="dp-nav__inner">
+    <span class="dp-brand">
+      <span class="dp-brand__disc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/>
+        </svg>
+      </span>
+      <span class="dp-brand__wm">firstmate</span>
+    </span>
+  </div>
+</header>
+
+<main class="dp-main">
+  <div class="dp-head">
+    <span class="fm-sign fm-sign--eyebrow" id="dp-eyebrow"></span>
+    <h1 class="dp-head__title" id="dp-title"></h1>
+    <p class="dp-head__lead" id="dp-lead" hidden></p>
+  </div>
+
+  <div id="dp-questions"></div>
+
+  <footer class="dp-foot">
+    <span class="dp-meta-mono" id="dp-provenance">-</span>
+  </footer>
+</main>
+
+<!-- ONE SLOT. fm-bearings-board.sh page injects the fresh fm-decision-page.v1
+     payload in place of the placeholder below; everything else here is the
+     shipped template and is never regenerated per run. -->
+<script id="decision-page-data" type="application/json">
+__FM_DECISION_PAGE_DATA__
+</script>
+
+<!-- Shared decision-card builder, injected verbatim; see
+     .agents/skills/bearings/assets/decision-card.js. Defines
+     window.FMDecisionCard before this page's own script below runs. -->
+<script>
+__FM_DECISION_CARD_JS__
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  /* Fail closed: a page with unreadable or wrong-schema data says so plainly
+     instead of rendering an empty page that looks like an empty question
+     set. */
+  function renderPageError(msg) {
+    var main = document.querySelector(".dp-main");
+    main.innerHTML = "";
+    var card = document.createElement("div");
+    card.className = "fm-card fm-card--poster bb-decision";
+    var pad = document.createElement("div");
+    pad.className = "bb-decision__pad";
+    var h = document.createElement("h3");
+    h.className = "bb-decision__title";
+    h.textContent = "This page could not load";
+    var d = document.createElement("p");
+    d.className = "bb-decision__detail";
+    d.textContent = msg + " - ask firstmate to rebuild the page.";
+    pad.appendChild(h);
+    pad.appendChild(d);
+    card.appendChild(pad);
+    main.appendChild(card);
+  }
+
+  var data;
+  try {
+    data = JSON.parse(document.getElementById("decision-page-data").textContent);
+  } catch (e) {
+    renderPageError("The page data is not valid JSON");
+    return;
+  }
+  if (!data || data.schema !== "fm-decision-page.v1") {
+    renderPageError("Unsupported page data schema: " + (data && data.schema ? data.schema : "(none)"));
+    return;
+  }
+  var questionsValid = Array.isArray(data.questions) && data.questions.length > 0 &&
+    data.questions.every(function (item) {
+      return item && typeof item === "object" &&
+        typeof item.key === "string" && item.key.length > 0 &&
+        typeof item.title === "string" && item.title.length > 0 &&
+        Array.isArray(item.options) && item.options.length > 0;
+    });
+  if (typeof data.title !== "string" || !data.title || !questionsValid) {
+    renderPageError("The page data does not have the required structure");
+    return;
+  }
+
+  try {
+    document.title = data.title;
+    document.getElementById("dp-provenance").textContent = data.schema + " · " + (data.generated || "");
+    var eyebrow = document.getElementById("dp-eyebrow");
+    if (data.eyebrow) { eyebrow.textContent = data.eyebrow; } else { eyebrow.hidden = true; }
+    document.getElementById("dp-title").textContent = data.title;
+    var lead = document.getElementById("dp-lead");
+    if (data.lead) { lead.textContent = data.lead; lead.hidden = false; }
+
+    /* Every question renders as the same card the /bearings board renders,
+       built by the shared FMDecisionCard.build (decision-card.js), so a
+       captain question page is exactly the reviewed board UI rather than a
+       second one. Unlike the board (which passes no opts.validate and so
+       silently no-ops on an empty answer), a question page requires picking
+       an option, and a "required" note mode requires text too. */
+    var container = document.getElementById("dp-questions");
+    data.questions.forEach(function (item) {
+      var noteMode = item.note === "required" || item.note === "optional" ? item.note : "none";
+      var normalized = {
+        key: item.key,
+        title: item.title,
+        detail: item.body,
+        options: item.options.map(function (o) {
+          return { value: o.value, label: o.label, hint: o.hint, recommended: !!o.recommended };
+        }),
+        allowFreeform: noteMode !== "none",
+        freeformHint: noteMode === "required" ? "add a note (required)…" : "or add a note…"
+      };
+      var buildOpts = {
+        schema: "fm-decision-page-answer.v1",
+        promptLabel: "Answer",
+        buttonClass: "fm-btn--primary",
+        top: [window.FMDecisionCard.badge("solid", "decision")],
+        validate: function (value, note) {
+          if (!value) return "Pick one option first.";
+          if (noteMode === "required" && !note) return "A note is required for this question.";
+          return "";
+        }
+      };
+      container.appendChild(window.FMDecisionCard.build(normalized, buildOpts));
+    });
+  } catch (e) {
+    renderPageError("The page data could not be rendered");
+  }
+})();
+</script>
+</body>
+</html>
