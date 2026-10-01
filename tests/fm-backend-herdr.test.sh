@@ -1104,6 +1104,89 @@ test_server_ensure_scrubs_home_and_harness_identity() {
   pass "fm_backend_herdr_server_ensure: scrubs home and harness identity without disturbing unrelated environment or session routing"
 }
 
+# test_server_ensure_does_not_strand_a_wrapper_holding_caller_fds reproduces
+# the field hang (captain report 2026-10-01, herdr 0.9.3 on a Linux remote
+# host): fm-remote-home-seed.sh's plain-SSH readiness preflight never
+# returned because a bash subshell was still running fm-remote-doctor.sh
+# --fix, parented to init, blocked waiting on its child `herdr server`, and
+# holding open fds inherited from the caller (the SSH channel observed fds 10
+# and 11; herdr itself never held them).
+#
+# `fm_backend_herdr_cli`'s "server" branch invoked the long-lived server as a
+# plain foreground command and then did `return $?`, so bash could not
+# replace that process with the server via exec (anything after the external
+# command, even a trivial `return`, forces bash to fork and wait rather than
+# exec straight through) - exactly matching the field evidence of a separate
+# lingering bash process. The real leaked fds were close-on-exec, so herdr
+# never held them either in the field or here; what has to disappear is the
+# wrapper process itself, which otherwise waits on the long-lived server
+# forever and keeps whatever it inherited open for just as long.
+#
+# This stub models that close-on-exec property directly (closing fd 10 is
+# its first act, before reporting itself running) since bash before 4.1 - a
+# floor this repo still supports - has no redirection syntax that creates a
+# close-on-exec descriptor to dup onto fd 10 itself. A fifo reader models the
+# far end of the caller's own output (the SSH channel): before the fix the
+# orphaned, never-exec'd wrapper inherits fd 10 at fork time and keeps its
+# own independent copy open for as long as it waits on the long-lived
+# server, so the reader never sees EOF; after the fix, the background launch
+# helper execs directly into the stub with no wrapper left to strand that fd.
+# The stub's own close, plus this test's own copy closing when it exits, lets
+# the reader see EOF promptly. Manually verified against the pre-fix code
+# (reader never saw EOF within several seconds) and the fix (reader saw EOF
+# within one poll).
+test_server_ensure_does_not_strand_a_wrapper_holding_caller_fds() {
+  command -v mkfifo >/dev/null 2>&1 || { echo "skip: mkfifo not found"; return 0; }
+  local dir fifo marker fb reader_done reader_pid i
+  dir="$TMP_ROOT/server-fd-leak"; mkdir -p "$dir"
+  fifo="$dir/leak.fifo"; marker="$dir/running"; reader_done="$dir/reader-done"
+  mkfifo "$fifo" || fail "could not create the test fifo"
+  fb="$dir/fakebin"; mkdir -p "$fb"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+MARKER="${FM_HERDR_LONGLIVED_MARKER:?}"
+PIDFILE="${FM_HERDR_LONGLIVED_PIDFILE:?}"
+case "${1:-}" in
+  status)
+    if [ -e "$MARKER" ]; then
+      printf '{"server":{"running":true}}\n'
+    else
+      printf '{"server":{"running":false}}\n'
+    fi
+    ;;
+  server)
+    exec 10>&-
+    printf '%s\n' "$$" > "$PIDFILE"
+    : > "$MARKER"
+    exec sleep 600
+    ;;
+esac
+SH
+  chmod +x "$fb/herdr"
+
+  ( exec 9<"$fifo"; cat <&9 >/dev/null; : > "$reader_done" ) &
+  reader_pid=$!
+
+  PATH="$fb:$PATH" FM_HERDR_LONGLIVED_MARKER="$marker" FM_HERDR_LONGLIVED_PIDFILE="$dir/server.pid" \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      exec 10>"$1"
+      fm_backend_herdr_server_ensure fmtest
+    ' "$ROOT" "$fifo"
+
+  i=0
+  while [ "$i" -lt 40 ] && [ ! -e "$reader_done" ]; do
+    sleep 0.25
+    i=$((i + 1))
+  done
+
+  kill "$reader_pid" 2>/dev/null || true
+  [ -s "$dir/server.pid" ] && kill "$(cat "$dir/server.pid")" 2>/dev/null
+  [ -e "$reader_done" ] || fail "a process still held the caller's fd open 10s after fm_backend_herdr_server_ensure returned - the long-lived server launch left a wrapper process behind instead of exec'ing into it"
+  pass "fm_backend_herdr_server_ensure: a backgrounded long-lived server launch leaves no wrapper process holding the caller's descriptors open"
+}
+
 test_container_ensure_reuses_existing_workspace() {
   local dir log resp fb out
   dir="$TMP_ROOT/container-reuse"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5247,6 +5330,7 @@ test_workspace_ensure_other_home_ignores_the_launcher_identity
 test_container_ensure_refuses_an_ambiguous_home_label
 test_container_ensure_starts_server_and_workspace
 test_server_ensure_scrubs_home_and_harness_identity
+test_server_ensure_does_not_strand_a_wrapper_holding_caller_fds
 test_container_ensure_reuses_existing_workspace
 test_container_ensure_creates_with_no_focus_flag
 test_container_ensure_uses_secondmate_home_label
