@@ -2029,6 +2029,35 @@ test_recovery_replays_a_close_an_interrupted_cleanup_left_open() {
   pass "session start finishes a close an interrupted cleanup recorded but never landed"
 }
 
+#
+# A GitLab-hosted ship's close marker records the merge request URL under the
+# same --pr arg shape as GitHub and Forgejo; tasks-axi's --pr link only
+# validates the GitHub pull-request and Forgejo pulls shapes, so replaying
+# this marker verbatim against --pr would keep failing the same way the
+# stuck pi-setup-worktree record did. bin/fm-backlog-transition-lib.sh rewrites
+# it into a --note tasks-axi accepts (bin/fm-pr-lib.sh's fm_pr_url_parse owns
+# telling a GitLab merge request apart from a GitHub or Forgejo pull request).
+test_recovery_replays_a_close_recorded_for_a_gitlab_merge_request() {
+  local case_dir id out
+  id=atomic-heal-gitlab-b9
+  case_dir=$(make_home heal-pending-close-gitlab)
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-gitlab\narg=--pr\narg=https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17\n' \
+    "$id" "$(home_of "$case_dir")/data" \
+    > "$(home_of "$case_dir")/state/$id.backlog-close"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "session start left a GitLab-merged item's interrupted cleanup at $(row_state "$case_dir" "$id"): $out"
+  assert_grep 'merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17' \
+    "$(backlog_of "$case_dir")" \
+    "the replayed close dropped the GitLab merge request's completion link"
+  assert_absent "$(home_of "$case_dir")/state/$id.backlog-close" \
+    "a replayed GitLab close left its pending-close record behind"
+  pass "session start finishes a GitLab merge request close by recording it as a note"
+}
+
 test_recovery_backfills_a_recorded_link_on_an_already_done_item() {
   local case_dir id marker out
   id=atomic-heal-done-backfill-b9
@@ -2891,6 +2920,30 @@ test_dispatch_and_completion_are_structural() {
   pass "dispatch and completion transition structurally with evidence"
 }
 
+test_completion_closes_a_gitlab_merge_request_as_a_note() {
+  local case_dir home id meta mr out
+  id=fm-structural-gitlab-b15
+  mr=https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17
+  case_dir=$(make_home structural-gitlab "$id")
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+
+  out=$(run_ship_spawn "$case_dir" "$id") \
+    || fail "structural spawn failed: $out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "spawn left the backlog item outside In flight"
+
+  meta="$home/state/$id.meta"
+  printf 'pr=%s\n' "$mr" >> "$meta"
+  out=$(run_teardown "$case_dir" "$id") \
+    || fail "structural teardown failed for a GitLab merge request: $out"
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "teardown left the GitLab-delivered backlog item outside Done"
+  assert_grep "merge request $mr" "$(backlog_of "$case_dir")" \
+    "teardown closed a GitLab merge request without recording it as a note"
+  pass "completion closes a GitLab merge request by recording it as a note tasks-axi accepts"
+}
+
 test_refused_teardown_leaves_the_item_live() {
   local case_dir home id out rc=0
   id=fm-structural-refusal-b15
@@ -3053,6 +3106,7 @@ test_recovery_marks_an_owned_record_in_flight
 test_recovery_rejects_an_internal_worker_record_symlink
 test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
+test_recovery_replays_a_close_recorded_for_a_gitlab_merge_request
 test_recovery_backfills_a_recorded_link_on_an_already_done_item
 test_recovery_preserves_a_close_when_the_backlog_cannot_be_read
 test_recovery_retry_preserves_incomplete_cleanup_warning
@@ -3087,6 +3141,7 @@ test_spawn_refuses_an_unsafe_tasks_config_before_exempting_a_missing_backlog
 test_spawn_refuses_a_data_directory_symlinked_outside_the_home
 test_configured_adapter_refuses_a_data_directory_outside_the_home
 test_dispatch_and_completion_are_structural
+test_completion_closes_a_gitlab_merge_request_as_a_note
 test_refused_teardown_leaves_the_item_live
 test_environment_selected_adapter_is_not_forced_to_markdown
 test_manual_backend_home_dispatches_and_completes_without_touching_the_backlog
