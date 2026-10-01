@@ -1,0 +1,29 @@
+host=Darwin 25.6.0 arm64
+herdr_version=herdr 0.9.1
+session=fm-lab-fd-leak-live-36568-32152
+step=provision
+provision=ok
+status_after_provision={"running":true,"client":"0.9.1","server_version":"0.9.1"}
+--- probe=restart_after_stop ---
+stopped=ok
+ensure_rc=0
+ensure_duration_seconds=1
+status_after_ensure={"running":true,"client":"0.9.1","server_version":"0.9.1"}
+matching_processes_begin
+36752     1 herdr            herdr server --session fm-lab-fd-leak-live-36568-32152
+36805 36567 awk              awk -v s fm-lab-fd-leak-live-36568-32152
+matching_processes_end
+bash_wrappers_for_session=0
+probe_result=pass
+--- probe=repeated_restart ---
+stopped=ok
+ensure_rc=0
+ensure_duration_seconds=0
+status_after_ensure={"running":true,"client":"0.9.1","server_version":"0.9.1"}
+matching_processes_begin
+37116     1 herdr            herdr server --session fm-lab-fd-leak-live-36568-32152
+37269 36567 awk              awk -v s fm-lab-fd-leak-live-36568-32152
+matching_processes_end
+bash_wrappers_for_session=0
+probe_result=pass
+teardown=ok

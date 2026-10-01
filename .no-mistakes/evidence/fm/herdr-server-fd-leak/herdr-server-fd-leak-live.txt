@@ -1,0 +1,33 @@
+host=Darwin 25.6.0 arm64
+herdr_version=herdr 0.9.1
+session=fm-lab-fd-leak-live-25716-13643
+step=prepare
+prepare=ok
+step=provision
+fm-herdr-lab: tripwire already exists for 'fm-lab-fd-leak-live-25716-13643'; refusing ambiguous ownership
+provision=ok
+status_after_provision={"session":null,"running":false,"client":"0.9.1","server_version":null}
+--- probe=restart_after_stop ---
+fm-herdr-lab: refusing destructive call for 'fm-lab-fd-leak-live-25716-13643': session is absent or default (default=<not found>)
+stopped=ok
+ensure_rc=0
+ensure_duration_seconds=0
+caller_pipe_eof=missing_after_5s
+status_after_ensure={"session":null,"running":true,"server_pid":null,"socket":null}
+matching_processes_begin
+25791     1 herdr            herdr server --session fm-lab-fd-leak-live-25716-13643
+26868 25715 awk              awk -v s fm-lab-fd-leak-live-25716-13643
+matching_processes_end
+probe_result=fail_fd_eof
+--- probe=repeated_restart ---
+stopped=ok
+ensure_rc=0
+ensure_duration_seconds=0
+caller_pipe_eof=missing_after_5s
+status_after_ensure={"session":null,"running":true,"server_pid":null,"socket":null}
+matching_processes_begin
+27036     1 herdr            herdr server --session fm-lab-fd-leak-live-25716-13643
+28938 25715 awk              awk -v s fm-lab-fd-leak-live-25716-13643
+matching_processes_end
+probe_result=fail_fd_eof
+teardown=ok
