@@ -606,7 +606,12 @@ fm_backlog_done() {  # <data-dir> <id> [flag...]
 fm_backlog_row_artifact_supported() {
   local id=$1 flag=${2:-} value=${3:-}
   case "$flag" in
-    --pr) return 0 ;;
+    --pr)
+      if fm_pr_url_parse "$value" && [ "$FM_PR_PROVIDER" = gitlab ]; then
+        return 1
+      fi
+      return 0
+      ;;
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
@@ -639,11 +644,7 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
         ;;
       --pr)
         if fm_pr_url_parse "$arg" && [ "$FM_PR_PROVIDER" = gitlab ]; then
-          # tasks-axi's --pr link only accepts the GitHub and Forgejo
-          # pull-request shapes (fm_backlog_tasks_axi_rewrite_pr's header
-          # owns why), so a GitLab merge request is retained as a note.
           deliverable="${deliverable:+$deliverable; }merge request $arg"
-          row_args=(--note "merge request $arg")
         else
           deliverable="${deliverable:+$deliverable; }PR $arg"
           row_args=(--pr "$arg")
