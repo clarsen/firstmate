@@ -1129,12 +1129,12 @@ test_server_ensure_scrubs_home_and_harness_identity() {
 # far end of the caller's own output (the SSH channel): before the fix the
 # orphaned, never-exec'd wrapper inherits fd 10 at fork time and keeps its
 # own independent copy open for as long as it waits on the long-lived
-# server, so the reader never sees EOF; after the fix, fm_backend_herdr_cli
-# execs directly into the stub with no wrapper left to strand that fd, and
-# the stub's own close (plus this test's own copy closing when it exits)
-# lets the reader see EOF promptly. Manually verified against the pre-fix
-# code (reader never saw EOF within several seconds) and the fix (reader saw
-# EOF within one poll).
+# server, so the reader never sees EOF; after the fix, the background launch
+# helper execs directly into the stub with no wrapper left to strand that fd.
+# The stub's own close, plus this test's own copy closing when it exits, lets
+# the reader see EOF promptly. Manually verified against the pre-fix code
+# (reader never saw EOF within several seconds) and the fix (reader saw EOF
+# within one poll).
 test_server_ensure_does_not_strand_a_wrapper_holding_caller_fds() {
   command -v mkfifo >/dev/null 2>&1 || { echo "skip: mkfifo not found"; return 0; }
   local dir fifo marker fb reader_done reader_pid i

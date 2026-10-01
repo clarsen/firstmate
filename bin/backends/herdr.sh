@@ -405,8 +405,9 @@ fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
   # stderr is buffered (stdout streams untouched) so a protocol_mismatch
   # refusal can be recognized and retried once on a compatible client; see
   # "client selection" below. A failed command's stderr is replayed verbatim.
-  # The long-lived `server` launch is exec'd straight through: buffering its
-  # stderr would hold this call open for the server's whole lifetime.
+  # The long-lived `server` command bypasses stderr buffering so the buffer
+  # never holds this call open for the server's whole lifetime. Backgrounded
+  # server startup execs through fm_backend_herdr_server_launch_exec instead.
   if [ "${1:-}" = server ]; then
     HERDR_SESSION="$session" "$client_bin" "$@" --session "$session"
     return $?
@@ -1660,21 +1661,17 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
 # fm_backend_herdr_server_launch_exec: exec straight into the
 # fm_backend_herdr_resolve_client_bin-resolved herdr client for a long-lived
 # `server` launch. Only fm_backend_herdr_server_ensure's disposable
-# backgrounded subshell calls
-# this, never fm_backend_herdr_cli's synchronous dispatch: a caller plainly
-# invoking `fm_backend_herdr_cli ... server` (as this file's own test
-# coverage does) expects it to return normally with the command's exit
-# status, same as any other subcommand, so that contract cannot exec away
-# the calling shell. The disposable subshell has no such expectation - its
-# only job is to start the server and exit - so replacing it entirely with
-# the server process is exactly what "start it and leave it running" means,
-# and is what stops that subshell from lingering as a separate process that
-# would otherwise hold open, for as long as the server runs, whatever
-# descriptors it inherited from its own caller (verified field incident,
-# 2026-10-01: a remote SSH readiness check hung because the subshell that
-# backgrounded `herdr server` never exec'd, so it kept the SSH channel's
-# pipes open long after the herdr server itself - and the doctor script that
-# started it - had moved on).
+# backgrounded subshell calls this. fm_backend_herdr_cli's synchronous
+# dispatch must not call it: a caller plainly invoking
+# `fm_backend_herdr_cli ... server` (as this file's own test coverage does)
+# expects it to return normally with the command's exit status, same as any
+# other subcommand, so that contract cannot exec away the calling shell.
+# The disposable subshell only starts the server and exits, so replacing it
+# with the server process is exactly what "start it and leave it running"
+# means, and stops that subshell from lingering as a separate process that
+# would otherwise hold open whatever descriptors it inherited from its caller
+# for as long as the server runs; the regression test owns the
+# remote-readiness fd-leak reproduction.
 fm_backend_herdr_server_launch_exec() {  # <session> <herdr-subcommand-and-args...>
   local session=$1 client_bin
   shift
