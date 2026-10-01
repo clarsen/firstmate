@@ -384,12 +384,24 @@ fm_backend_herdr_workspace_label() {
 # compatible if a future herdr build honors it. Never used by
 # fm_backend_herdr_version_check, which is intentionally session-independent
 # (reads only .client.* fields).
-fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
-  local session=$1 rc=0 err failed_bin selected_bin client_bin=herdr
-  shift
+# fm_backend_herdr_resolve_client_bin <session>: the one client binary a call
+# scoped to <session> should use - the session's own selected client (set by
+# fm_backend_herdr_client_select) when one is active for this process,
+# otherwise the PATH-first "herdr". Shared by every caller that needs this
+# resolution without fm_backend_herdr_cli's own dispatch/retry contract.
+fm_backend_herdr_resolve_client_bin() {  # <session>
+  local session=$1
   if [ "${FM_BACKEND_HERDR_CLIENT_SESSION:-}" = "$session" ]; then
-    client_bin=$(fm_backend_herdr_bin)
+    fm_backend_herdr_bin
+  else
+    printf '%s' herdr
   fi
+}
+
+fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
+  local session=$1 rc=0 err failed_bin selected_bin client_bin
+  shift
+  client_bin=$(fm_backend_herdr_resolve_client_bin "$session")
   # stderr is buffered (stdout streams untouched) so a protocol_mismatch
   # refusal can be recognized and retried once on a compatible client; see
   # "client selection" below. A failed command's stderr is replayed verbatim.
@@ -1645,6 +1657,31 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
   return 0
 }
 
+# fm_backend_herdr_server_launch_exec: exec straight into the
+# fm_backend_herdr_resolve_client_bin-resolved herdr client for a long-lived
+# `server` launch. Only fm_backend_herdr_server_ensure's disposable
+# backgrounded subshell calls
+# this, never fm_backend_herdr_cli's synchronous dispatch: a caller plainly
+# invoking `fm_backend_herdr_cli ... server` (as this file's own test
+# coverage does) expects it to return normally with the command's exit
+# status, same as any other subcommand, so that contract cannot exec away
+# the calling shell. The disposable subshell has no such expectation - its
+# only job is to start the server and exit - so replacing it entirely with
+# the server process is exactly what "start it and leave it running" means,
+# and is what stops that subshell from lingering as a separate process that
+# would otherwise hold open, for as long as the server runs, whatever
+# descriptors it inherited from its own caller (verified field incident,
+# 2026-10-01: a remote SSH readiness check hung because the subshell that
+# backgrounded `herdr server` never exec'd, so it kept the SSH channel's
+# pipes open long after the herdr server itself - and the doctor script that
+# started it - had moved on).
+fm_backend_herdr_server_launch_exec() {  # <session> <herdr-subcommand-and-args...>
+  local session=$1 client_bin
+  shift
+  client_bin=$(fm_backend_herdr_resolve_client_bin "$session")
+  HERDR_SESSION="$session" exec "$client_bin" "$@" --session "$session"
+}
+
 # fm_backend_herdr_server_ensure: start the herdr server for <session>
 # headless (no TUI client) if not already running, mirroring tmux's `tmux
 # has-session || tmux new-session -d`. Verified: a bare socket CLI call does
@@ -1660,7 +1697,7 @@ fm_backend_herdr_server_ensure() {  # <session>
   (
     unset FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE \
       CURSOR_AGENT CURSOR_INVOKED_AS CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT FM_SUPERVISION_MODEL
-    fm_backend_herdr_cli "$session" server >/dev/null 2>&1 &
+    fm_backend_herdr_server_launch_exec "$session" server >/dev/null 2>&1 &
   ) || return 1
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
