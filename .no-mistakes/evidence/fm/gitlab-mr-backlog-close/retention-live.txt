@@ -1,0 +1,54 @@
+task:
+  id: sample-gitlab-retention
+  title: Ship a GitLab merge request
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: captain must choose
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: sample
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: "Captain hold set: 2026-10-01T23:38:22Z\n\nDeliverable of the finished work: merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17"
+task:
+  id: sample-gitlab-retention
+  title: Ship a GitLab merge request
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: captain must choose
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: sample
+  priority: "-"
+  created: "-"
+  closed: 2026-10-01
+  deps: none
+  links: none
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: b0a8040e79618c97edbb1fb3e6a8ee43ef1ab3d97144ac52c7a6121009b24975\nResolution mode: answered\n\nCaptain decision:\nProceed with the delivered work.\n\nDeliverable of the finished work: merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17"
+ok - GitLab retention is replayable and pending artifacts allow captain answers
+
+Persisted backlog output:
+
+/Users/CTLARSEN/.no-mistakes/worktrees/1ec5ae64d190/01M3WWWS0M1KB6CPF8N8DHS20D/.test-validation/tmp/fm-captain-hold.zmdj1M/gitlab-retention/data/backlog.md
+## In flight
+## Queued
+## Done
+- [x] sample-gitlab-retention - Ship a GitLab merge request (repo: sample) (kind: ship) (done 2026-10-01) (hold: captain must choose) (hold-kind: captain)
+  Resolution recorded by fm-captain-hold.
+  Decision digest: b0a8040e79618c97edbb1fb3e6a8ee43ef1ab3d97144ac52c7a6121009b24975
+  Resolution mode: answered
+
+  Captain decision:
+  Proceed with the delivered work.
+
+  Deliverable of the finished work: merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17
+

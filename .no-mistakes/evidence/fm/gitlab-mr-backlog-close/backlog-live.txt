@@ -1,0 +1,22 @@
+ok - session start finishes a GitLab merge request close by recording it as a note
+ok - completion closes a GitLab merge request by recording it as a note tasks-axi accepts
+
+Persisted backlog output:
+
+/Users/CTLARSEN/.no-mistakes/worktrees/1ec5ae64d190/01M3WWWS0M1KB6CPF8N8DHS20D/.test-validation/tmp/fm-backlog-atomicity.BTIbof/heal-pending-close-gitlab/home/data/backlog.md
+# Backlog
+
+## In flight
+## Queued
+## Done
+- [x] atomic-heal-gitlab-b9 - item for atomic-heal-gitlab-b9 (kind: ship) (done 2026-10-01)
+  merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17
+
+/Users/CTLARSEN/.no-mistakes/worktrees/1ec5ae64d190/01M3WWWS0M1KB6CPF8N8DHS20D/.test-validation/tmp/fm-backlog-atomicity.BTIbof/structural-gitlab/home/data/backlog.md
+# Backlog
+
+## In flight
+## Queued
+## Done
+- [x] fm-structural-gitlab-b15 - item for fm-structural-gitlab-b15 (kind: ship) (done 2026-10-01)
+  merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17

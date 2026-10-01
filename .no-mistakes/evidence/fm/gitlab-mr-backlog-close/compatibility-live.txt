@@ -1,0 +1,270 @@
+ok: added github (ship) -> In flight
+task:
+  id: github
+  title: Compatibility github
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi done github --pr <url>` when it ships
+  - Run `tasks-axi block github --by <other>` to record a dependency
+task:
+  id: github
+  title: "Compatibility github https://github.com/example/repo/pull/17"
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: "-"
+  closed: 2026-10-01
+  deps: none
+  links: "pr:https://github.com/example/repo/pull/17"
+  body: ""
+ok: added github-held (ship) -> In flight
+task:
+  id: github-held
+  title: Retained github
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi done github-held --pr <url>` when it ships
+  - Run `tasks-axi block github-held --by <other>` to record a dependency
+ok: hold github-held -> held (captain)
+task:
+  id: github-held
+  title: Retained github
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: fixture
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi unhold github-held` to resume dispatch
+  - Run `tasks-axi ready --include-held` to review paused work
+task:
+  id: github-held
+  title: "Retained github https://github.com/example/repo/pull/17"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: fixture
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: "pr:https://github.com/example/repo/pull/17"
+  body: "Deliverable of the finished work: PR https://github.com/example/repo/pull/17"
+ok: added forgejo (ship) -> In flight
+task:
+  id: forgejo
+  title: Compatibility forgejo
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi done forgejo --pr <url>` when it ships
+  - Run `tasks-axi block forgejo --by <other>` to record a dependency
+task:
+  id: forgejo
+  title: "Compatibility forgejo https://codeberg.org/example/repo/pulls/17"
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: "-"
+  closed: 2026-10-01
+  deps: none
+  links: "pr:https://codeberg.org/example/repo/pulls/17"
+  body: ""
+ok: added forgejo-held (ship) -> In flight
+task:
+  id: forgejo-held
+  title: Retained forgejo
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi done forgejo-held --pr <url>` when it ships
+  - Run `tasks-axi block forgejo-held --by <other>` to record a dependency
+ok: hold forgejo-held -> held (captain)
+task:
+  id: forgejo-held
+  title: Retained forgejo
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: fixture
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi unhold forgejo-held` to resume dispatch
+  - Run `tasks-axi ready --include-held` to review paused work
+task:
+  id: forgejo-held
+  title: "Retained forgejo https://codeberg.org/example/repo/pulls/17"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: fixture
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: "pr:https://codeberg.org/example/repo/pulls/17"
+  body: "Deliverable of the finished work: PR https://codeberg.org/example/repo/pulls/17"
+ok: added invalid (ship) -> In flight
+task:
+  id: invalid
+  title: Invalid link
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi done invalid --pr <url>` when it ships
+  - Run `tasks-axi block invalid --by <other>` to record a dependency
+Invalid link refused: error: "Task pr link must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)"
+task:
+  id: invalid
+  title: Invalid link
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+ok: added baseline (ship) -> In flight
+task:
+  id: baseline
+  title: Original rejection
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-01
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi done baseline --pr <url>` when it ships
+  - Run `tasks-axi block baseline --by <other>` to record a dependency
+error: "Task pr link must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)"
+code: VALIDATION_ERROR
+Original tasks-axi 0.2.6 rejection reproduced.
