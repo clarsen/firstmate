@@ -398,7 +398,7 @@ List the slots to use, one per line, in the optional local, gitignored `config/c
 With slots configured, every Claude worker launch and relaunch (crewmate, scout, secondmate, and a control-plane relaunch alike) picks a slot and records only that slot's name - never its token - as the task's `claude_account`.
 A setup token is inference-only, so `quota-axi` usually cannot read its remaining allowance, and selection never spends a paid inference probe to find out. Selection is reactive instead:
 `bin/fm-claude-account.sh mark-limited <slot> [--until <YYYY-MM-DDTHH:MM:SSZ>]` marks a slot as limited until that UTC time (default five hours from now), stored as that one timestamp in `.claude-account-limited-<slot>` under the shared state directory described below, and `bin/fm-claude-account.sh clear-limited <slot>` removes the mark.
-Each launch skips every slot with an unexpired mark; among the rest it prefers the slot with more remaining allowance when `quota-axi` can measure one, and otherwise takes the first eligible slot in file order.
+Each launch skips every slot with an unexpired mark; among the rest it prefers the slot with more remaining allowance when `quota-axi` can measure one, and otherwise takes the first eligible slot in file order, using a slot measured at 0% or one whose token cannot be read only as a last resort.
 When every slot is marked limited, it launches on the slot whose mark expires soonest and says so on stderr.
 Because every relaunch re-selects, a worker falls over to another account on its next relaunch once its slot is marked.
 Firstmate, not a worker, runs `mark-limited` when a worker or a no-mistakes validation run reports hitting a Claude usage limit, and `clear-limited` once that account is usable again.
