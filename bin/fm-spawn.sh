@@ -5044,7 +5044,7 @@ CLAUDE_ACCOUNT_ENV_PREFIX=
 if [ "$HARNESS" = claude ]; then
   # shellcheck source=bin/fm-claude-account-lib.sh
   . "$SCRIPT_DIR/fm-claude-account-lib.sh"
-  CLAUDE_ACCOUNT_SLOT=$(fm_claude_account_select "$CONFIG" "$STATE" "$SCRIPT_DIR/fm-claude-account.sh") || {
+  CLAUDE_ACCOUNT_SLOT=$(fm_claude_account_select "$CONFIG" "$(fm_claude_account_state_dir "$FM_HOME" "$STATE")" "$SCRIPT_DIR/fm-claude-account.sh") || {
     echo "error: config/claude-accounts could not be read; see the message above" >&2
     exit 1
   }

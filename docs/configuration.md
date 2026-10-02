@@ -397,19 +397,15 @@ Store one token per account with `bin/fm-claude-account.sh add <slot>`, which pr
 List the slots to use, one per line, in the optional local, gitignored `config/claude-accounts`; an absent or empty file is the default and leaves every Claude launch on today's ambient Claude Code login, unchanged.
 With slots configured, every Claude worker launch and relaunch (crewmate, scout, secondmate, and a control-plane relaunch alike) picks a slot and records only that slot's name - never its token - as the task's `claude_account`.
 A setup token is inference-only, so `quota-axi` usually cannot read its remaining allowance, and selection never spends a paid inference probe to find out. Selection is reactive instead:
-`bin/fm-claude-account.sh mark-limited <slot> [--until <YYYY-MM-DDTHH:MM:SSZ>]` marks a slot as limited until that UTC time (default five hours from now), stored as that one timestamp in `state/.claude-account-limited-<slot>`, and `bin/fm-claude-account.sh clear-limited <slot>` removes the mark.
+`bin/fm-claude-account.sh mark-limited <slot> [--until <YYYY-MM-DDTHH:MM:SSZ>]` marks a slot as limited until that UTC time (default five hours from now), stored as that one timestamp in `.claude-account-limited-<slot>` under the shared state directory described below, and `bin/fm-claude-account.sh clear-limited <slot>` removes the mark.
 Each launch skips every slot with an unexpired mark; among the rest it prefers the slot with more remaining allowance when `quota-axi` can measure one, and otherwise takes the first eligible slot in file order.
 When every slot is marked limited, it launches on the slot whose mark expires soonest and says so on stderr.
 Because every relaunch re-selects, a worker falls over to another account on its next relaunch once its slot is marked.
 Firstmate, not a worker, runs `mark-limited` when a worker or a no-mistakes validation run reports hitting a Claude usage limit, and `clear-limited` once that account is usable again.
-Marks live in the home's own `state/`, so mark the slot in each home whose launches should skip it.
+Marks are machine-wide across one local firstmate tree: every home resolves them in the primary home's `state/` (walking `.fm-secondmate-parent` up to the local primary), so a mark set from any home is honored by every home in that tree. A home whose parent binding cannot be resolved falls back to its own `state/` with a one-line stderr note, and its marks stay home-local until the binding is fixed.
 The file is a captain-wide preference and is inherited into secondmate homes exactly like `config/claude-permission-mode`; the Keychain itself is per-OS-user and already shared across every firstmate home on one machine, so only the slot name list needs to propagate.
 This session's own login is unaffected.
-no-mistakes' own review and test agents run through one daemon shared by every lane on the machine, and switching which account they use is the job of `bin/fm-claude-account-daemon-env.sh`.
-That script currently always refuses: no-mistakes has no supported non-persisted way to set the daemon's environment today. Its launchd service passes only HOME and PATH, so a token exported before `no-mistakes daemon start` or `restart` never reaches the daemon, and adding it would mean writing the token into the daemon's plist on disk.
-Until that changes, validation agents keep using whatever Claude credential the daemon's own environment provides.
-Once a supported mechanism exists, the switch needs no active pipeline runs anywhere on the machine, and its first use needs the captain to approve one daemon restart. A worker never runs the script or touches the daemon itself.
-The upstream follow-up is a per-run or per-repo credential/env override in no-mistakes, shaped like its existing `gh_config_dir`/`glab_config_dir`. That override is the only way validation agents get the same automatic per-task switching workers already have.
+no-mistakes' own review and test agents are not covered by this feature: they keep using the validation service's own Claude login.
 `bin/fm-claude-account.sh`'s header owns slot storage and retrieval mechanics; `bin/fm-claude-account-lib.sh`'s header owns the selection algorithm.
 
 ## Lavish server address (config/lavish-axi-host)

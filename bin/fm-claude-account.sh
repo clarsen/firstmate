@@ -26,7 +26,8 @@
 #           Record that the slot has hit a Claude usage limit, so launch
 #           selection skips it until <iso8601> (UTC, YYYY-MM-DDTHH:MM:SSZ;
 #           default now + 5 hours). Writes only that timestamp to
-#           state/.claude-account-limited-<slot>, one file per slot.
+#           .claude-account-limited-<slot> in the local primary home's
+#           state/ (shared by every home in its tree), one file per slot.
 #   clear-limited
 #           Remove the slot's limited mark. Missing is not an error.
 #
@@ -161,7 +162,7 @@ EOF
 }
 
 cmd_mark_limited() {
-  local slot=$1 until=${2:-} file tmp
+  local slot=$1 until=${2:-} state file tmp
   fm_claude_account_slot_name_valid "$slot" || {
     echo "error: '$slot' is not a valid slot name" >&2
     return 1
@@ -175,8 +176,9 @@ cmd_mark_limited() {
   else
     until=$(jq -nr 'now + 5 * 3600 | floor | todateiso8601')
   fi
-  mkdir -p "$STATE" || return 1
-  file=$(fm_claude_account_limited_file "$STATE" "$slot")
+  state=$(fm_claude_account_state_dir "$FM_HOME" "$STATE")
+  mkdir -p "$state" || return 1
+  file=$(fm_claude_account_limited_file "$state" "$slot")
   tmp="$file.tmp.$$"
   if ! { printf '%s\n' "$until" >"$tmp" && mv -f "$tmp" "$file"; }; then
     rm -f "$tmp"
@@ -192,7 +194,7 @@ cmd_clear_limited() {
     echo "error: '$slot' is not a valid slot name" >&2
     return 1
   }
-  rm -f "$(fm_claude_account_limited_file "$STATE" "$slot")" || return 1
+  rm -f "$(fm_claude_account_limited_file "$(fm_claude_account_state_dir "$FM_HOME" "$STATE")" "$slot")" || return 1
   echo "cleared limited mark for slot '$slot' (if it existed)"
 }
 

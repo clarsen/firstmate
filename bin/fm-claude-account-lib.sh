@@ -12,9 +12,12 @@
 # Selection is reactive. A setup token (`claude setup-token`) is
 # inference-only, so quota-axi usually cannot read its remaining allowance.
 # The primary signal is instead a per-slot "limited" mark,
-# state/.claude-account-limited-<slot>, holding only an ISO-8601 UTC
-# until-timestamp, written by `bin/fm-claude-account.sh mark-limited` and
-# removed by `clear-limited`. fm_claude_account_select:
+# <shared-state>/.claude-account-limited-<slot>, holding only an ISO-8601 UTC
+# until-timestamp. A usage limit belongs to the account, so <shared-state>
+# (fm_claude_account_state_dir, via bin/fm-wake-lib.sh's
+# fm_firstmate_root_home) is the local primary home's state/, shared by every
+# home in that local tree. Marks are written by `bin/fm-claude-account.sh
+# mark-limited` and removed by `clear-limited`. fm_claude_account_select:
 #   1. skips every slot whose mark exists and has not yet expired;
 #   2. among the remaining slots, prefers the one with the most remaining
 #      allowance when quota-axi can measure it (`CLAUDE_CODE_OAUTH_TOKEN=<token>
@@ -26,12 +29,13 @@
 # A token is held only in a local shell variable for the duration of one
 # measurement and is never printed, logged, or written to any file.
 #
-# fm_claude_account_select <config-dir> <state-dir> <claude-account-bin>
+# fm_claude_account_select <config-dir> <shared-state-dir> <claude-account-bin>
 # Prints the chosen slot name on stdout, or an empty line when the feature is
 # off (config/claude-accounts absent or empty). Returns non-zero only for a
 # malformed config/claude-accounts file.
 
 FM_CLAUDE_ACCOUNT_LIMITED_PREFIX=".claude-account-limited-"
+FM_CLAUDE_ACCOUNT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fm_claude_account_slot_name_valid() {
   case "$1" in
@@ -78,6 +82,28 @@ fm_claude_account_measure() {
   ' 2>/dev/null) || return 1
   case "$pct" in '' | *[!0-9]*) return 1 ;; esac
   printf '%s\n' "$pct"
+}
+
+# Print the limited-mark directory shared by every home in this home's local
+# tree: the root home's state/ when the home is a secondmate, else <own-state>.
+# An unresolvable parent binding falls back to <own-state> with a stderr note.
+fm_claude_account_state_dir() {  # <home> <own-state>
+  local home=$1 own_state=$2 root self
+  if ! command -v fm_firstmate_root_home >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$FM_CLAUDE_ACCOUNT_LIB_DIR/fm-wake-lib.sh"
+  fi
+  if ! root=$(fm_firstmate_root_home "$home"); then
+    echo "note: could not resolve the primary home above $home; Claude account limited marks stay local to $own_state" >&2
+    printf '%s\n' "$own_state"
+    return 0
+  fi
+  self=$(CDPATH='' cd -- "$home" 2>/dev/null && pwd -P)
+  if [ "$root" = "$self" ]; then
+    printf '%s\n' "$own_state"
+  else
+    printf '%s/state\n' "$root"
+  fi
 }
 
 fm_claude_account_limited_file() {  # <state-dir> <slot>

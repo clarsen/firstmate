@@ -111,6 +111,31 @@ test_claude_launch_skips_the_limited_slot() {
   pass "a claude launch skips the limited slot and uses the other, recording only its name"
 }
 
+test_mark_from_a_secondmate_home_is_honored_by_the_primary() {
+  local rec out status token mate
+  rec=$(make_case claude-shared-mark claude claude-shared-a1)
+  read_case "$rec"
+  printf 'account-a\naccount-b\n' > "$HOME_DIR/config/claude-accounts"
+  add_slot account-a tok-aaa
+  add_slot account-b tok-bbb
+  mate="$TMP_ROOT/claude-shared-mark/mate-home"
+  mkdir -p "$mate/state" "$mate/config"
+  cp "$HOME_DIR/config/claude-accounts" "$mate/config/claude-accounts"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$HOME_DIR" > "$mate/.fm-secondmate-parent"
+  out=$(FM_HOME="$mate" "$ACCOUNT_BIN" mark-limited account-a 2>&1) status=$?
+  expect_code 0 "$status" "mark-limited from the secondmate home should succeed: $out"
+
+  out=$(run_case_spawn claude-shared-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "primary claude spawn should succeed: $out"
+  install_token_probe "$FAKEBIN_DIR" claude
+  token=$(emitted_token "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "the emitted claude launch failed to run"
+  assert_equals tok-bbb "$token" "the primary's launch should skip account-a, marked limited from its secondmate home"
+  assert_contains "$(cat "$HOME_DIR/state/claude-shared-a1.meta")" "claude_account=account-b" "the primary's task record should name account-b"
+  pass "a limited mark set from a secondmate home is honored by the primary home's spawn"
+}
+
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
 # bin/fm-spawn.sh --relaunch, so this drives that operator-facing verb rather
 # than the rebuild alone. The custom tmux stub below (adapted from
@@ -256,5 +281,6 @@ test_non_claude_harness_is_unaffected() {
 }
 
 test_claude_launch_skips_the_limited_slot
+test_mark_from_a_secondmate_home_is_honored_by_the_primary
 test_claude_relaunch_falls_over_after_exhaustion
 test_non_claude_harness_is_unaffected
