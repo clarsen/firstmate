@@ -5324,9 +5324,14 @@ fi
 # variables, the 0600 launch-command file, or any pane text. A failed fetch
 # skips the launch with an error naming the slot rather than falling back to
 # the ambient login, and the token is unset once the launch returns so the
-# persistent pane shell never carries it into a later launch.
+# persistent pane shell never carries it into a later launch. The injected
+# token is exported with the FM_CLAUDE_ACCOUNT_INJECTED marker, and a claude
+# launch with no selected slot clears a marked token left behind by an aborted
+# earlier launch while leaving an unmarked, operator-set token untouched.
 if [ -n "$CLAUDE_ACCOUNT_TOKEN_FETCH" ]; then
-  LAUNCH="if $CLAUDE_ACCOUNT_TOKEN_FETCH; then export CLAUDE_CODE_OAUTH_TOKEN; $LAUNCH; unset CLAUDE_CODE_OAUTH_TOKEN; else unset CLAUDE_CODE_OAUTH_TOKEN; echo $(shell_quote "error: could not read the Claude credential for account slot '$CLAUDE_ACCOUNT_SLOT'; not launching on the ambient login") >&2; fi"
+  LAUNCH="if $CLAUDE_ACCOUNT_TOKEN_FETCH; then export CLAUDE_CODE_OAUTH_TOKEN FM_CLAUDE_ACCOUNT_INJECTED=1; $LAUNCH; unset CLAUDE_CODE_OAUTH_TOKEN FM_CLAUDE_ACCOUNT_INJECTED; else unset CLAUDE_CODE_OAUTH_TOKEN FM_CLAUDE_ACCOUNT_INJECTED; echo $(shell_quote "error: could not read the Claude credential for account slot '$CLAUDE_ACCOUNT_SLOT'; not launching on the ambient login") >&2; fi"
+elif [ "$HARNESS" = claude ]; then
+  LAUNCH="if [ -n \"\${FM_CLAUDE_ACCOUNT_INJECTED:-}\" ]; then unset CLAUDE_CODE_OAUTH_TOKEN FM_CLAUDE_ACCOUNT_INJECTED; fi; $LAUNCH"
 fi
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 if [ -z "$SPAWN_TRACEPARENT" ] && [ "$RELAUNCH" -eq 1 ]; then

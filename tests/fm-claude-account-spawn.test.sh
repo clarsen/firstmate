@@ -176,6 +176,43 @@ printf 'after=%s\\n' \"\${CLAUDE_CODE_OAUTH_TOKEN-unset}\"")
   pass "the slot token is scoped to the launch and unset in the pane shell afterwards"
 }
 
+# run_unconfigured_launch <name> <pane-env> runs a claude launch from a home
+# with no config/claude-accounts in a pane whose shell already holds
+# <pane-env> exports, printing the token the launched claude received.
+run_unconfigured_launch() {
+  local name=$1 pane_env=$2 rec out status launch preamble
+  rec=$(make_case "$name" claude "$name-a1")
+  read_case "$rec"
+  out=$(run_case_spawn "$name-a1" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "unconfigured claude spawn should succeed: $out"
+  install_token_probe "$FAKEBIN_DIR" claude
+  launch=$(cat "$LAUNCH_LOG")
+  preamble=$(grep '^export ' "$PANE_LOG")
+  env -i HOME="$TMP_ROOT/pane-home" PATH="$FAKEBIN_DIR:$PATH" TERM=xterm \
+    TMUX=synthetic-pane /bin/sh -c "$pane_env
+$preamble
+$launch"
+}
+
+test_no_slot_launch_clears_a_stale_injected_token() {
+  local token
+  token=$(run_unconfigured_launch claude-stale-injected \
+    'export CLAUDE_CODE_OAUTH_TOKEN=tok-stale FM_CLAUDE_ACCOUNT_INJECTED=1') \
+    || fail "the emitted claude launch failed to run"
+  assert_equals unset "$token" "a no-slot launch must clear a token left behind by an earlier injected launch"
+  pass "a no-slot claude launch clears a stale marked slot token"
+}
+
+test_no_slot_launch_keeps_an_operator_set_token() {
+  local token
+  token=$(run_unconfigured_launch claude-ambient-token \
+    'export CLAUDE_CODE_OAUTH_TOKEN=tok-operator') \
+    || fail "the emitted claude launch failed to run"
+  assert_equals tok-operator "$token" "a no-slot launch must leave an unmarked operator-set token untouched"
+  pass "a no-slot claude launch keeps an operator-set token with no injection marker"
+}
+
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
 # bin/fm-spawn.sh --relaunch, so this drives that operator-facing verb rather
 # than the rebuild alone. The custom tmux stub below (adapted from
@@ -324,5 +361,7 @@ test_claude_launch_skips_the_limited_slot
 test_mark_from_a_secondmate_home_is_honored_by_the_primary
 test_failed_token_fetch_does_not_launch_on_the_ambient_login
 test_token_does_not_outlive_the_launch_in_the_pane_shell
+test_no_slot_launch_clears_a_stale_injected_token
+test_no_slot_launch_keeps_an_operator_set_token
 test_claude_relaunch_falls_over_after_exhaustion
 test_non_claude_harness_is_unaffected
