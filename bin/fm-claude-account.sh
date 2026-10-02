@@ -7,6 +7,8 @@
 #        fm-claude-account.sh remove <slot>
 #        fm-claude-account.sh list
 #        fm-claude-account.sh get <slot>
+#        fm-claude-account.sh mark-limited <slot> [--until <iso8601>]
+#        fm-claude-account.sh clear-limited <slot>
 #
 #   add     Prompt (hidden input, read from stdin) for a Claude Code setup
 #           token (from `claude setup-token`, used as CLAUDE_CODE_OAUTH_TOKEN)
@@ -20,6 +22,13 @@
 #           for capture by a caller (`$(fm-claude-account.sh get <slot>)`),
 #           never for a human to read on screen. A missing or unreadable slot
 #           is a plain, loud failure naming the slot only.
+#   mark-limited
+#           Record that the slot has hit a Claude usage limit, so launch
+#           selection skips it until <iso8601> (UTC, YYYY-MM-DDTHH:MM:SSZ;
+#           default now + 5 hours). Writes only that timestamp to
+#           state/.claude-account-limited-<slot>, one file per slot.
+#   clear-limited
+#           Remove the slot's limited mark. Missing is not an error.
 #
 # Each slot is one macOS Keychain generic-password item, service
 # "firstmate-claude-account-<slot>", account the current OS user, added with
@@ -39,47 +48,27 @@
 set -u
 
 usage() {
-  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+
+# shellcheck source=bin/fm-claude-account-lib.sh
+. "$SCRIPT_DIR/fm-claude-account-lib.sh"
 
 FM_CLAUDE_ACCOUNT_SERVICE_PREFIX="firstmate-claude-account-"
-
-fm_claude_account_slot_valid() {
-  case "$1" in
-    '') return 1 ;;
-  esac
-  case "$1" in
-    *[!A-Za-z0-9_-]*) return 1 ;;
-  esac
-  case "$1" in
-    [A-Za-z0-9]*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 fm_claude_account_service() {
   printf '%s%s' "$FM_CLAUDE_ACCOUNT_SERVICE_PREFIX" "$1"
 }
 
-fm_claude_account_configured_slots() {
-  local file=$CONFIG/claude-accounts line slot
-  [ -f "$file" ] && [ -r "$file" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    slot=${line#"${line%%[![:space:]]*}"}
-    slot=${slot%"${slot##*[![:space:]]}"}
-    case "$slot" in ''|'#'*) continue ;; esac
-    printf '%s\n' "$slot"
-  done <"$file"
-}
-
 cmd_add() {
   local slot=$1 account token
-  fm_claude_account_slot_valid "$slot" || {
+  fm_claude_account_slot_name_valid "$slot" || {
     echo "error: '$slot' is not a valid slot name; use letters, digits, '-', '_' only, starting with a letter or digit" >&2
     return 1
   }
@@ -114,7 +103,7 @@ cmd_add() {
 
 cmd_remove() {
   local slot=$1 account
-  fm_claude_account_slot_valid "$slot" || {
+  fm_claude_account_slot_name_valid "$slot" || {
     echo "error: '$slot' is not a valid slot name" >&2
     return 1
   }
@@ -125,7 +114,7 @@ cmd_remove() {
 
 cmd_get() {
   local slot=$1 account token
-  fm_claude_account_slot_valid "$slot" || {
+  fm_claude_account_slot_name_valid "$slot" || {
     echo "error: '$slot' is not a valid slot name" >&2
     return 1
   }
@@ -149,7 +138,7 @@ cmd_list() {
   if [ "$#" -gt 0 ]; then
     slots=$(printf '%s\n' "$@")
   else
-    slots=$(fm_claude_account_configured_slots)
+    slots=$(fm_claude_account_configured_slots "$CONFIG") || return 1
   fi
   [ -n "$slots" ] || {
     echo "no slots configured (config/claude-accounts is absent or empty)"
@@ -157,7 +146,7 @@ cmd_list() {
   }
   while IFS= read -r slot; do
     [ -n "$slot" ] || continue
-    if ! fm_claude_account_slot_valid "$slot"; then
+    if ! fm_claude_account_slot_name_valid "$slot"; then
       printf '%s: invalid slot name\n' "$slot"
       continue
     fi
@@ -169,6 +158,42 @@ cmd_list() {
   done <<EOF
 $slots
 EOF
+}
+
+cmd_mark_limited() {
+  local slot=$1 until=${2:-} file tmp
+  fm_claude_account_slot_name_valid "$slot" || {
+    echo "error: '$slot' is not a valid slot name" >&2
+    return 1
+  }
+  if [ -n "$until" ]; then
+    until=$(jq -nr --arg u "$until" '$u | fromdateiso8601 | todateiso8601' 2>/dev/null) || until=
+    [ -n "$until" ] || {
+      echo "error: --until must be a UTC ISO-8601 timestamp like 2026-01-02T15:04:05Z" >&2
+      return 1
+    }
+  else
+    until=$(jq -nr 'now + 5 * 3600 | floor | todateiso8601')
+  fi
+  mkdir -p "$STATE" || return 1
+  file=$(fm_claude_account_limited_file "$STATE" "$slot")
+  tmp="$file.tmp.$$"
+  if ! { printf '%s\n' "$until" >"$tmp" && mv -f "$tmp" "$file"; }; then
+    rm -f "$tmp"
+    echo "error: could not write the limited mark for slot '$slot'" >&2
+    return 1
+  fi
+  echo "marked slot '$slot' limited until $until"
+}
+
+cmd_clear_limited() {
+  local slot=$1
+  fm_claude_account_slot_name_valid "$slot" || {
+    echo "error: '$slot' is not a valid slot name" >&2
+    return 1
+  }
+  rm -f "$(fm_claude_account_limited_file "$STATE" "$slot")" || return 1
+  echo "cleared limited mark for slot '$slot' (if it existed)"
 }
 
 case "${1:-}" in
@@ -187,6 +212,20 @@ case "${1:-}" in
   get)
     [ "$#" -eq 2 ] || { usage >&2; exit 2; }
     cmd_get "$2"
+    ;;
+  mark-limited)
+    if [ "$#" -eq 2 ]; then
+      cmd_mark_limited "$2"
+    elif [ "$#" -eq 4 ] && [ "$3" = --until ]; then
+      cmd_mark_limited "$2" "$4"
+    else
+      usage >&2
+      exit 2
+    fi
+    ;;
+  clear-limited)
+    [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+    cmd_clear_limited "$2"
     ;;
   list)
     shift

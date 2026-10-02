@@ -73,9 +73,10 @@ SH
 # fm_claude_account_fake_quota_axi <fakebin> <map-file>
 # Drops a `quota-axi` shim that only understands
 # `--provider claude --json --no-credential-refresh`. <map-file> holds
-# "<token> <percent>" lines (percent may be "unmeasurable" to simulate a
-# failed reading, e.g. an exhausted or rejected token); a token with no
-# matching line also reports unmeasurable.
+# "<token> <percent>" lines. A token with no matching line gets the default
+# answer a real `claude setup-token` token gets: the usage endpoint refuses
+# the inference-only bearer, so quota-axi (0.1.52 README, "inference opt-in")
+# reports the provider as unavailable with no effectiveAvailability.
 fm_claude_account_fake_quota_axi() {
   local fakebin=$1 map=$2
   cat > "$fakebin/quota-axi" <<SH
@@ -86,8 +87,11 @@ SH
   cat >> "$fakebin/quota-axi" <<'SH'
 token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
 pct=$(awk -v t="$token" '$1 == t { print $2; exit }' "$map" 2>/dev/null)
-if [ -z "$pct" ] || [ "$pct" = unmeasurable ]; then
-  exit 1
+if [ -z "$pct" ]; then
+  cat <<JSON
+{"providers":[{"provider":"claude","state":{"status":"unavailable","reason":"inference_opt_in_required"},"quotaSemantics":{}}]}
+JSON
+  exit 0
 fi
 cat <<JSON
 {"providers":[{"provider":"claude","quotaSemantics":{"effectiveAvailability":[{"scope":"all_models","effectivePercentRemaining":$pct}]}}]}

@@ -145,6 +145,25 @@ EOF
   pass "the token appears only on get's stdout, never on stderr or add's output"
 }
 
+test_daemon_env_refuses_without_touching_token_or_daemon() {
+  local rec fakebin store calls out status
+  rec=$(new_case daemon-env)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  calls="$TMP_ROOT/daemon-env/calls"
+  : > "$calls"
+  for tool in no-mistakes security launchctl; do
+    printf '#!/bin/sh\nprintf "%%s %%s\\n" %s "$*" >> %s\nexit 0\n' "$tool" "$calls" > "$fakebin/$tool"
+    chmod +x "$fakebin/$tool"
+  done
+  out=$(PATH="$fakebin:$PATH" "$ROOT/bin/fm-claude-account-daemon-env.sh" 2>&1) status=$?
+  [ "$status" -ne 0 ] || fail "the daemon-env script should refuse: $out"
+  assert_contains "$out" "no supported non-persisted way to set the daemon's environment" "the refusal should name the no-mistakes limitation"
+  assert_equals "" "$(cat "$calls")" "the refusal must not read a token or touch the daemon"
+  pass "fm-claude-account-daemon-env.sh refuses, naming the limitation, without reading a token or touching the daemon"
+}
+
 test_add_then_get_roundtrips
 test_add_rejects_empty_or_whitespace_token
 test_get_missing_slot_names_the_slot_only
@@ -153,3 +172,4 @@ test_remove_then_get_fails
 test_remove_missing_slot_is_not_an_error
 test_list_reports_present_and_missing_without_values
 test_add_get_never_leak_the_secret_on_any_stream
+test_daemon_env_refuses_without_touching_token_or_daemon

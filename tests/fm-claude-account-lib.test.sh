@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # tests/fm-claude-account-lib.test.sh - bin/fm-claude-account-lib.sh slot
-# selection: disabled when unconfigured, picks the slot with more measured
-# quota-axi allowance, falls back to the last-good slot or the first
-# configured slot when nothing is measurable, and refuses a malformed
-# config/claude-accounts file.
+# selection: disabled when unconfigured, skips slots carrying an unexpired
+# `fm-claude-account.sh mark-limited` mark, prefers more measured quota-axi
+# allowance only as a tiebreaker, still selects when no slot is measurable
+# (the real setup-token case), picks the soonest-expiring slot when all are
+# limited, and refuses a malformed config/claude-accounts file.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -56,24 +57,29 @@ EOF
   pass "selection is a no-op when config/claude-accounts is absent"
 }
 
-test_single_slot_is_selected() {
+mark() {  # <state> <fakebin> <slot> [--until <iso8601>]
+  local state=$1 fakebin=$2
+  shift 2
+  FM_STATE_OVERRIDE="$state" PATH="$fakebin:$PATH" "$BIN" mark-limited "$@" >/dev/null
+}
+
+test_unmeasurable_setup_tokens_select_the_first_configured_slot() {
   local rec config state fakebin map out status
-  rec=$(new_case single)
+  rec=$(new_case unmeasurable)
   IFS='|' read -r config state fakebin map <<EOF
 $rec
 EOF
-  printf 'only-slot\n' > "$config/claude-accounts"
-  add_slot "$fakebin" only-slot tok-only
-  printf 'tok-only 50\n' >> "$map"
+  printf 'account-first\naccount-second\n' > "$config/claude-accounts"
+  add_slot "$fakebin" account-first tok-first
+  add_slot "$fakebin" account-second tok-second
   out=$(select_slot "$config" "$state" "$fakebin") status=$?
-  expect_code 0 "$status" "selection with one measurable slot should succeed"
-  assert_equals only-slot "$out" "the one configured slot should be selected"
-  assert_equals only-slot "$(cat "$state/.claude-account-last-good")" "a measured selection should record last-good"
-  pass "a single configured, measurable slot is selected and recorded as last-good"
+  expect_code 0 "$status" "selection should succeed when quota-axi cannot read any setup token"
+  assert_equals account-first "$out" "with no reading and no limited mark, the first configured slot should be used"
+  pass "unmeasurable setup tokens still select the first configured slot"
 }
 
-test_picks_the_slot_with_more_remaining_allowance() {
-  local rec config state fakebin map out status
+test_measured_allowance_breaks_the_tie_among_eligible_slots() {
+  local rec config state fakebin map out
   rec=$(new_case higher)
   IFS='|' read -r config state fakebin map <<EOF
 $rec
@@ -82,66 +88,89 @@ EOF
   add_slot "$fakebin" low-slot tok-low
   add_slot "$fakebin" high-slot tok-high
   printf 'tok-low 10\ntok-high 90\n' >> "$map"
-  out=$(select_slot "$config" "$state" "$fakebin") status=$?
-  expect_code 0 "$status" "selection between two measurable slots should succeed"
-  assert_equals high-slot "$out" "the slot with more remaining allowance should win"
-  pass "selection picks the configured slot with the most remaining allowance"
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals high-slot "$out" "the slot with more remaining allowance should win when readings exist"
+  pass "measured allowance, when available, prefers the eligible slot with more room"
 }
 
-test_falls_over_once_the_chosen_slot_is_exhausted() {
-  local rec config state fakebin map out status
-  rec=$(new_case fallover)
+test_limited_slot_is_skipped() {
+  local rec config state fakebin map out
+  rec=$(new_case limited)
   IFS='|' read -r config state fakebin map <<EOF
 $rec
 EOF
   printf 'account-a\naccount-b\n' > "$config/claude-accounts"
   add_slot "$fakebin" account-a tok-a
   add_slot "$fakebin" account-b tok-b
-  printf 'tok-a 80\ntok-b 20\n' > "$map"
+  printf 'tok-a 90\n' >> "$map"
+  mark "$state" "$fakebin" account-a
   out=$(select_slot "$config" "$state" "$fakebin")
-  assert_equals account-a "$out" "account-a starts with more room and should be chosen first"
-
-  # account-a's session limit is hit: its next reading is exhausted (0%).
-  printf 'tok-a 0\ntok-b 20\n' > "$map"
-  out=$(select_slot "$config" "$state" "$fakebin")
-  assert_equals account-b "$out" "a relaunch after account-a is exhausted should fall over to account-b"
-  pass "re-selection at the next launch falls over once the chosen account hits its limit"
+  assert_equals account-b "$out" "a limited slot should be skipped even when it measures more room"
+  pass "a slot marked limited is skipped in favor of the other slot"
 }
 
-test_unmeasurable_falls_back_to_last_good() {
-  local rec config state fakebin map out status
-  rec=$(new_case last-good)
+test_expired_mark_no_longer_excludes() {
+  local rec config state fakebin map out
+  rec=$(new_case expired)
   IFS='|' read -r config state fakebin map <<EOF
 $rec
 EOF
   printf 'account-a\naccount-b\n' > "$config/claude-accounts"
   add_slot "$fakebin" account-a tok-a
   add_slot "$fakebin" account-b tok-b
-  printf 'tok-a 30\ntok-b 70\n' > "$map"
-  select_slot "$config" "$state" "$fakebin" >/dev/null
-  assert_equals account-b "$(cat "$state/.claude-account-last-good")" "account-b should be recorded as last-good"
-
-  # Both readings become unmeasurable (e.g. quota-axi itself is unavailable).
-  : > "$map"
-  out=$(select_slot "$config" "$state" "$fakebin") status=$?
-  expect_code 0 "$status" "selection should still succeed when nothing is measurable"
-  assert_equals account-b "$out" "with nothing measurable, the recorded last-good slot should be reused"
-  pass "selection falls back to the last successfully measured slot when quota-axi cannot measure any slot"
+  mark "$state" "$fakebin" account-a --until 2000-01-01T00:00:00Z
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals account-a "$out" "an expired limited mark should not exclude its slot"
+  pass "an expired limited mark no longer excludes its slot"
 }
 
-test_unmeasurable_with_no_last_good_picks_the_first_configured_slot() {
-  local rec config state fakebin map out status
-  rec=$(new_case no-last-good)
+test_all_limited_selects_the_soonest_to_expire() {
+  local rec config state fakebin map out status err
+  rec=$(new_case all-limited)
   IFS='|' read -r config state fakebin map <<EOF
 $rec
 EOF
-  printf 'account-first\naccount-second\n' > "$config/claude-accounts"
-  add_slot "$fakebin" account-first tok-first
-  add_slot "$fakebin" account-second tok-second
-  out=$(select_slot "$config" "$state" "$fakebin") status=$?
-  expect_code 0 "$status" "selection should still succeed with no measurable slot and no last-good"
-  assert_equals account-first "$out" "with nothing measurable and no last-good, the first configured slot should be used"
-  pass "selection falls back to the first configured slot when nothing is measurable and no last-good is recorded"
+  printf 'account-a\naccount-b\n' > "$config/claude-accounts"
+  add_slot "$fakebin" account-a tok-a
+  add_slot "$fakebin" account-b tok-b
+  mark "$state" "$fakebin" account-a --until 2999-06-01T00:00:00Z
+  mark "$state" "$fakebin" account-b --until 2999-01-01T00:00:00Z
+  err="$TMP_ROOT/all-limited/select.stderr"
+  out=$(select_slot "$config" "$state" "$fakebin" 2>"$err") status=$?
+  expect_code 0 "$status" "selection should still succeed when every slot is limited"
+  assert_equals account-b "$out" "the slot whose mark expires soonest should be chosen"
+  assert_contains "$(cat "$err")" "every configured Claude account slot is marked limited" "stderr should explain the all-limited choice"
+  assert_contains "$(cat "$err")" "account-b" "stderr should name the chosen slot"
+  pass "with every slot limited, selection picks the soonest-to-expire slot and explains why"
+}
+
+test_clear_limited_makes_a_slot_selectable_again() {
+  local rec config state fakebin map out
+  rec=$(new_case cleared)
+  IFS='|' read -r config state fakebin map <<EOF
+$rec
+EOF
+  printf 'account-a\naccount-b\n' > "$config/claude-accounts"
+  add_slot "$fakebin" account-a tok-a
+  add_slot "$fakebin" account-b tok-b
+  mark "$state" "$fakebin" account-a
+  assert_equals account-b "$(select_slot "$config" "$state" "$fakebin")" "account-a should be skipped while marked"
+  FM_STATE_OVERRIDE="$state" PATH="$fakebin:$PATH" "$BIN" clear-limited account-a >/dev/null
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals account-a "$out" "clear-limited should make account-a selectable again"
+  pass "clear-limited makes a slot selectable again"
+}
+
+test_mark_limited_rejects_a_malformed_until() {
+  local rec config state fakebin map out status
+  rec=$(new_case bad-until)
+  IFS='|' read -r config state fakebin map <<EOF
+$rec
+EOF
+  out=$(FM_STATE_OVERRIDE="$state" PATH="$fakebin:$PATH" "$BIN" mark-limited account-a --until tomorrow 2>&1) status=$?
+  [ "$status" -ne 0 ] || fail "mark-limited should reject a non-ISO-8601 --until: $out"
+  [ ! -e "$state/.claude-account-limited-account-a" ] || fail "a rejected mark-limited must not write a mark"
+  pass "mark-limited rejects a malformed --until without writing a mark"
 }
 
 test_malformed_slot_name_refuses() {
@@ -158,9 +187,11 @@ EOF
 }
 
 test_disabled_when_unconfigured
-test_single_slot_is_selected
-test_picks_the_slot_with_more_remaining_allowance
-test_falls_over_once_the_chosen_slot_is_exhausted
-test_unmeasurable_falls_back_to_last_good
-test_unmeasurable_with_no_last_good_picks_the_first_configured_slot
+test_unmeasurable_setup_tokens_select_the_first_configured_slot
+test_measured_allowance_breaks_the_tie_among_eligible_slots
+test_limited_slot_is_skipped
+test_expired_mark_no_longer_excludes
+test_all_limited_selects_the_soonest_to_expire
+test_clear_limited_makes_a_slot_selectable_again
+test_mark_limited_rejects_a_malformed_until
 test_malformed_slot_name_refuses

@@ -353,10 +353,11 @@
 #   Optional list of config/claude-accounts Keychain slot names (bin/fm-claude-account.sh
 #   owns slot storage). Absent or empty leaves every claude launch (ship, scout,
 #   secondmate, and relaunch) on today's ambient Claude Code login, unchanged.
-#   When present, every claude launch measures each configured slot's remaining
-#   quota-axi allowance and launches on the slot with the most room, recording
-#   the chosen slot (name only, never the token) as claude_account= in the
-#   task's record. bin/fm-claude-account-lib.sh owns selection and fallback
+#   When present, every claude launch skips slots carrying an unexpired
+#   `fm-claude-account.sh mark-limited` mark and launches on an eligible slot
+#   (preferring more measured quota-axi allowance when a reading exists),
+#   recording the chosen slot (name only, never the token) as claude_account=
+#   in the task's record. bin/fm-claude-account-lib.sh owns selection
 #   mechanics; docs/configuration.md "Claude account switching" owns the
 #   captain-facing contract. Not applicable to any non-claude harness.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
@@ -5035,9 +5036,9 @@ else
 fi
 
 # config/claude-accounts (header above): resolved once HARNESS is known, only
-# for a claude launch, so a non-claude spawn never pays quota-axi's network
-# cost. Computed once here and reused both for the task record below and for
-# the launch-command env prefix near the end of this script.
+# for a claude launch, so a non-claude spawn never pays selection's Keychain
+# and quota-axi cost. Computed once here and reused both for the task record
+# below and for the launch-command env prefix near the end of this script.
 CLAUDE_ACCOUNT_SLOT=
 CLAUDE_ACCOUNT_ENV_PREFIX=
 if [ "$HARNESS" = claude ]; then

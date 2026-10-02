@@ -395,12 +395,22 @@ Each account is authorized by a setup token from `claude setup-token`, the same 
 Store one token per account with `bin/fm-claude-account.sh add <slot>`, which prompts for the token at a hidden stdin read and never accepts it as a command-line argument; the token is written to a dedicated macOS login Keychain item named for that slot and is never printed, logged, or written into any repo or state file.
 `bin/fm-claude-account.sh remove <slot>` deletes a slot and `list` reports which configured slots are present, by name only.
 List the slots to use, one per line, in the optional local, gitignored `config/claude-accounts`; an absent or empty file is the default and leaves every Claude launch on today's ambient Claude Code login, unchanged.
-With slots configured, every Claude worker launch and relaunch (crewmate, scout, secondmate, and a control-plane relaunch alike) measures each configured slot's remaining allowance with `quota-axi` and launches on the slot with the most room, recording only that slot's name - never its token - as the task's `claude_account`.
-Because every relaunch re-measures, an account that has since hit its limit naturally loses the next selection to whichever account still has room: there is no separate "failover" step to trigger, only the ordinary recovery relaunch a stuck or limited worker already gets.
-When no slot can be measured (`quota-axi` unavailable, or every reading unusable), selection reuses the last slot that measured successfully, and falls back to the first configured slot when none has yet.
+With slots configured, every Claude worker launch and relaunch (crewmate, scout, secondmate, and a control-plane relaunch alike) picks a slot and records only that slot's name - never its token - as the task's `claude_account`.
+A setup token is inference-only, so `quota-axi` usually cannot read its remaining allowance, and selection never spends a paid inference probe to find out. Selection is reactive instead:
+`bin/fm-claude-account.sh mark-limited <slot> [--until <YYYY-MM-DDTHH:MM:SSZ>]` marks a slot as limited until that UTC time (default five hours from now), stored as that one timestamp in `state/.claude-account-limited-<slot>`, and `bin/fm-claude-account.sh clear-limited <slot>` removes the mark.
+Each launch skips every slot with an unexpired mark; among the rest it prefers the slot with more remaining allowance when `quota-axi` can measure one, and otherwise takes the first eligible slot in file order.
+When every slot is marked limited, it launches on the slot whose mark expires soonest and says so on stderr.
+Because every relaunch re-selects, a worker falls over to another account on its next relaunch once its slot is marked.
+Firstmate, not a worker, runs `mark-limited` when a worker or a no-mistakes validation run reports hitting a Claude usage limit, and `clear-limited` once that account is usable again.
+Marks live in the home's own `state/`, so mark the slot in each home whose launches should skip it.
 The file is a captain-wide preference and is inherited into secondmate homes exactly like `config/claude-permission-mode`; the Keychain itself is per-OS-user and already shared across every firstmate home on one machine, so only the slot name list needs to propagate.
-This session's own login, and no-mistakes' own review and test agents, are unaffected: no-mistakes runs its agents through one daemon shared by every lane on the machine, which has no per-run credential override, so its agents keep using whatever Claude credential that shared daemon's own environment already provides.
-`bin/fm-claude-account.sh`'s header owns slot storage and retrieval mechanics; `bin/fm-claude-account-lib.sh`'s header owns the selection and fallback algorithm.
+This session's own login is unaffected.
+no-mistakes' own review and test agents run through one daemon shared by every lane on the machine, and switching which account they use is the job of `bin/fm-claude-account-daemon-env.sh`.
+That script currently always refuses: no-mistakes has no supported non-persisted way to set the daemon's environment today. Its launchd service passes only HOME and PATH, so a token exported before `no-mistakes daemon start` or `restart` never reaches the daemon, and adding it would mean writing the token into the daemon's plist on disk.
+Until that changes, validation agents keep using whatever Claude credential the daemon's own environment provides.
+Once a supported mechanism exists, the switch needs no active pipeline runs anywhere on the machine, and its first use needs the captain to approve one daemon restart. A worker never runs the script or touches the daemon itself.
+The upstream follow-up is a per-run or per-repo credential/env override in no-mistakes, shaped like its existing `gh_config_dir`/`glab_config_dir`. That override is the only way validation agents get the same automatic per-task switching workers already have.
+`bin/fm-claude-account.sh`'s header owns slot storage and retrieval mechanics; `bin/fm-claude-account-lib.sh`'s header owns the selection algorithm.
 
 ## Lavish server address (config/lavish-axi-host)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-claude-account-spawn.test.sh - config/claude-accounts end to end
-# through bin/fm-spawn.sh: a claude launch picks the slot with more measured
-# quota-axi allowance, the launched process actually receives that slot's
+# through bin/fm-spawn.sh: with the realistic unmeasurable setup-token
+# readings, a claude launch skips a slot marked limited, the launched process actually receives that slot's
 # token as CLAUDE_CODE_OAUTH_TOKEN, the task record carries the slot NAME, and
 # the token value itself never appears in the recorded launch command or task
 # metadata. A non-claude harness spawn is untouched even when
@@ -83,14 +83,14 @@ emitted_token() {  # <fakebin> <launch-log> <pane-log>
 $launch"
 }
 
-test_claude_launch_uses_the_slot_with_more_allowance() {
+test_claude_launch_skips_the_limited_slot() {
   local rec out status launch token meta
   rec=$(make_case claude-select claude claude-select-a1)
   read_case "$rec"
   printf 'account-a\naccount-b\n' > "$HOME_DIR/config/claude-accounts"
   add_slot account-a tok-aaa
   add_slot account-b tok-bbb
-  printf 'tok-aaa 15\ntok-bbb 85\n' > "$MAP_FILE"
+  FM_HOME="$HOME_DIR" "$ACCOUNT_BIN" mark-limited account-a >/dev/null
 
   out=$(run_case_spawn claude-select-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
   status=$?
@@ -99,7 +99,7 @@ test_claude_launch_uses_the_slot_with_more_allowance() {
   install_token_probe "$FAKEBIN_DIR" claude
   token=$(emitted_token "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
     || fail "the emitted claude launch failed to run"
-  assert_equals tok-bbb "$token" "the launched claude process should receive account-b's token (more remaining allowance)"
+  assert_equals tok-bbb "$token" "the launched claude process should receive account-b's token (account-a is marked limited)"
 
   meta=$(cat "$HOME_DIR/state/claude-select-a1.meta")
   assert_contains "$meta" "claude_account=account-b" "the task record should name the selected slot"
@@ -108,7 +108,7 @@ test_claude_launch_uses_the_slot_with_more_allowance() {
   assert_not_contains "$launch" tok-bbb "the recorded launch command must never contain the raw token"
   assert_not_contains "$launch" tok-aaa "the recorded launch command must never contain the raw token"
   assert_not_contains "$meta" tok-bbb "the task record must never contain the raw token"
-  pass "a claude launch selects and uses the slot with more measured allowance, recording only its name"
+  pass "a claude launch skips the limited slot and uses the other, recording only its name"
 }
 
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
@@ -214,8 +214,9 @@ test_claude_relaunch_falls_over_after_exhaustion() {
   } > "$home/state/$id.meta"
   mkdir -p "$dir/user-home"
 
-  # account-a's session limit is hit; the relaunch should pick account-b.
-  printf 'tok-aaa 0\ntok-bbb 20\n' > "$map"
+  # account-a's session limit is hit and firstmate marks it; quota-axi still
+  # cannot read either setup token, so the relaunch should pick account-b.
+  FM_HOME="$home" "$ACCOUNT_BIN" mark-limited account-a >/dev/null
 
   out=$(env PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_DIR="$fakestate" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
@@ -231,9 +232,9 @@ test_claude_relaunch_falls_over_after_exhaustion() {
   token=$(env -i HOME="$dir/user-home" PATH="$fakebin:$PATH" TERM=xterm \
     TMUX=synthetic-pane /bin/sh -c "$preamble
 $launch") || fail "relaunch's emitted launch failed to run"
-  assert_equals tok-bbb "$token" "the relaunch should fall over to account-b once account-a is exhausted"
+  assert_equals tok-bbb "$token" "the relaunch should fall over to account-b once account-a is marked limited"
   assert_contains "$(cat "$home/state/$id.meta")" "claude_account=account-b" "the relaunched task record should name the new slot"
-  pass "a relaunch re-selects and falls over to the other account once the chosen one hits its limit"
+  pass "a relaunch re-selects and falls over to the other account once the chosen one is marked limited"
 }
 
 test_non_claude_harness_is_unaffected() {
@@ -254,6 +255,6 @@ test_non_claude_harness_is_unaffected() {
   pass "config/claude-accounts has no effect on a non-claude harness spawn"
 }
 
-test_claude_launch_uses_the_slot_with_more_allowance
+test_claude_launch_skips_the_limited_slot
 test_claude_relaunch_falls_over_after_exhaustion
 test_non_claude_harness_is_unaffected
