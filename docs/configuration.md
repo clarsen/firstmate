@@ -388,6 +388,20 @@ Any other value, or an unreadable file, refuses every spawn from that home, whic
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
 
+## Claude account switching (config/claude-accounts)
+
+A captain with two or more Anthropic subscription-plan accounts (not API billing) can let every Claude worker automatically launch on whichever account currently has more room, so one account hitting its session or weekly limit no longer stalls every running task at once.
+Each account is authorized by a setup token from `claude setup-token`, the same long-lived credential Claude Code reads through `CLAUDE_CODE_OAUTH_TOKEN` for non-interactive use.
+Store one token per account with `bin/fm-claude-account.sh add <slot>`, which prompts for the token at a hidden stdin read and never accepts it as a command-line argument; the token is written to a dedicated macOS login Keychain item named for that slot and is never printed, logged, or written into any repo or state file.
+`bin/fm-claude-account.sh remove <slot>` deletes a slot and `list` reports which configured slots are present, by name only.
+List the slots to use, one per line, in the optional local, gitignored `config/claude-accounts`; an absent or empty file is the default and leaves every Claude launch on today's ambient Claude Code login, unchanged.
+With slots configured, every Claude worker launch and relaunch (crewmate, scout, secondmate, and a control-plane relaunch alike) measures each configured slot's remaining allowance with `quota-axi` and launches on the slot with the most room, recording only that slot's name - never its token - as the task's `claude_account`.
+Because every relaunch re-measures, an account that has since hit its limit naturally loses the next selection to whichever account still has room: there is no separate "failover" step to trigger, only the ordinary recovery relaunch a stuck or limited worker already gets.
+When no slot can be measured (`quota-axi` unavailable, or every reading unusable), selection reuses the last slot that measured successfully, and falls back to the first configured slot when none has yet.
+The file is a captain-wide preference and is inherited into secondmate homes exactly like `config/claude-permission-mode`; the Keychain itself is per-OS-user and already shared across every firstmate home on one machine, so only the slot name list needs to propagate.
+This session's own login, and no-mistakes' own review and test agents, are unaffected: no-mistakes runs its agents through one daemon shared by every lane on the machine, which has no per-run credential override, so its agents keep using whatever Claude credential that shared daemon's own environment already provides.
+`bin/fm-claude-account.sh`'s header owns slot storage and retrieval mechanics; `bin/fm-claude-account-lib.sh`'s header owns the selection and fallback algorithm.
+
 ## Lavish server address (config/lavish-axi-host)
 
 The optional local, gitignored `config/lavish-axi-host` contains one non-empty address without whitespace for the per-machine Lavish server.

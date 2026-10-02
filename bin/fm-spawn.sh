@@ -349,6 +349,16 @@
 #   worktree, or record exists and names the accepted values. The file is read
 #   on every spawn and relaunch, so a change reaches the next launch without a
 #   restart, and it is inherited into secondmate homes (bin/fm-config-inherit-lib.sh).
+# Claude account switching (config/claude-accounts):
+#   Optional list of config/claude-accounts Keychain slot names (bin/fm-claude-account.sh
+#   owns slot storage). Absent or empty leaves every claude launch (ship, scout,
+#   secondmate, and relaunch) on today's ambient Claude Code login, unchanged.
+#   When present, every claude launch measures each configured slot's remaining
+#   quota-axi allowance and launches on the slot with the most room, recording
+#   the chosen slot (name only, never the token) as claude_account= in the
+#   task's record. bin/fm-claude-account-lib.sh owns selection and fallback
+#   mechanics; docs/configuration.md "Claude account switching" owns the
+#   captain-facing contract. Not applicable to any non-claude harness.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -5024,6 +5034,24 @@ else
   fi
 fi
 
+# config/claude-accounts (header above): resolved once HARNESS is known, only
+# for a claude launch, so a non-claude spawn never pays quota-axi's network
+# cost. Computed once here and reused both for the task record below and for
+# the launch-command env prefix near the end of this script.
+CLAUDE_ACCOUNT_SLOT=
+CLAUDE_ACCOUNT_ENV_PREFIX=
+if [ "$HARNESS" = claude ]; then
+  # shellcheck source=bin/fm-claude-account-lib.sh
+  . "$SCRIPT_DIR/fm-claude-account-lib.sh"
+  CLAUDE_ACCOUNT_SLOT=$(fm_claude_account_select "$CONFIG" "$STATE" "$SCRIPT_DIR/fm-claude-account.sh") || {
+    echo "error: config/claude-accounts could not be read; see the message above" >&2
+    exit 1
+  }
+  CLAUDE_ACCOUNT_SLOT=$(printf '%s' "$CLAUDE_ACCOUNT_SLOT" | tr -d '[:space:]')
+  if [ -n "$CLAUDE_ACCOUNT_SLOT" ]; then
+    CLAUDE_ACCOUNT_ENV_PREFIX="export CLAUDE_CODE_OAUTH_TOKEN=\"\$($(shell_quote "$SCRIPT_DIR/fm-claude-account.sh") get $(shell_quote "$CLAUDE_ACCOUNT_SLOT"))\"; "
+  fi
+fi
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 SPAWN_GEN="s$(date +%s).${BASHPID:-$$}.$RANDOM"
@@ -5043,7 +5071,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx claude_account", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5055,6 +5083,7 @@ preserve_relaunch_meta() {
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
+  [ -z "$CLAUDE_ACCOUNT_SLOT" ] || echo "claude_account=$CLAUDE_ACCOUNT_SLOT"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
@@ -5286,6 +5315,13 @@ fi
 if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   LAUNCH="export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST"); $LAUNCH"
 fi
+# CLAUDE_ACCOUNT_ENV_PREFIX (header above, "Claude account switching") is empty
+# unless HARNESS=claude and config/claude-accounts selected a slot. It carries
+# only the non-secret slot name; the token itself is fetched by the destination
+# pane's own `fm-claude-account.sh get` invocation at launch time, via command
+# substitution, so no credential value ever appears in this script's own
+# variables, the 0600 launch-command file, or any pane text.
+LAUNCH="${CLAUDE_ACCOUNT_ENV_PREFIX}$LAUNCH"
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 if [ -z "$SPAWN_TRACEPARENT" ] && [ "$RELAUNCH" -eq 1 ]; then
   LAUNCH="unset TRACEPARENT; $LAUNCH"
