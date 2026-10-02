@@ -136,6 +136,25 @@ test_mark_from_a_secondmate_home_is_honored_by_the_primary() {
   pass "a limited mark set from a secondmate home is honored by the primary home's spawn"
 }
 
+test_failed_token_fetch_does_not_launch_on_the_ambient_login() {
+  local rec out status result
+  rec=$(make_case claude-fetch-fails claude claude-fetch-a1)
+  read_case "$rec"
+  printf 'account-a\n' > "$HOME_DIR/config/claude-accounts"
+  add_slot account-a tok-aaa
+
+  out=$(run_case_spawn claude-fetch-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "claude spawn should succeed: $out"
+
+  PATH="$FAKEBIN_DIR:$PATH" "$ACCOUNT_BIN" remove account-a >/dev/null
+  install_token_probe "$FAKEBIN_DIR" claude
+  result=$(emitted_token "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" 2>&1)
+  assert_not_contains "$result" unset "claude must not start on the ambient login when the slot's token cannot be read"
+  assert_contains "$result" "account slot 'account-a'" "the failure should name the slot"
+  pass "a failed token fetch skips the launch with an error naming the slot"
+}
+
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
 # bin/fm-spawn.sh --relaunch, so this drives that operator-facing verb rather
 # than the rebuild alone. The custom tmux stub below (adapted from
@@ -282,5 +301,6 @@ test_non_claude_harness_is_unaffected() {
 
 test_claude_launch_skips_the_limited_slot
 test_mark_from_a_secondmate_home_is_honored_by_the_primary
+test_failed_token_fetch_does_not_launch_on_the_ambient_login
 test_claude_relaunch_falls_over_after_exhaustion
 test_non_claude_harness_is_unaffected

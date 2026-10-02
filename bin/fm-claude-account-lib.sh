@@ -20,7 +20,7 @@
 # mark-limited` and removed by `clear-limited`. fm_claude_account_select:
 #   1. skips every slot whose mark exists and has not yet expired;
 #   2. among the remaining slots, prefers the one with the most remaining
-#      allowance when quota-axi can measure it (`CLAUDE_CODE_OAUTH_TOKEN=<token>
+#      allowance (above 0%) when quota-axi can measure it (`CLAUDE_CODE_OAUTH_TOKEN=<token>
 #      quota-axi --provider claude --json --no-credential-refresh`, never an
 #      inference probe), and otherwise takes the first eligible slot in file
 #      order - a slot with no reading is still eligible;
@@ -29,7 +29,9 @@
 # A token is held only in a local shell variable for the duration of one
 # measurement and is never printed, logged, or written to any file.
 #
-# fm_claude_account_select <config-dir> <shared-state-dir> <claude-account-bin>
+# fm_claude_account_select <config-dir> <home> <own-state-dir> <claude-account-bin>
+# Resolves the shared limited-mark directory (fm_claude_account_state_dir)
+# only once config/claude-accounts names at least one slot.
 # Prints the chosen slot name on stdout, or an empty line when the feature is
 # off (config/claude-accounts absent or empty). Returns non-zero only for a
 # malformed config/claude-accounts file.
@@ -128,14 +130,15 @@ fm_claude_account_limited_until() {  # <state-dir> <slot>
 }
 
 fm_claude_account_select() {
-  local config_dir=$1 state_dir=$2 bin=$3
-  local slots slot token pct now until
-  local best_slot='' best_pct=-1 first_eligible='' soonest_slot='' soonest_until=''
+  local config_dir=$1 home=$2 own_state=$3 bin=$4
+  local state_dir slots slot token pct now until
+  local best_slot='' best_pct=0 first_eligible='' soonest_slot='' soonest_until=''
   slots=$(fm_claude_account_configured_slots "$config_dir") || return 1
   if [ -z "$slots" ]; then
     printf '\n'
     return 0
   fi
+  state_dir=$(fm_claude_account_state_dir "$home" "$own_state")
   now=$(date +%s)
   while IFS= read -r slot; do
     [ -n "$slot" ] || continue

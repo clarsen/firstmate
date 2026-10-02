@@ -5038,19 +5038,19 @@ fi
 # config/claude-accounts (header above): resolved once HARNESS is known, only
 # for a claude launch, so a non-claude spawn never pays selection's Keychain
 # and quota-axi cost. Computed once here and reused both for the task record
-# below and for the launch-command env prefix near the end of this script.
+# below and for the launch-command token fetch near the end of this script.
 CLAUDE_ACCOUNT_SLOT=
-CLAUDE_ACCOUNT_ENV_PREFIX=
+CLAUDE_ACCOUNT_TOKEN_FETCH=
 if [ "$HARNESS" = claude ]; then
   # shellcheck source=bin/fm-claude-account-lib.sh
   . "$SCRIPT_DIR/fm-claude-account-lib.sh"
-  CLAUDE_ACCOUNT_SLOT=$(fm_claude_account_select "$CONFIG" "$(fm_claude_account_state_dir "$FM_HOME" "$STATE")" "$SCRIPT_DIR/fm-claude-account.sh") || {
+  CLAUDE_ACCOUNT_SLOT=$(fm_claude_account_select "$CONFIG" "$FM_HOME" "$STATE" "$SCRIPT_DIR/fm-claude-account.sh") || {
     echo "error: config/claude-accounts could not be read; see the message above" >&2
     exit 1
   }
   CLAUDE_ACCOUNT_SLOT=$(printf '%s' "$CLAUDE_ACCOUNT_SLOT" | tr -d '[:space:]')
   if [ -n "$CLAUDE_ACCOUNT_SLOT" ]; then
-    CLAUDE_ACCOUNT_ENV_PREFIX="export CLAUDE_CODE_OAUTH_TOKEN=\"\$($(shell_quote "$SCRIPT_DIR/fm-claude-account.sh") get $(shell_quote "$CLAUDE_ACCOUNT_SLOT"))\"; "
+    CLAUDE_ACCOUNT_TOKEN_FETCH="CLAUDE_CODE_OAUTH_TOKEN=\"\$($(shell_quote "$SCRIPT_DIR/fm-claude-account.sh") get $(shell_quote "$CLAUDE_ACCOUNT_SLOT"))\""
   fi
 fi
 META_WINDOW=$T
@@ -5316,13 +5316,17 @@ fi
 if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   LAUNCH="export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST"); $LAUNCH"
 fi
-# CLAUDE_ACCOUNT_ENV_PREFIX (header above, "Claude account switching") is empty
+# CLAUDE_ACCOUNT_TOKEN_FETCH (header above, "Claude account switching") is empty
 # unless HARNESS=claude and config/claude-accounts selected a slot. It carries
 # only the non-secret slot name; the token itself is fetched by the destination
 # pane's own `fm-claude-account.sh get` invocation at launch time, via command
 # substitution, so no credential value ever appears in this script's own
-# variables, the 0600 launch-command file, or any pane text.
-LAUNCH="${CLAUDE_ACCOUNT_ENV_PREFIX}$LAUNCH"
+# variables, the 0600 launch-command file, or any pane text. A failed fetch
+# skips the launch with an error naming the slot rather than falling back to
+# the ambient login.
+if [ -n "$CLAUDE_ACCOUNT_TOKEN_FETCH" ]; then
+  LAUNCH="if $CLAUDE_ACCOUNT_TOKEN_FETCH; then export CLAUDE_CODE_OAUTH_TOKEN; $LAUNCH; else echo $(shell_quote "error: could not read the Claude credential for account slot '$CLAUDE_ACCOUNT_SLOT'; not launching on the ambient login") >&2; fi"
+fi
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 if [ -z "$SPAWN_TRACEPARENT" ] && [ "$RELAUNCH" -eq 1 ]; then
   LAUNCH="unset TRACEPARENT; $LAUNCH"

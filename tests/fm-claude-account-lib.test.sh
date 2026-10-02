@@ -42,7 +42,7 @@ add_slot() {  # <fakebin> <slot> <token>
 
 select_slot() {  # <config> <state> <fakebin>
   local config=$1 state=$2 fakebin=$3
-  PATH="$fakebin:$PATH" fm_claude_account_select "$config" "$state" "$BIN"
+  PATH="$fakebin:$PATH" fm_claude_account_select "$config" "$(dirname "$state")" "$state" "$BIN"
 }
 
 test_disabled_when_unconfigured() {
@@ -173,6 +173,35 @@ EOF
   pass "mark-limited rejects a malformed --until without writing a mark"
 }
 
+test_measured_exhausted_slot_loses_to_an_unmeasured_eligible_slot() {
+  local rec config state fakebin map out
+  rec=$(new_case exhausted-vs-unmeasured)
+  IFS='|' read -r config state fakebin map <<EOF
+$rec
+EOF
+  printf 'account-a\naccount-b\n' > "$config/claude-accounts"
+  add_slot "$fakebin" account-a tok-a
+  add_slot "$fakebin" account-b tok-b
+  printf 'tok-b 0\n' >> "$map"
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals account-a "$out" "a slot measured at 0% must not beat an unmeasured eligible slot"
+  pass "a measured-exhausted slot loses to an eligible slot with no reading"
+}
+
+test_unconfigured_selection_never_resolves_the_parent_chain() {
+  local rec config state fakebin map out err
+  rec=$(new_case unconfigured-broken-parent)
+  IFS='|' read -r config state fakebin map <<EOF
+$rec
+EOF
+  printf 'schema=fm-secondmate-parent.v1\nroute=invalid\n' > "$(dirname "$state")/.fm-secondmate-parent"
+  err="$TMP_ROOT/unconfigured-broken-parent/select.stderr"
+  out=$(select_slot "$config" "$state" "$fakebin" 2>"$err")
+  assert_equals "" "$out" "an absent config/claude-accounts should select nothing"
+  assert_equals "" "$(cat "$err")" "an unconfigured home must not print a parent-resolution note"
+  pass "selection with the feature off never walks the parent chain or prints its note"
+}
+
 test_malformed_slot_name_refuses() {
   local rec config state fakebin map out status
   rec=$(new_case malformed)
@@ -194,4 +223,6 @@ test_expired_mark_no_longer_excludes
 test_all_limited_selects_the_soonest_to_expire
 test_clear_limited_makes_a_slot_selectable_again
 test_mark_limited_rejects_a_malformed_until
+test_measured_exhausted_slot_loses_to_an_unmeasured_eligible_slot
+test_unconfigured_selection_never_resolves_the_parent_chain
 test_malformed_slot_name_refuses

@@ -8,9 +8,11 @@
 # fm_claude_account_fake_security <fakebin> <store-dir>
 # Drops a `security` shim at <fakebin>/security backed by one file per
 # "<service>.<account>" under <store-dir>. Supports exactly the
-# add-generic-password/-U/-A/-w<value>, find-generic-password/-w(bare), and
-# delete-generic-password shapes bin/fm-claude-account.sh uses; an absent item
-# exits 44 like the real tool's "item not found".
+# `security -i` stdin add-generic-password/-U/-A/-w<value> line,
+# find-generic-password/-w(bare), and delete-generic-password shapes
+# bin/fm-claude-account.sh uses; an absent item exits 44 like the real tool's
+# "item not found". Every invocation's argv is appended to <store-dir>/argv.log
+# so a test can prove no secret ever crossed a process argument list.
 fm_claude_account_fake_security() {
   local fakebin=$1 store=$2
   mkdir -p "$store"
@@ -21,6 +23,11 @@ store="$store"
 SH
   cat >> "$fakebin/security" <<'SH'
 mkdir -p "$store"
+printf '%s\n' "$*" >> "$store/argv.log"
+if [ "${1:-}" = -i ]; then
+  IFS= read -r line || exit 1
+  eval "set -- $line"
+fi
 cmd=${1:-}
 shift || true
 service=""

@@ -14,7 +14,8 @@
 #           token (from `claude setup-token`, used as CLAUDE_CODE_OAUTH_TOKEN)
 #           and store it under this slot's Keychain item, replacing any
 #           existing value. The token is never accepted as a command-line
-#           argument and is never echoed back.
+#           argument, is handed to `security -i` on stdin rather than in any
+#           process's argv, and is never echoed back.
 #   remove  Delete the slot's Keychain item. Missing is not an error.
 #   list    Print each slot named in config/claude-accounts (or passed as
 #           arguments) with "present" or "missing", never a token value.
@@ -68,7 +69,7 @@ fm_claude_account_service() {
 }
 
 cmd_add() {
-  local slot=$1 account token
+  local slot=$1 account token service stored
   fm_claude_account_slot_name_valid "$slot" || {
     echo "error: '$slot' is not a valid slot name; use letters, digits, '-', '_' only, starting with a letter or digit" >&2
     return 1
@@ -87,18 +88,23 @@ cmd_add() {
   fi
   printf '\n' >&2
   case "$token" in
-    '' | *[[:space:]]*)
+    '' | *[!A-Za-z0-9._~+/=-]*)
       token=
-      echo "error: the token must be a single non-empty line with no whitespace" >&2
+      echo "error: the token must be a single non-empty line of letters, digits, and . _ ~ + / = - only" >&2
       return 1
       ;;
   esac
-  if ! security add-generic-password -a "$account" -s "$(fm_claude_account_service "$slot")" -w "$token" -U -A >/dev/null 2>&1; then
+  service=$(fm_claude_account_service "$slot")
+  printf 'add-generic-password -a "%s" -s "%s" -w "%s" -U -A\n' "$account" "$service" "$token" | security -i >/dev/null 2>&1
+  stored=$(security find-generic-password -a "$account" -s "$service" -w 2>/dev/null)
+  if [ "$stored" != "$token" ]; then
     token=
+    stored=
     echo "error: could not store the token for slot '$slot' in the Keychain" >&2
     return 1
   fi
   token=
+  stored=
   echo "stored slot '$slot'"
 }
 

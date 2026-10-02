@@ -142,7 +142,8 @@ EOF
   get_out=$(run_bin "$fakebin" get leak-check 2>"$stderr_file")
   assert_equals "$SECRET" "$get_out" "get's stdout is exactly the token (the one sanctioned exposure)"
   assert_not_contains "$(cat "$stderr_file" 2>/dev/null)" "$SECRET" "get's stderr must never contain the token"
-  pass "the token appears only on get's stdout, never on stderr or add's output"
+  assert_not_contains "$(cat "$store/argv.log")" "$SECRET" "no security invocation may carry the token in its argv"
+  pass "the token appears only on get's stdout, never on stderr, add's output, or any process argv"
 }
 
 test_add_then_get_roundtrips
