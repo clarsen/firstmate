@@ -405,7 +405,8 @@ Firstmate, not a worker, runs `mark-limited` when a worker or a no-mistakes vali
 Marks are machine-wide across one local firstmate tree: every home resolves them in the primary home's `state/` (walking `.fm-secondmate-parent` up to the local primary), so a mark set from any home is honored by every home in that tree. A home whose parent binding cannot be resolved falls back to its own `state/` with a one-line stderr note, and its marks stay home-local until the binding is fixed.
 The file is a captain-wide preference and is inherited into secondmate homes exactly like `config/claude-permission-mode`; the Keychain itself is per-OS-user and already shared across every firstmate home on one machine, so only the slot name list needs to propagate.
 This session's own login is unaffected.
-no-mistakes' own review and test agents are not covered by this feature: they keep using the validation service's own Claude login.
+Known gap: validation agents. no-mistakes' own review and test agents use the validation service's own Claude login and are not covered by this switching mechanism.
+Ready-to-file no-mistakes feature request (documentation only, not filed upstream): let the no-mistakes daemon hold several named Claude credentials (Keychain slot names or per-account `CLAUDE_CONFIG_DIR` values), choose one per run, and fail over to another when a run's agent hits a Claude usage limit - the same per-run credential selection firstmate workers get from `config/claude-accounts`.
 `bin/fm-claude-account.sh`'s header owns slot storage and retrieval mechanics; `bin/fm-claude-account-lib.sh`'s header owns the selection algorithm.
 
 ## Lavish server address (config/lavish-axi-host)
