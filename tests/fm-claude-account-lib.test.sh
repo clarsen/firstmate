@@ -188,6 +188,24 @@ EOF
   pass "a measured-exhausted slot loses to an eligible slot with no reading"
 }
 
+test_measured_exhausted_slot_listed_first_still_loses() {
+  local rec config state fakebin map out
+  rec=$(new_case exhausted-first)
+  IFS='|' read -r config state fakebin map <<EOF
+$rec
+EOF
+  printf 'account-a\naccount-b\n' > "$config/claude-accounts"
+  add_slot "$fakebin" account-a tok-a
+  add_slot "$fakebin" account-b tok-b
+  printf 'tok-a 0\n' >> "$map"
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals account-b "$out" "a slot measured at 0% listed first must not win over a later unmeasured slot"
+  printf 'tok-b 0\n' >> "$map"
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals account-a "$out" "when every unmarked slot measures 0%, the first of them is still selected"
+  pass "a measured-exhausted slot loses regardless of file order and is only a last resort"
+}
+
 test_unconfigured_selection_never_resolves_the_parent_chain() {
   local rec config state fakebin map out err
   rec=$(new_case unconfigured-broken-parent)
@@ -224,5 +242,6 @@ test_all_limited_selects_the_soonest_to_expire
 test_clear_limited_makes_a_slot_selectable_again
 test_mark_limited_rejects_a_malformed_until
 test_measured_exhausted_slot_loses_to_an_unmeasured_eligible_slot
+test_measured_exhausted_slot_listed_first_still_loses
 test_unconfigured_selection_never_resolves_the_parent_chain
 test_malformed_slot_name_refuses

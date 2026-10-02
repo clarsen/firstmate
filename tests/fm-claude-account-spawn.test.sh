@@ -155,6 +155,27 @@ test_failed_token_fetch_does_not_launch_on_the_ambient_login() {
   pass "a failed token fetch skips the launch with an error naming the slot"
 }
 
+test_token_does_not_outlive_the_launch_in_the_pane_shell() {
+  local rec out status launch preamble after
+  rec=$(make_case claude-token-scope claude claude-scope-a1)
+  read_case "$rec"
+  printf 'account-a\n' > "$HOME_DIR/config/claude-accounts"
+  add_slot account-a tok-aaa
+  out=$(run_case_spawn claude-scope-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "claude spawn should succeed: $out"
+  install_token_probe "$FAKEBIN_DIR" claude
+  launch=$(cat "$LAUNCH_LOG")
+  preamble=$(grep '^export ' "$PANE_LOG")
+  after=$(env -i HOME="$TMP_ROOT/pane-home" PATH="$FAKEBIN_DIR:$PATH" TERM=xterm \
+    TMUX=synthetic-pane /bin/sh -c "$preamble
+$launch
+printf 'after=%s\\n' \"\${CLAUDE_CODE_OAUTH_TOKEN-unset}\"")
+  assert_contains "$after" "tok-aaa" "the launched claude should still receive the slot's token"
+  assert_contains "$after" "after=unset" "the pane shell must not keep the token once the launch returns"
+  pass "the slot token is scoped to the launch and unset in the pane shell afterwards"
+}
+
 # bin/fm-control.sh relaunch stops the agent and rebuilds the launch through
 # bin/fm-spawn.sh --relaunch, so this drives that operator-facing verb rather
 # than the rebuild alone. The custom tmux stub below (adapted from
@@ -302,5 +323,6 @@ test_non_claude_harness_is_unaffected() {
 test_claude_launch_skips_the_limited_slot
 test_mark_from_a_secondmate_home_is_honored_by_the_primary
 test_failed_token_fetch_does_not_launch_on_the_ambient_login
+test_token_does_not_outlive_the_launch_in_the_pane_shell
 test_claude_relaunch_falls_over_after_exhaustion
 test_non_claude_harness_is_unaffected

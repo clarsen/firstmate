@@ -23,7 +23,8 @@
 #      allowance (above 0%) when quota-axi can measure it (`CLAUDE_CODE_OAUTH_TOKEN=<token>
 #      quota-axi --provider claude --json --no-credential-refresh`, never an
 #      inference probe), and otherwise takes the first eligible slot in file
-#      order - a slot with no reading is still eligible;
+#      order - a slot with no reading is still eligible, and a slot measured
+#      at 0% is used only when no other unmarked slot remains;
 #   3. when every slot is marked limited, takes the one whose mark expires
 #      soonest and explains that choice on stderr.
 # A token is held only in a local shell variable for the duration of one
@@ -132,7 +133,7 @@ fm_claude_account_limited_until() {  # <state-dir> <slot>
 fm_claude_account_select() {
   local config_dir=$1 home=$2 own_state=$3 bin=$4
   local state_dir slots slot token pct now until
-  local best_slot='' best_pct=0 first_eligible='' soonest_slot='' soonest_until=''
+  local best_slot='' best_pct=0 first_eligible='' exhausted_slot='' soonest_slot='' soonest_until=''
   slots=$(fm_claude_account_configured_slots "$config_dir") || return 1
   if [ -z "$slots" ]; then
     printf '\n'
@@ -149,11 +150,16 @@ fm_claude_account_select() {
       fi
       continue
     fi
-    [ -n "$first_eligible" ] || first_eligible=$slot
-    token=$("$bin" get "$slot" 2>/dev/null) || { token=; continue; }
-    [ -n "$token" ] || continue
-    pct=$(fm_claude_account_measure "$token") || { token=; continue; }
+    token=$("$bin" get "$slot" 2>/dev/null) || token=
+    pct=
+    [ -z "$token" ] || pct=$(fm_claude_account_measure "$token") || pct=
     token=
+    if [ "$pct" = 0 ]; then
+      [ -n "$exhausted_slot" ] || exhausted_slot=$slot
+      continue
+    fi
+    [ -n "$first_eligible" ] || first_eligible=$slot
+    [ -n "$pct" ] || continue
     if [ "$pct" -gt "$best_pct" ]; then
       best_pct=$pct
       best_slot=$slot
@@ -165,6 +171,8 @@ EOF
     printf '%s\n' "$best_slot"
   elif [ -n "$first_eligible" ]; then
     printf '%s\n' "$first_eligible"
+  elif [ -n "$exhausted_slot" ]; then
+    printf '%s\n' "$exhausted_slot"
   else
     echo "note: every configured Claude account slot is marked limited; launching on '$soonest_slot', whose mark expires soonest ($(jq -nr --argjson e "$soonest_until" '$e | todateiso8601'))" >&2
     printf '%s\n' "$soonest_slot"
