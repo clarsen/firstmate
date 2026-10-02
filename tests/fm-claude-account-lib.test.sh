@@ -206,6 +206,19 @@ EOF
   pass "a measured-exhausted slot loses regardless of file order and is only a last resort"
 }
 
+test_unreadable_slot_listed_first_loses_to_a_readable_slot() {
+  local rec config state fakebin map out
+  rec=$(new_case unreadable-first)
+  IFS='|' read -r config state fakebin map <<EOF
+$rec
+EOF
+  printf 'missing-slot\naccount-b\n' > "$config/claude-accounts"
+  add_slot "$fakebin" account-b tok-b
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals account-b "$out" "a slot with no readable token must not beat a later readable slot"
+  pass "a slot whose token cannot be read loses to a readable unmarked slot"
+}
+
 test_unconfigured_selection_never_resolves_the_parent_chain() {
   local rec config state fakebin map out err
   rec=$(new_case unconfigured-broken-parent)
@@ -243,5 +256,6 @@ test_clear_limited_makes_a_slot_selectable_again
 test_mark_limited_rejects_a_malformed_until
 test_measured_exhausted_slot_loses_to_an_unmeasured_eligible_slot
 test_measured_exhausted_slot_listed_first_still_loses
+test_unreadable_slot_listed_first_loses_to_a_readable_slot
 test_unconfigured_selection_never_resolves_the_parent_chain
 test_malformed_slot_name_refuses
