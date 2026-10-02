@@ -1,0 +1,4 @@
+Generated launch files from the live lab run (/tmp/fm-ca*+*): grep for tok-aaa|tok-bbb|ambient-operator-tok -> no matches (exit 1).
+Slot-selected launch wrapper as written to the 0600 launch file (slot name only, token fetched in-pane):
+if CLAUDE_CODE_OAUTH_TOKEN="$('/Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M3ZAZDESR20FX0H0F1396R6F/bin/fm-claude-account.sh' get 'account-a')"; then export CLAUDE_CODE_OAUTH_TOKEN FM_CLAUDE_ACCOUNT_INJECTED=1
+if CLAUDE_CODE_OAUTH_TOKEN="$('/Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M3ZAZDESR20FX0H0F1396R6F/bin/fm-claude-account.sh' get 'account-b')"; then export CLAUDE_CODE_OAUTH_TOKEN FM_CLAUDE_ACCOUNT_INJECTED=1

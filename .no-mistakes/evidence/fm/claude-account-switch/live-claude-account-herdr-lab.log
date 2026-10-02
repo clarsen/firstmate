@@ -1,0 +1,177 @@
+lab session: fm-lab-fmca-live-15110-27818   scratch: /private/tmp/fmca-live.tEMm88
+== S0 real quota-axi with an injected non-allowance token
+{
+  "generatedAt": "2026-10-02T23:25:48.730Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "claude",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "Claude sign-in required"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    }
+  ]
+}
+PASS - S0 real quota-axi with injected token reports status=auth_required, no effectiveAvailability (no ambient-login reading)
+== S1 limited slot skipped on spawn
+Claude setup token for slot account-a (hidden, from `claude setup-token`): 
+stored slot 'account-a'
+Claude setup token for slot account-b (hidden, from `claude setup-token`): 
+stored slot 'account-b'
+account-a: present
+account-b: present
+marked slot 'account-a' limited until 2026-10-03T04:25:49Z
+  spawn ca1 rc=0 (stderr tail: warning: /private/tmp/fmca-live.tEMm88/home1/data/ca1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches spawned ca1 harness=claude kind=ship mode=no-mistakes yolo=off window=fm-lab-fmca-live-15110-27818:w1:p2 worktree=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project )
+----- pane text: S1 (w1:p2) -----
+labtreehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.1
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project. Type 'exit' to return.
+labexport GOTMPDIR=/tmp/fm-ca1/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca1
+lab. '/tmp/fm-ca1+fbf8009445ff4a60e24556dadf99e42def8f8aed323cb1c9387423ed59d47596/launch.s1790983553.15548.20238.sh'
+PROBE-CLAUDE launched token=tok-bbb marker=1
+lab
+-----
+  probe: pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project token=tok-bbb marker=1
+PASS - S1 pane claude launched with account-b's token (account-a marked limited)
+PASS - S1 task meta records claude_account=account-b
+PASS - S1 no raw token in state/ (meta, launch files)
+  pane shell after launch: after=<unset>/<unset>
+PASS - S1 pane shell holds no CLAUDE_CODE_OAUTH_TOKEN/marker after claude exits
+== S2 relaunch fails over to the other account
+cleared limited mark for slot 'account-a' (if it existed)
+marked slot 'account-b' limited until 2026-10-03T04:25:56Z
+  spawn ca1 rc=0 (stderr tail: warning: /private/tmp/fmca-live.tEMm88/home1/data/ca1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches spawned ca1 harness=claude kind=ship mode=no-mistakes yolo=off window=fm-lab-fmca-live-15110-27818:w1:p2 worktree=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project )
+  probe: pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project token=tok-aaa marker=1
+----- pane text: S2 (w1:p2) -----
+labtreehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.1
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project. Type 'exit' to return.
+labexport GOTMPDIR=/tmp/fm-ca1/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca1
+lab. '/tmp/fm-ca1+fbf8009445ff4a60e24556dadf99e42def8f8aed323cb1c9387423ed59d47596/launch.s1790983553.15548.20238.sh'
+PROBE-CLAUDE launched token=tok-bbb marker=1
+labprintf 'after=%s/%s\n' "${CLAUDE_CODE_OAUTH_TOKEN-<unset>}" "${FM_CLAUDE_ACCOUNT_INJECTED-<unset>}" > /private/tmp/fm
+ca-live.tEMm88/s1-after.out
+labexport GOTMPDIR=/tmp/fm-ca1/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca1
+lab. '/tmp/fm-ca1+fbf8009445ff4a60e24556dadf99e42def8f8aed323cb1c9387423ed59d47596/launch.s1790983558.23659.14655.sh'
+PROBE-CLAUDE launched token=tok-aaa marker=1
+lab
+-----
+PASS - S2 relaunch launched on account-a after account-b was marked limited
+PASS - S2 task meta now records claude_account=account-a
+== S3 stale injected token cleared when the feature is turned off
+  spawn ca1 rc=0 (stderr tail: warning: /private/tmp/fmca-live.tEMm88/home1/data/ca1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches spawned ca1 harness=claude kind=ship mode=no-mistakes yolo=off window=fm-lab-fmca-live-15110-27818:w1:p2 worktree=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project )
+  probe: pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project token=<unset> marker=<unset>
+----- pane text: S3 (w1:p2) -----
+labtreehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.1
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project. Type 'exit' to return.
+labexport GOTMPDIR=/tmp/fm-ca1/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca1
+lab. '/tmp/fm-ca1+fbf8009445ff4a60e24556dadf99e42def8f8aed323cb1c9387423ed59d47596/launch.s1790983553.15548.20238.sh'
+PROBE-CLAUDE launched token=tok-bbb marker=1
+labprintf 'after=%s/%s\n' "${CLAUDE_CODE_OAUTH_TOKEN-<unset>}" "${FM_CLAUDE_ACCOUNT_INJECTED-<unset>}" > /private/tmp/fm
+ca-live.tEMm88/s1-after.out
+labexport GOTMPDIR=/tmp/fm-ca1/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca1
+lab. '/tmp/fm-ca1+fbf8009445ff4a60e24556dadf99e42def8f8aed323cb1c9387423ed59d47596/launch.s1790983558.23659.14655.sh'
+PROBE-CLAUDE launched token=tok-aaa marker=1
+labexport CLAUDE_CODE_OAUTH_TOKEN=stale-injected FM_CLAUDE_ACCOUNT_INJECTED=1
+labexport GOTMPDIR=/tmp/fm-ca1/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca1
+lab. '/tmp/fm-ca1+fbf8009445ff4a60e24556dadf99e42def8f8aed323cb1c9387423ed59d47596/launch.s1790983561.29090.16519.sh'
+PROBE-CLAUDE launched token=<unset> marker=<unset>
+lab
+-----
+PASS - S3 slot-less relaunch cleared the marked stale token
+PASS - S3 task meta carries no claude_account with the feature off
+== S4 feature off: ambient operator token untouched
+  spawn ca4 rc=0 (stderr tail: warning: /private/tmp/fmca-live.tEMm88/home4/data/ca4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches spawned ca4 harness=claude kind=ship mode=no-mistakes yolo=off window=fm-lab-fmca-live-15110-27818:w1:p3 worktree=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/2/project )
+  probe: pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/2/project token=ambient-operator-tok marker=<unset>
+----- pane text: S4 (w1:p3) -----
+labtreehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.1
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/2/project. Type 'exit' to return.
+labexport GOTMPDIR=/tmp/fm-ca4/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca4
+lab. '/tmp/fm-ca4+4c5524bda166c5314736d92065a20789498c21a43372271684ceafe471eb33c6/launch.s1790983567.33773.23533.sh'
+PROBE-CLAUDE launched token=ambient-operator-tok marker=<unset>
+lab
+-----
+PASS - S4 no config/claude-accounts: claude keeps the pane's ambient operator token
+== S5 missing Keychain slot listed first does not block launches
+ghost: missing
+account-b: present
+  spawn ca5 rc=0 (stderr tail: warning: /private/tmp/fmca-live.tEMm88/home5/data/ca5/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches spawned ca5 harness=claude kind=ship mode=no-mistakes yolo=off window=fm-lab-fmca-live-15110-27818:w1:p4 worktree=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/3/project )
+  probe: pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/3/project token=tok-bbb marker=1
+----- pane text: S5 (w1:p4) -----
+labtreehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.1
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/3/project. Type 'exit' to return.
+labexport GOTMPDIR=/tmp/fm-ca5/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca5
+lab. '/tmp/fm-ca5+54c6762c6cc2a83df5437a2b690c00caeae91d3fbef2ac6106d31c139c84773a/launch.s1790983573.40260.3887.sh'
+PROBE-CLAUDE launched token=tok-bbb marker=1
+lab
+-----
+PASS - S5 selection skipped the missing 'ghost' slot and launched on account-b
+PASS - S5 meta records account-b
+== S6 token fetch fails in pane: no launch on ambient login
+  spawn ca6 rc=0 (stderr tail: warning: /private/tmp/fmca-live.tEMm88/home6/data/ca6/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches spawned ca6 harness=claude kind=ship mode=no-mistakes yolo=off window=fm-lab-fmca-live-15110-27818:w1:p5 worktree=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/4/project )
+----- pane text: S6 (w1:p5) -----
+labtreehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.1
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/4/project. Type 'exit' to return.
+labexport GOTMPDIR=/tmp/fm-ca6/gotmp
+labexport COMPACT_ADVISER_DISABLE=1
+labexport FM_TASK_ID=ca6
+lab. '/tmp/fm-ca6+213b48b3ec933ba53db5b12f7c3fcde9836c725043af697a5f2509c43b90bb64/launch.s1790983580.44656.29959.sh'
+error: no stored Claude credential for slot 'account-b' (or it could not be read)
+error: could not read the Claude credential for account slot 'account-b'; not launching on the ambient login
+lab
+-----
+PASS - S6 pane shows the named fetch error
+PASS - S6 claude never launched (no ambient-login fallback)
+== probe log
+pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project token=tok-bbb marker=1
+pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project token=tok-aaa marker=1
+pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/1/project token=<unset> marker=<unset>
+pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/2/project token=ambient-operator-tok marker=<unset>
+pwd=/private/tmp/fmca-live.tEMm88/pool/.treehouse/project-0086f7/3/project token=tok-bbb marker=1
+RESULT passes=14 fails=0
+lab teardown exit=0 session=fm-lab-fmca-live-15110-27818

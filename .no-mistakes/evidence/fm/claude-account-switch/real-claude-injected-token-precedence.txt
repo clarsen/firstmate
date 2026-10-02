@@ -1,0 +1,3 @@
+$ CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-lab-bogus-not-a-real-token claude -p "reply with OK" --max-turns 1   (operator ambient login present)
+Failed to authenticate. API Error: 401 OAuth access token is invalid.
+exit=1
