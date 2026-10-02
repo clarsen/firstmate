@@ -4027,6 +4027,41 @@ test_retained_body_keeps_its_utf8_bytes() {
   pass "cleanup preserves every byte of a retained body's non-ASCII characters"
 }
 
+test_gitlab_retention_and_pending_answer() {
+  local home id mr show url
+  home=$(make_home gitlab-retention)
+  id=sample-gitlab-retention
+  mr=https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17
+  tasks_in "$home" add "$id" "Ship a GitLab merge request" --kind ship --repo sample --start >/dev/null \
+    || fail "could not create GitLab retention fixture"
+  run_captain "$home" hold "$id" --reason "captain must choose" >/dev/null \
+    || fail "could not hold GitLab retention fixture"
+  (
+    . "$ROOT/bin/fm-tasks-axi-lib.sh"
+    . "$ROOT/bin/fm-backlog-transition-lib.sh"
+    export FM_HOME="$home" TMPDIR="$home"
+    fm_backlog_retain "$home/data" "$id" --pr "$mr" || exit 1
+    fm_backlog_retain "$home/data" "$id" --pr "$mr" || exit 1
+    if fm_backlog_row_artifact_supported "$id" --pr "$mr"; then exit 1; fi
+    for url in https://github.com/sample/sample/pull/17 https://codeberg.org/sample/sample/pulls/17; do
+      fm_backlog_row_artifact_supported "$id" --pr "$url" || exit 1
+    done
+    fm_backlog_close_marker_write "$home/state" "$id" "$home/data" fixture-gitlab --retain --pr "$mr"
+  ) || fail "GitLab retention or artifact support failed"
+  show=$(tasks_in "$home" show "$id" --full) || fail "retained row disappeared"
+  assert_contains "$show" "state: queued" "retention did not reopen the row"
+  assert_contains "$show" "hold_kind: captain" "retention dropped the captain hold"
+  assert_contains "$show" "Deliverable of the finished work: merge request $mr" "retention lost the merge request"
+  printf 'Proceed with the delivered work.\n' > "$home/answer.txt"
+  run_captain "$home" answer "$id" --decision-file "$home/answer.txt" >/dev/null \
+    || fail "GitLab pending artifact blocked the answer"
+  show=$(tasks_in "$home" show "$id" --full) || fail "answered row disappeared"
+  assert_contains "$show" "state: done" "GitLab answer did not close the row"
+  assert_contains "$show" "$mr" "GitLab answer lost the retained deliverable"
+  pass "GitLab retention is replayable and pending artifacts allow captain answers"
+}
+
+test_gitlab_retention_and_pending_answer
 test_uninventoried_report_decision_refuses_completion
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default
 test_retained_body_keeps_its_utf8_bytes

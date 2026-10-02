@@ -64,6 +64,9 @@ FM_BACKLOG_TRANSITION_ERROR=
 FM_BACKLOG_ROW_RESULT=
 FM_BACKLOG_ROW_STATE=
 FM_BACKLOG_ROW_ERROR=
+# Set by fm_backlog_tasks_axi_rewrite_pr.
+# shellcheck disable=SC2034 # Output global, read by the sourcing caller.
+FM_BACKLOG_TASKS_AXI_ARGS=()
 # Set by fm_backlog_row_probe on a found row: the tasks-axi hold kind, empty when
 # the row is not held.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
@@ -78,6 +81,14 @@ FM_BACKLOG_CLOSE_REPLAY_RESULT=
 # library does not source fm-tasks-axi-lib.sh does not apply.
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+
+# GitLab merge-request URL parsing is fm-pr-lib.sh's alone (fm_pr_url_parse),
+# reused here so a captured --note deliverable for a GitLab merge request is
+# validated and replayed against the same provider rules as everywhere else,
+# never a second hand-rolled URL pattern. Also stateless, so it is safe to
+# source unconditionally even when a caller already sourced it itself.
+# shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
 
 # Latched when a row read hits its bound. fm_backlog_row_show runs inside a
 # command substitution, so the subshell can READ this latch but cannot set it;
@@ -562,16 +573,45 @@ fm_backlog_start() {  # <data-dir> <id>
   fm_backlog_mutate "$1" start "$2"
 }
 
+# tasks-axi's --pr link is validated as a canonical GitHub pull-request or
+# Forgejo pulls URL (tasks-axi done --help) and rejects every other shape,
+# including a GitLab merge-request URL. fm-pr-lib.sh already distinguishes
+# providers (fm_pr_url_parse), so a GitLab --pr pair is rewritten here into a
+# --note tasks-axi accepts, rather than hand-rolling a second URL check at
+# every call site; GitHub and Forgejo --pr pairs, and every other argument,
+# pass through unchanged. Sets FM_BACKLOG_TASKS_AXI_ARGS.
+fm_backlog_tasks_axi_rewrite_pr() {  # <arg>...
+  local -a args=("$@")
+  local i=0 n=${#args[@]}
+  FM_BACKLOG_TASKS_AXI_ARGS=()
+  while [ "$i" -lt "$n" ]; do
+    if [ "${args[$i]}" = --pr ] && [ $((i + 1)) -lt "$n" ] \
+       && fm_pr_url_parse "${args[$((i + 1))]}" && [ "$FM_PR_PROVIDER" = gitlab ]; then
+      FM_BACKLOG_TASKS_AXI_ARGS+=(--note "merge request ${args[$((i + 1))]}")
+      i=$((i + 2))
+    else
+      FM_BACKLOG_TASKS_AXI_ARGS+=("${args[$i]}")
+      i=$((i + 1))
+    fi
+  done
+}
+
 fm_backlog_done() {  # <data-dir> <id> [flag...]
   local data=$1 id=$2
   shift 2
-  fm_backlog_mutate "$data" "done" "$id" "$@"
+  fm_backlog_tasks_axi_rewrite_pr "$@"
+  fm_backlog_mutate "$data" "done" "$id" "${FM_BACKLOG_TASKS_AXI_ARGS[@]+"${FM_BACKLOG_TASKS_AXI_ARGS[@]}"}"
 }
 
 fm_backlog_row_artifact_supported() {
   local id=$1 flag=${2:-} value=${3:-}
   case "$flag" in
-    --pr) return 0 ;;
+    --pr)
+      if fm_pr_url_parse "$value" && [ "$FM_PR_PROVIDER" = gitlab ]; then
+        return 1
+      fi
+      return 0
+      ;;
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
@@ -603,8 +643,12 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
         fi
         ;;
       --pr)
-        deliverable="${deliverable:+$deliverable; }PR $arg"
-        row_args=(--pr "$arg")
+        if fm_pr_url_parse "$arg" && [ "$FM_PR_PROVIDER" = gitlab ]; then
+          deliverable="${deliverable:+$deliverable; }merge request $arg"
+        else
+          deliverable="${deliverable:+$deliverable; }PR $arg"
+          row_args=(--pr "$arg")
+        fi
         ;;
       --note) deliverable="${deliverable:+$deliverable; }$arg" ;;
     esac

@@ -1595,6 +1595,9 @@ backlog_done_args() {
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
       elif [ -n "${PR_URL:-${TASK_PR_URL:-}}" ]; then
+        # fm_backlog_done rewrites this to a tasks-axi-safe --note when the
+        # URL is a GitLab merge request, since tasks-axi's --pr link only
+        # accepts the GitHub and Forgejo pull-request shapes.
         BACKLOG_DONE_ARGS=(--pr "${PR_URL:-${TASK_PR_URL:-}}")
       fi
       ;;
