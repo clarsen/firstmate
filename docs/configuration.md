@@ -388,6 +388,27 @@ Any other value, or an unreadable file, refuses every spawn from that home, whic
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
 
+## Claude account switching (config/claude-accounts)
+
+A captain with two or more Anthropic subscription-plan accounts (not API billing) can let every Claude worker automatically launch on whichever account currently has more room, so one account hitting its session or weekly limit no longer stalls every running task at once.
+Each account is authorized by a setup token from `claude setup-token`, the same long-lived credential Claude Code reads through `CLAUDE_CODE_OAUTH_TOKEN` for non-interactive use.
+Store one token per account with `bin/fm-claude-account.sh add <slot>`, which prompts for the token at a hidden stdin read and never accepts it as a command-line argument; the token is written to a dedicated macOS login Keychain item named for that slot and is never printed, logged, or written into any repo or state file.
+`bin/fm-claude-account.sh remove <slot>` deletes a slot and `list` reports which configured slots are present, by name only.
+List the slots to use, one per line, in the optional local, gitignored `config/claude-accounts`; an absent or empty file is the default and leaves every Claude launch on today's ambient Claude Code login, unchanged.
+With slots configured, every Claude worker launch and relaunch (crewmate, scout, secondmate, and a control-plane relaunch alike) picks a slot and records only that slot's name - never its token - as the task's `claude_account`.
+A setup token is inference-only, so `quota-axi` usually cannot read its remaining allowance, and selection never spends a paid inference probe to find out. Selection is reactive instead:
+`bin/fm-claude-account.sh mark-limited <slot> [--until <YYYY-MM-DDTHH:MM:SSZ>]` marks a slot as limited until that UTC time (default five hours from now), stored as that one timestamp in `.claude-account-limited-<slot>` under the shared state directory described below, and `bin/fm-claude-account.sh clear-limited <slot>` removes the mark.
+Each launch skips every slot with an unexpired mark; among the rest it prefers the slot with more remaining allowance when `quota-axi` can measure one, and otherwise takes the first eligible slot in file order, using a slot measured at 0% or one whose token cannot be read only as a last resort.
+When every slot is marked limited, it launches on the slot whose mark expires soonest and says so on stderr.
+Because every relaunch re-selects, a worker falls over to another account on its next relaunch once its slot is marked.
+Firstmate, not a worker, runs `mark-limited` when a worker or a no-mistakes validation run reports hitting a Claude usage limit, and `clear-limited` once that account is usable again.
+Marks are machine-wide across one local firstmate tree: every home resolves them in the primary home's `state/` (walking `.fm-secondmate-parent` up to the local primary), so a mark set from any home is honored by every home in that tree. A home whose parent binding cannot be resolved falls back to its own `state/` with a one-line stderr note, and its marks stay home-local until the binding is fixed.
+The file is a captain-wide preference and is inherited into secondmate homes exactly like `config/claude-permission-mode`; the Keychain itself is per-OS-user and already shared across every firstmate home on one machine, so only the slot name list needs to propagate.
+This session's own login is unaffected.
+Known gap: validation agents. no-mistakes' own review and test agents use the validation service's own Claude login and are not covered by this switching mechanism.
+Ready-to-file no-mistakes feature request (documentation only, not filed upstream): let the no-mistakes daemon hold several named Claude credentials (Keychain slot names or per-account `CLAUDE_CONFIG_DIR` values), choose one per run, and fail over to another when a run's agent hits a Claude usage limit - the same per-run credential selection firstmate workers get from `config/claude-accounts`.
+`bin/fm-claude-account.sh`'s header owns slot storage and retrieval mechanics; `bin/fm-claude-account-lib.sh`'s header owns the selection algorithm.
+
 ## Lavish server address (config/lavish-axi-host)
 
 The optional local, gitignored `config/lavish-axi-host` contains one non-empty address without whitespace for the per-machine Lavish server.
