@@ -121,9 +121,12 @@
 # bloat the single HTML file, and Lavish already serves sibling files from an
 # artifact's own directory - into an `assets/` directory next to the
 # label-scoped page, referenced by a page-relative path (never a leading
-# `/`, which Lavish's own sibling-asset convention refuses to serve); that
-# directory is cleared and rebuilt on every `page` run, so it never
-# accumulates assets from a prior build. This is presentation only: neither
+# `/`, which Lavish's own sibling-asset convention refuses to serve). Every
+# `page` run stages a fresh assets directory and swaps it in only after the
+# page passes its render proof, so a rebuild never accumulates assets from a
+# prior build and a refused rebuild leaves the published page and its assets
+# intact. That directory is owned by the builder: a media path inside it is
+# refused, since the next rebuild replaces it. This is presentation only: neither
 # field ever changes an answer's key or value, and the render-proof harness
 # (bin/fm-bearings-page-render.mjs) asserts only on rendered controls, never
 # on media bytes.
@@ -627,8 +630,8 @@ finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
 IMAGE_MAX_BYTES=$((5 * 1024 * 1024))
 VIDEO_MAX_BYTES=$((25 * 1024 * 1024))
 
-image_data_uri() {  # <path>
-  local path=$1 size mime b64
+image_data_uri() {  # <path> <out-file>
+  local path=$1 out=$2 size mime
   case "$path" in
     /*) ;;
     *) printf 'image path must be absolute: %s\n' "$path" >&2; return 1 ;;
@@ -647,8 +650,7 @@ image_data_uri() {  # <path>
     image/png|image/jpeg|image/gif|image/webp) ;;
     *) printf 'unsupported image type %s for %s (png, jpeg, gif, and webp only)\n' "$mime" "$path" >&2; return 1 ;;
   esac
-  b64=$(base64 < "$path" | tr -d '\n') || return 1
-  printf 'data:%s;base64,%s' "$mime" "$b64"
+  { printf 'data:%s;base64,' "$mime" && base64 < "$path" | tr -d '\n'; } > "$out" || return 1
 }
 
 # Validate <path> as a supported video file and copy it into <assets-dir> as
@@ -689,22 +691,39 @@ copy_video_asset() {  # <path> <assets-dir> <basename-stem>
 
 # Replace every question/option `image`/`video` path in <data.json> with its
 # resolved reference, writing the result to <dest.json>. Video assets land in
-# <assets-dir>, which the caller creates fresh (so a rebuild never leaves a
-# prior build's orphaned files behind). The input's schema is already
-# validated by this point, so every `image`/`video` present is a non-empty
-# string; resolution only has to prove it is a safe, in-cap, supported file.
-resolve_page_media() {  # <data.json> <dest.json> <assets-dir>
-  local data=$1 dest=$2 assets_dir=$3 json path uri ref qidx oidx
+# <stage-dir>, a fresh directory the caller swaps in as <published-assets-dir>
+# only once the page is proven (so a rebuild never leaves a prior build's
+# orphaned files behind, and a refused one never disturbs them). The input's
+# schema is already validated by this point, so every `image`/`video` present
+# is a non-empty string; resolution only has to prove it is a safe, in-cap,
+# supported file outside the builder-owned published assets directory. Image
+# bytes travel through files and stdin only, never argv or the environment,
+# whose size limits a real photo's data URI would exceed.
+resolve_page_media() {  # <data.json> <dest.json> <stage-dir> <published-assets-dir>
+  local data=$1 dest=$2 assets_dir=$3 published=$4 json path dir uri ref qidx oidx
+  published=$(cd -- "$published" 2>/dev/null && pwd -P) || published=''
+  if [ -n "$published" ]; then
+    while IFS= read -r path; do
+      dir=$(cd -- "${path%/*}/" 2>/dev/null && pwd -P) || continue
+      case "$dir/" in
+        "$published"/*)
+          printf 'media path lies inside the builder-owned assets directory %s, which every rebuild replaces: %s\n' "$published" "$path" >&2
+          return 1
+          ;;
+      esac
+    done < <(jq -r '.questions[] | (., .options[]) | (.image, .video) | select(. != null)' "$data")
+  fi
+  uri="$assets_dir/.data-uri"
   json=$(jq -c . "$data") || return 1
   while IFS=$'\t' read -r qidx path; do
     [ -n "$path" ] || continue
-    uri=$(image_data_uri "$path") || return 1
-    json=$(jq -c --argjson qi "$qidx" --arg uri "$uri" '.questions[$qi].image = $uri' <<< "$json") || return 1
+    image_data_uri "$path" "$uri" || return 1
+    json=$(jq -c --argjson qi "$qidx" --rawfile uri "$uri" '.questions[$qi].image = $uri' <<< "$json") || return 1
   done < <(jq -r '.questions | to_entries[] | select(.value.image != null) | "\(.key)\t\(.value.image)"' "$data")
   while IFS=$'\t' read -r qidx oidx path; do
     [ -n "$path" ] || continue
-    uri=$(image_data_uri "$path") || return 1
-    json=$(jq -c --argjson qi "$qidx" --argjson oi "$oidx" --arg uri "$uri" \
+    image_data_uri "$path" "$uri" || return 1
+    json=$(jq -c --argjson qi "$qidx" --argjson oi "$oidx" --rawfile uri "$uri" \
       '.questions[$qi].options[$oi].image = $uri' <<< "$json") || return 1
   done < <(jq -r '
     .questions | to_entries[] | .key as $qi
@@ -726,6 +745,7 @@ resolve_page_media() {  # <data.json> <dest.json> <assets-dir>
     | .value.options | to_entries[] | select(.value.video != null)
     | "\($qi)\t\(.key)\t\(.value.video)"
   ' "$data")
+  rm -f -- "$uri"
   printf '%s\n' "$json" > "$dest"
 }
 
@@ -853,7 +873,7 @@ command_build() {
 }
 
 command_page() {
-  local data=${1-} label='' page assets_dir json tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
+  local data=${1-} label='' page assets_dir stage_assets='' retired='' tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -877,33 +897,35 @@ command_page() {
 
   page=$(page_path "$label")
   (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
-  # A video asset's page-relative path depends on this directory, so a
-  # rebuild of this label always starts it empty rather than accumulating
-  # the prior build's files underneath a payload that may no longer
-  # reference them.
+  # A video asset's page-relative path depends on this directory, so each
+  # build resolves into a fresh staged directory that replaces it only after
+  # the page is proven, rather than accumulating the prior build's files or
+  # disturbing them on a refusal.
   assets_dir="${page%/*}/assets"
-  rm -rf -- "$assets_dir" || fail "cannot clear the stale assets directory: $assets_dir"
 
+  # A staged page, assets directory, or resolved-data file that never
+  # reaches `mv` - any refusal below - is cleaned up by this trap rather than
+  # by a rm at every call site. The trap outlives this function's own locals,
+  # so it reads `${var:-}` rather than tripping `set -u` once the function
+  # has returned and they are gone.
+  trap 'rm -f -- "${tmp:-}" "${tmp2:-}" "${resolved:-}"; rm -rf -- "${stage_assets:-}" "${retired:-}"' EXIT
   resolved=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-decision-page-resolved.XXXXXX") \
     || fail "cannot stage the resolved page data"
-  # A staged page or resolved-data file that never reaches `mv` - any refusal
-  # below - is cleaned up by this trap rather than by a rm at every call
-  # site. The trap outlives this function's own locals, so it reads
-  # `${var:-}` rather than tripping `set -u` once the function has returned
-  # and they are gone.
-  trap 'rm -f -- "${tmp:-}" "${tmp2:-}" "${resolved:-}"' EXIT
-  if ! resolve_page_media "$data" "$resolved" "$assets_dir"; then
+  stage_assets=$(umask 077; mktemp -d "${page%/*}/.page-assets-stage.XXXXXX") \
+    || fail "cannot stage the page's assets"
+  if ! resolve_page_media "$data" "$resolved" "$stage_assets" "$assets_dir"; then
     fail "cannot resolve an image or video referenced by the page data: $data"
   fi
   data=$resolved
 
-  json=$(jq -c . "$data") || fail "cannot compact the page data"
-  # `<` never appears in JSON syntax outside strings, so escaping every
-  # occurrence keeps the payload valid JSON while making </script> inert.
-  json=${json//</\\u003c}
-
   tmp=$(umask 077; mktemp "${page%/*}/.page.XXXXXX") || fail "cannot stage the page"
-  if ! FM_DECISION_PAGE_JSON="$json" perl -pe "s/^\\Q$PAGE_PLACEHOLDER\\E\$/\$ENV{FM_DECISION_PAGE_JSON}/" "$PAGE_TEMPLATE" > "$tmp"; then
+  # The payload is read from its file, never passed through the environment
+  # or argv, whose size limits an embedded photo would exceed. `<` never
+  # appears in JSON syntax outside strings, so escaping every occurrence
+  # keeps the payload valid JSON while making </script> inert.
+  if ! FM_PAGE_PLACEHOLDER="$PAGE_PLACEHOLDER" perl -pe '
+      BEGIN { my $f = shift @ARGV; open my $fh, "<", $f or die "$f: $!\n"; local $/; $json = <$fh>; chomp $json; $json =~ s/</\\u003c/g }
+      s/^\Q$ENV{FM_PAGE_PLACEHOLDER}\E$/$json/' "$data" "$PAGE_TEMPLATE" > "$tmp"; then
     fail "cannot inject the page data"
   fi
   if grep -qxF "$PAGE_PLACEHOLDER" "$tmp"; then
@@ -925,9 +947,18 @@ command_page() {
   # verify_render fails closed (via `fail`, which exits) rather than
   # returning, so a render-check failure never falls through to publish.
   verify_render "$data" "$tmp"
-  if ! { chmod 0600 "$tmp" && mv -f -- "$tmp" "$page"; }; then
-    fail "cannot publish the page"
+  chmod 0600 "$tmp" || fail "cannot publish the page"
+  retired="$stage_assets.retired"
+  if [ -e "$assets_dir" ] && ! mv -- "$assets_dir" "$retired"; then
+    fail "cannot retire the prior build's assets directory: $assets_dir"
   fi
+  if ! mv -- "$stage_assets" "$assets_dir"; then
+    [ ! -e "$retired" ] || mv -- "$retired" "$assets_dir"
+    fail "cannot publish the page's assets directory: $assets_dir"
+  fi
+  stage_assets=''
+  mv -f -- "$tmp" "$page" || fail "cannot publish the page"
+  rm -rf -- "$retired"
   printf 'page: %s\n' "$page"
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"

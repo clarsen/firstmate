@@ -497,6 +497,78 @@ test_page_rebuild_clears_stale_video_assets_from_a_prior_build() {
   pass "a rebuild clears stale video assets a prior build left behind"
 }
 
+test_page_embeds_a_multi_megabyte_photo_without_hitting_argument_limits() {
+  local home data page out report png
+  home=$(make_home images-large)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  png="$home/photo.png"
+  write_test_png "$png"
+  # A real website photo is routinely well past ARG_MAX (about 1 MiB on
+  # macOS, 128 KiB per argument on Linux) once base64-encoded; the cap is on
+  # file size, so trailing bytes stand in for a photo's real pixel data.
+  head -c 2000000 /dev/urandom >> "$png"
+  write_valid_payload "$data"
+  jq --arg img "$png" '
+    .questions[0].options[0].image = $img
+    | .questions[0].options[1].image = $img
+  ' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+
+  out=$(run_page "$home" "$data" --label "$LABEL" 2>&1) || fail "a payload with a 2 MB photo did not build: $out"
+  assert_present "$page" "a large-photo build reported success without a page"
+  extract_payload "$page" | jq -r '.questions[0].options[0].image' \
+    | sed 's/^data:image\/png;base64,//' > "$home/embedded.b64"
+  { base64 -D < "$home/embedded.b64" 2>/dev/null || base64 -d < "$home/embedded.b64"; } > "$home/embedded.png"
+  cmp -s "$png" "$home/embedded.png" || fail "the embedded data URI does not decode to the source photo's bytes"
+
+  report=$(node "$ROOT/bin/fm-bearings-page-render.mjs" "$page") \
+    || fail "the built page could not be rendered: $report"
+  jq -e '.questions[0].optionImageCount == 2' <<< "$report" >/dev/null \
+    || fail "the rendered page did not draw the large photos: $report"
+  pass "a multi-megabyte photo is embedded byte-for-byte and renders"
+}
+
+test_page_refused_rebuild_leaves_the_published_page_and_assets_intact() {
+  local home data page out rc
+  home=$(make_home videos-refused-rebuild)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_test_mp4 "$home/candidate.mp4"
+  write_valid_payload "$data"
+  jq --arg vid "$home/candidate.mp4" '.questions[0].video = $vid' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  out=$(run_page "$home" "$data" --label "$LABEL") || fail "first video build failed: $out"
+  cp "$page" "$home/published.html"
+
+  jq --arg img "$home/does-not-exist.png" '.questions[0].options[0].image = $img' "$data" \
+    > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a rebuild with a missing image file was accepted"
+  cmp -s "$page" "$home/published.html" || fail "a refused rebuild changed the published page"
+  assert_present "$home/data/$LABEL/assets/q0.mp4" "a refused rebuild deleted the published page's video asset"
+  [ -z "$(find "$home/data/$LABEL" -maxdepth 1 -name '.*')" ] \
+    || fail "a refused rebuild left staging files behind: $(ls -A "$home/data/$LABEL")"
+  pass "a refused rebuild leaves the published page and its video assets intact"
+}
+
+test_page_refuses_a_media_source_inside_the_builder_owned_assets_directory() {
+  local home data page out rc src
+  home=$(make_home images-in-assets)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  mkdir -p "$home/data/$LABEL/assets"
+  src="$home/data/$LABEL/assets/hero.png"
+  write_test_png "$src"
+  write_valid_payload "$data"
+  jq --arg img "$src" '.questions[0].options[0].image = $img' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a media source inside the builder-owned assets directory was accepted"
+  assert_contains "$out" "builder-owned assets directory" "the assets-dir refusal did not say why: $out"
+  assert_present "$src" "the refusal deleted the mate's source photo"
+  assert_absent "$page" "an assets-dir-source refusal still produced a page"
+  pass "page refuses a media source inside its own assets directory and leaves it in place"
+}
+
 test_page_refuses_a_missing_video_file_before_touching_the_page() {
   local home data page rc out
   home=$(make_home videos-missing)
@@ -569,6 +641,9 @@ test_page_refuses_a_non_image_file_and_a_relative_image_path
 test_page_refuses_an_oversized_image_file
 test_page_embeds_a_valid_video_as_a_page_relative_asset_and_renders_it_playable
 test_page_rebuild_clears_stale_video_assets_from_a_prior_build
+test_page_embeds_a_multi_megabyte_photo_without_hitting_argument_limits
+test_page_refused_rebuild_leaves_the_published_page_and_assets_intact
+test_page_refuses_a_media_source_inside_the_builder_owned_assets_directory
 test_page_refuses_a_missing_video_file_before_touching_the_page
 test_page_refuses_a_non_video_file_and_a_relative_video_path
 test_page_refuses_an_oversized_video_file
