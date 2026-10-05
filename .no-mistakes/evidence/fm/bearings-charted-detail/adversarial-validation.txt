@@ -1,0 +1,7 @@
+detail={"links":[{"label":"x","url":"javascript:alert(1)"}]} -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json
+detail={"links":[{"label":"x","url":"http://example.com"}]} -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json
+detail={"links":[{"label":"","url":"https://example.com"}]} -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json
+detail={"links":"https://example.com"} -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json
+detail={"body":42} -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json
+detail="just a string" -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json
+detail={"links":[{"label":"x","url":"https://example.com/a b"}]} -> rc=1 :: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /Users/clarsen/Tmp/nm-bearings-lab/adv.json

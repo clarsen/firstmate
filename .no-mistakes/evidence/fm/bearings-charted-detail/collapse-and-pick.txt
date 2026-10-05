@@ -1,0 +1,1 @@
+result: "\"{\\\"collapsedHidden\\\":true,\\\"toggle\\\":\\\"details\\\",\\\"aria\\\":\\\"false\\\",\\\"checked\\\":true,\\\"dispatchDisabled\\\":false}\""
