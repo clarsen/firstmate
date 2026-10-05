@@ -105,6 +105,44 @@ test_a_recommended_option_and_a_hint_survive_render() {
   pass "a hinted option and a recommended option both still render"
 }
 
+test_question_and_option_images_render_and_stay_presentational() {
+  local home out
+  home=$(fm_test_tmproot render-images)
+  out=$(render "$home" '{
+    "schema": "fm-decision-page.v1",
+    "title": "Pick a photo",
+    "questions": [
+      { "key": "q1", "title": "First", "image": "data:image/png;base64,iVBORw0KGgo=",
+        "options": [
+          {"value":"a","label":"A","image":"data:image/png;base64,iVBORw0KGgo="},
+          {"value":"b","label":"B"} ] }
+    ]
+  }')
+  jq -e '
+    .error == ""
+      and (.questions | length) == 1
+      and (.questions[0] | .key == "q1" and .optionCount == 2
+        and .questionImage == true and .optionImageCount == 1)
+  ' <<< "$out" >/dev/null || fail "the question and option images did not render as declared: $out"
+  pass "a question-level image and one option-level image both render"
+}
+
+test_a_question_with_no_images_reports_none_rendered() {
+  local home out
+  home=$(fm_test_tmproot render-no-images)
+  out=$(render "$home" '{
+    "schema": "fm-decision-page.v1",
+    "title": "Pick one",
+    "questions": [
+      { "key": "q1", "title": "First", "options": [
+        {"value":"a","label":"A"}, {"value":"b","label":"B"} ] }
+    ]
+  }')
+  jq -e '.questions[0].questionImage == false and .questions[0].optionImageCount == 0' <<< "$out" >/dev/null \
+    || fail "a page with no declared images reported a rendered image: $out"
+  pass "a page with no declared images reports no rendered images"
+}
+
 test_deleting_the_questions_container_is_caught_as_a_render_failure() {
   local home out broken_template
   home=$(fm_test_tmproot render-deleted-container)
@@ -128,4 +166,6 @@ test_two_questions_each_render_their_own_radio_group
 test_a_question_with_no_options_never_reaches_the_page
 test_a_wrong_schema_payload_renders_the_fail_closed_error
 test_a_recommended_option_and_a_hint_survive_render
+test_question_and_option_images_render_and_stay_presentational
+test_a_question_with_no_images_reports_none_rendered
 test_deleting_the_questions_container_is_caught_as_a_render_failure

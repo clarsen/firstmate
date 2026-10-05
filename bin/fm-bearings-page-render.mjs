@@ -9,10 +9,16 @@
 //
 // Usage: node fm-bearings-page-render.mjs <built-page.html>
 // Prints one JSON document on success:
-//   { title, questions: [{ key, optionCount, radioName, hasNote }], error }
+//   { title, questions: [{ key, optionCount, radioName, hasNote,
+//     questionImage, optionImageCount }], error }
 // A question is counted only when its form renders exactly one radio-button
 // group (every radio shares one name) with at least one option; `error` is
 // set whenever the page's own fail-closed renderer fired instead.
+// questionImage is true when the card carries a question-level image
+// (class bb-decision__img); optionImageCount counts rendered per-option
+// images (class bb-opt__img) inside the form. Both are presentational
+// render-proof signals only - neither changes a question's key or its
+// radio-group/note assertions above.
 import { readFileSync } from "node:fs";
 
 const path = process.argv[2];
@@ -140,6 +146,20 @@ function hasNoteField(form) {
   walk(form);
   return out.length > 0;
 }
+function optionImageCount(form) {
+  const out = [];
+  const walk = (n) => {
+    if (n.tagName === "img" && n.className === "bb-opt__img") out.push(n);
+    for (const c of n.children) walk(c);
+  };
+  walk(form);
+  return out.length;
+}
+function hasQuestionImage(form) {
+  const pad = form.parentNode;
+  if (!pad) return false;
+  return pad.children.some((c) => c.tagName === "img" && c.className === "bb-decision__img");
+}
 
 const container = byId.get("dp-questions") || new Node("div");
 const forms = findForms(container);
@@ -151,6 +171,8 @@ const questions = forms.map((form) => {
     optionCount: radios.length,
     radioName: names.size === 1 ? [...names][0] : names.size === 0 ? null : "(mixed)",
     hasNote: hasNoteField(form),
+    questionImage: hasQuestionImage(form),
+    optionImageCount: optionImageCount(form),
   };
 });
 

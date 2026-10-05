@@ -93,12 +93,31 @@
 #                   ordinary answer on the source's check wake.
 #     title         non-empty string
 #     body          optional string
+#     image         optional string: an absolute local path to an image file
+#                   shown above the question's options (a still frame is fine
+#                   for a video candidate; inline video playback is not
+#                   supported)
 #     options       non-empty array of { value: slug, label: non-empty string,
-#                   hint: optional string, recommended: optional boolean };
-#                   at most one option may carry recommended: true
+#                   hint: optional string, recommended: optional boolean,
+#                   image: optional string }; at most one option may carry
+#                   recommended: true
 #     note          optional, one of "none" (default), "optional", "required";
 #                   anything but "none" adds a freeform note field, and
 #                   "required" refuses to queue an answer with no note
+#
+# IMAGES ARE RESOLVED, NEVER LINKED. A question's or option's `image` is an
+# absolute local filesystem path - typically under a home's data/ directory,
+# possibly a secondmate home elsewhere on disk - never a path relative to this
+# script or a URL. `page` resolves every such path before publishing: it
+# refuses unless the path exists, is a regular file (never a symlink), is
+# IMAGE_MAX_BYTES (5 MiB) or smaller, and `file --mime-type` reports one of
+# image/png, image/jpeg, image/gif, or image/webp. A resolved image is
+# embedded as a `data:` URI directly in the published page, so the page is
+# fully self-contained and needs no separate file reachable from wherever
+# Lavish serves it. This is presentation only: an image never changes an
+# answer's key or value, and the render-proof harness
+# (bin/fm-bearings-page-render.mjs) asserts only on rendered controls, never
+# on image bytes.
 #
 # RENDER-PROVEN BEFORE A PAGE'S LINK EVER SHIPS. `page` stages the page at a
 # temporary path and runs it through bin/fm-bearings-page-render.mjs, which
@@ -315,12 +334,14 @@ validate_page_payload() {  # <data.json>
       and (.value | slug(128))
       and (.label | nonempty_string)
       and optional_string("hint")
+      and optional_string("image")
       and ((has("recommended") | not) or (.recommended | type == "boolean"));
     def question:
       type == "object"
       and (.key | slug(128))
       and (.title | nonempty_string)
       and optional_string("body")
+      and optional_string("image")
       and (.options | type == "array" and length > 0)
       and ([.options[] | option] | all)
       and (([.options[] | select(.recommended == true)] | length) <= 1)
@@ -581,6 +602,66 @@ finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
   fi
 }
 
+# --- Question-page image resolution -------------------------------------
+# A question's or option's `image` field is an absolute local filesystem
+# path, never a URL or a path relative to this script. Resolve every such
+# path into a `data:` URI BEFORE the payload is injected, so the published
+# page is fully self-contained and needs no file reachable alongside it
+# wherever Lavish serves it from. Fails closed on a missing path, a symlink,
+# an oversized file, or a file whose detected type is not a supported image
+# format - never silently drops or skips an image.
+IMAGE_MAX_BYTES=$((5 * 1024 * 1024))
+
+image_data_uri() {  # <path>
+  local path=$1 size mime b64
+  case "$path" in
+    /*) ;;
+    *) printf 'image path must be absolute: %s\n' "$path" >&2; return 1 ;;
+  esac
+  [ -e "$path" ] || { printf 'image file does not exist: %s\n' "$path" >&2; return 1; }
+  [ ! -L "$path" ] || { printf 'image file must not be a symlink: %s\n' "$path" >&2; return 1; }
+  [ -f "$path" ] || { printf 'image path is not a regular file: %s\n' "$path" >&2; return 1; }
+  command -v file >/dev/null 2>&1 \
+    || { printf 'the file command is required to validate image types\n' >&2; return 1; }
+  size=$(wc -c < "$path" | tr -d '[:space:]') || return 1
+  [ "$size" -le "$IMAGE_MAX_BYTES" ] \
+    || { printf 'image file exceeds the %d-byte cap: %s (%d bytes)\n' "$IMAGE_MAX_BYTES" "$path" "$size" >&2; return 1; }
+  mime=$(file --brief --mime-type "$path" 2>/dev/null) \
+    || { printf 'cannot determine the image type: %s\n' "$path" >&2; return 1; }
+  case "$mime" in
+    image/png|image/jpeg|image/gif|image/webp) ;;
+    *) printf 'unsupported image type %s for %s (png, jpeg, gif, and webp only)\n' "$mime" "$path" >&2; return 1 ;;
+  esac
+  b64=$(base64 < "$path" | tr -d '\n') || return 1
+  printf 'data:%s;base64,%s' "$mime" "$b64"
+}
+
+# Replace every question/option `image` path in <data.json> with its
+# resolved `data:` URI, writing the result to <dest.json>. The input's
+# schema is already validated by this point, so every `image` present is a
+# non-empty string; resolution only has to prove it is a safe, in-cap image
+# file.
+resolve_page_images() {  # <data.json> <dest.json>
+  local data=$1 dest=$2 json path uri qidx oidx
+  json=$(jq -c . "$data") || return 1
+  while IFS=$'\t' read -r qidx path; do
+    [ -n "$path" ] || continue
+    uri=$(image_data_uri "$path") || return 1
+    json=$(jq -c --argjson qi "$qidx" --arg uri "$uri" '.questions[$qi].image = $uri' <<< "$json") || return 1
+  done < <(jq -r '.questions | to_entries[] | select(.value.image != null) | "\(.key)\t\(.value.image)"' "$data")
+  while IFS=$'\t' read -r qidx oidx path; do
+    [ -n "$path" ] || continue
+    uri=$(image_data_uri "$path") || return 1
+    json=$(jq -c --argjson qi "$qidx" --argjson oi "$oidx" --arg uri "$uri" \
+      '.questions[$qi].options[$oi].image = $uri' <<< "$json") || return 1
+  done < <(jq -r '
+    .questions | to_entries[] | .key as $qi
+    | .value.options | to_entries[] | select(.value.image != null)
+    | "\($qi)\t\(.key)\t\(.value.image)"
+  ' "$data")
+  printf '%s\n' "$json" > "$dest"
+}
+
 # Run the built page through a real headless DOM execution and refuse unless
 # every payload question rendered exactly one radio group with options and no
 # fail-closed render error fired.
@@ -605,6 +686,21 @@ verify_render() {  # <data.json> <built-page>
   ' <<< "$report")
   [ -z "$bad" ] \
     || fail "the built page did not render a working radio-button group for: $bad"
+  # Order already proved equal above, so a positional zip ties each payload
+  # question to its render report: every declared question/option image must
+  # actually render, and no extra image must appear where none was declared.
+  bad=$(jq -rn --slurpfile data "$data" --argjson report "$report" '
+    ($data[0].questions) as $qs
+    | [range(0; $qs | length)
+      | $qs[.] as $q
+      | $report.questions[.] as $r
+      | select(
+          (($q.image != null) != ($r.questionImage == true))
+          or (([$q.options[] | select(.image != null)] | length) != $r.optionImageCount))
+      | $q.key] | join(",")
+  ') || fail "cannot compare declared and rendered images"
+  [ -z "$bad" ] \
+    || fail "the built page did not render the declared image(s) for: $bad"
 }
 
 command_build() {
@@ -670,7 +766,7 @@ command_build() {
 }
 
 command_page() {
-  local data=${1-} label='' page json tmp tmp2='' sid extracted pre_reopen_owner link_url
+  local data=${1-} label='' page json tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -692,6 +788,19 @@ command_page() {
   [ "$(grep -cxF "$PAGE_PLACEHOLDER" "$PAGE_TEMPLATE")" -eq 1 ] \
     || fail "page template does not carry exactly one data slot: $PAGE_TEMPLATE"
 
+  resolved=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-decision-page-resolved.XXXXXX") \
+    || fail "cannot stage the resolved page data"
+  # A staged page or resolved-data file that never reaches `mv` - any refusal
+  # below - is cleaned up by this trap rather than by a rm at every call
+  # site. The trap outlives this function's own locals, so it reads
+  # `${var:-}` rather than tripping `set -u` once the function has returned
+  # and they are gone.
+  trap 'rm -f -- "${tmp:-}" "${tmp2:-}" "${resolved:-}"' EXIT
+  if ! resolve_page_images "$data" "$resolved"; then
+    fail "cannot resolve an image referenced by the page data: $data"
+  fi
+  data=$resolved
+
   json=$(jq -c . "$data") || fail "cannot compact the page data"
   # `<` never appears in JSON syntax outside strings, so escaping every
   # occurrence keeps the payload valid JSON while making </script> inert.
@@ -700,12 +809,6 @@ command_page() {
   page=$(page_path "$label")
   (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
   tmp=$(umask 077; mktemp "${page%/*}/.page.XXXXXX") || fail "cannot stage the page"
-  # A staged page that never reaches `mv` - any refusal below - is cleaned up
-  # by this trap rather than by a rm at every call site. The trap outlives
-  # this function's own `local tmp`/`tmp2`, so it reads `${tmp:-}`/`${tmp2:-}`
-  # rather than tripping `set -u` once the function has returned and they are
-  # gone.
-  trap 'rm -f -- "${tmp:-}" "${tmp2:-}"' EXIT
   if ! FM_DECISION_PAGE_JSON="$json" perl -pe "s/^\\Q$PAGE_PLACEHOLDER\\E\$/\$ENV{FM_DECISION_PAGE_JSON}/" "$PAGE_TEMPLATE" > "$tmp"; then
     fail "cannot inject the page data"
   fi

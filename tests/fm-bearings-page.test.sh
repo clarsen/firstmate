@@ -144,6 +144,15 @@ extract_payload() {  # <page-path>
     | sed '1d;$d'
 }
 
+# A minimal valid 1x1 transparent PNG, decoded to real image bytes so `file
+# --mime-type` reports image/png exactly as it would for a real screenshot.
+write_test_png() {  # <path>
+  base64 -D <<< "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mL8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" \
+    > "$1" 2>/dev/null \
+    || base64 -d <<< "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mL8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" \
+    > "$1"
+}
+
 test_page_path_is_label_scoped() {
   local home
   home=$(make_home path)
@@ -329,9 +338,108 @@ test_page_rebuild_after_the_session_ended_arms_a_fresh_source() {
   pass "a rebuild after the session ended retires and re-arms the source"
 }
 
+test_page_embeds_a_valid_option_and_question_image_as_a_data_uri() {
+  local home data page out report png
+  home=$(make_home images-ok)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  png="$home/candidate.png"
+  write_test_png "$png"
+  write_valid_payload "$data"
+  jq --arg img "$png" '
+    .questions[0].image = $img
+    | .questions[0].options[0].image = $img
+  ' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+
+  out=$(run_page "$home" "$data" --label "$LABEL") || fail "a payload with valid images did not build: $out"
+  assert_present "$page" "a valid-image build reported success without a page"
+
+  extract_payload "$page" \
+    | jq -e '
+        (.questions[0].image | startswith("data:image/png;base64,"))
+          and (.questions[0].options[0].image | startswith("data:image/png;base64,"))
+          and (.questions[0].options[1].image == null)
+      ' >/dev/null \
+    || fail "the published page does not carry the resolved image(s) as data URIs"
+  grep -qF "$png" "$page" \
+    && fail "the published page still references the source image path instead of embedding it"
+
+  report=$(node "$ROOT/bin/fm-bearings-page-render.mjs" "$page") \
+    || fail "the built page could not be rendered: $report"
+  jq -e '
+    .questions[0].questionImage == true and .questions[0].optionImageCount == 1
+  ' <<< "$report" >/dev/null \
+    || fail "the rendered page did not draw the declared images: $report"
+  pass "a valid local image on a question and an option is embedded as a data URI and renders"
+}
+
+test_page_refuses_a_missing_image_file_before_touching_the_page() {
+  local home data page rc out
+  home=$(make_home images-missing)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_valid_payload "$data"
+  jq --arg img "$home/does-not-exist.png" '.questions[0].options[0].image = $img' "$data" \
+    > "$data.tmp" && mv "$data.tmp" "$data"
+
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with a missing image file was accepted"
+  assert_contains "$out" "does not exist" "the missing-image refusal did not say why: $out"
+  assert_absent "$page" "a missing-image refusal still produced a page"
+  pass "page refuses a missing image file before touching the page"
+}
+
+test_page_refuses_a_non_image_file_and_a_relative_image_path() {
+  local home data page rc out nonimg
+  home=$(make_home images-wrong-type)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  nonimg="$home/candidate.txt"
+  printf 'not an image\n' > "$nonimg"
+
+  write_valid_payload "$data"
+  jq --arg img "$nonimg" '.questions[0].options[0].image = $img' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with a non-image file was accepted"
+  assert_contains "$out" "unsupported image type" "the wrong-type refusal did not say why: $out"
+  assert_absent "$page" "a wrong-type-image refusal still produced a page"
+
+  write_valid_payload "$data"
+  jq '.questions[0].options[0].image = "relative/candidate.png"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with a relative image path was accepted"
+  assert_contains "$out" "must be absolute" "the relative-path refusal did not say why: $out"
+  assert_absent "$page" "a relative-path-image refusal still produced a page"
+  pass "page refuses a non-image file and a non-absolute image path"
+}
+
+test_page_refuses_an_oversized_image_file() {
+  local home data page rc out big
+  home=$(make_home images-oversized)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  big="$home/big.png"
+  write_test_png "$big"
+  # Pad well past the 5 MiB cap with trailing junk bytes; the cap is enforced
+  # on file size, not on whether the bytes still parse as a real image.
+  head -c 6000000 /dev/zero >> "$big"
+
+  write_valid_payload "$data"
+  jq --arg img "$big" '.questions[0].options[0].image = $img' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with an oversized image file was accepted"
+  assert_contains "$out" "exceeds the" "the oversized-image refusal did not say why: $out"
+  assert_absent "$page" "an oversized-image refusal still produced a page"
+  pass "page refuses an image file over the size cap"
+}
+
 test_page_path_is_label_scoped
 test_page_refuses_malformed_payloads_before_touching_the_page
 test_page_refuses_a_page_that_does_not_render_its_controls
 test_page_renders_the_right_radio_groups_and_answer_keys
 test_page_arms_a_firstmate_owned_source_never_a_task_owned_one
 test_page_rebuild_after_the_session_ended_arms_a_fresh_source
+test_page_embeds_a_valid_option_and_question_image_as_a_data_uri
+test_page_refuses_a_missing_image_file_before_touching_the_page
+test_page_refuses_a_non_image_file_and_a_relative_image_path
+test_page_refuses_an_oversized_image_file

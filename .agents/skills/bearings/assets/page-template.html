@@ -162,8 +162,9 @@ __FM_DECISION_CARD_JS__
         key: item.key,
         title: item.title,
         detail: item.body,
+        image: item.image,
         options: item.options.map(function (o) {
-          return { value: o.value, label: o.label, hint: o.hint, recommended: !!o.recommended };
+          return { value: o.value, label: o.label, hint: o.hint, recommended: !!o.recommended, image: o.image };
         }),
         allowFreeform: noteMode !== "none",
         freeformHint: noteMode === "required" ? "add a note (required)…" : "or add a note…"

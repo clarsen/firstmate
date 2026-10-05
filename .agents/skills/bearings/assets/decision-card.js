@@ -28,8 +28,11 @@ window.FMDecisionCard = (function () {
   function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
   var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
-  // item: { key, title, detail, options:[{value,label,hint,recommended}],
+  // item: { key, title, detail, image, options:[{value,label,hint,recommended,image}],
   //         allowFreeform, freeformHint, close }
+  // `image`, on the item or on any option, is a caller-supplied <img> src
+  // (typically a data: URI) and is purely presentational: it never reaches
+  // window.lavish.queuePrompt and never changes an answer's value.
   // opts: { schema, promptLabel, buttonClass, top:[Node...], context:[Node...],
   //         alwaysShowContext, link:{text,url},
   //         validate:function(value,note) -> message string | falsy,
@@ -47,6 +50,13 @@ window.FMDecisionCard = (function () {
 
     pad.appendChild(el("h3", "bb-decision__title", item.title));
     if (item.detail) pad.appendChild(el("p", "bb-decision__detail", item.detail));
+    if (item.image) {
+      var itemImg = document.createElement("img");
+      itemImg.className = "bb-decision__img";
+      itemImg.src = item.image;
+      itemImg.alt = item.title;
+      pad.appendChild(itemImg);
+    }
     if ((opts.context && opts.context.length) || opts.alwaysShowContext) {
       var ctx = el("div", "bb-ctx");
       (opts.context || []).forEach(function (n) { ctx.appendChild(n); });
@@ -62,10 +72,17 @@ window.FMDecisionCard = (function () {
     form.setAttribute("data-lavish-question", item.key);
     var optsList = el("div", "bb-opts");
     item.options.forEach(function (o) {
-      var lab = el("label", "bb-opt");
+      var lab = el("label", "bb-opt" + (o.image ? " bb-opt--img" : ""));
       var input = document.createElement("input");
       input.type = "radio"; input.name = "answer"; input.value = o.value;
       lab.appendChild(input);
+      if (o.image) {
+        var optImg = document.createElement("img");
+        optImg.className = "bb-opt__img";
+        optImg.src = o.image;
+        optImg.alt = o.label;
+        lab.appendChild(optImg);
+      }
       var body = el("span", "bb-opt__body");
       body.appendChild(el("span", "bb-opt__label", o.label));
       if (o.hint) body.appendChild(el("span", "bb-opt__hint", o.hint));
