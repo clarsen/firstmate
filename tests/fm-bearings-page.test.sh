@@ -153,6 +153,12 @@ write_test_png() {  # <path>
     > "$1"
 }
 
+# A minimal ISO-BMFF `ftyp` box - just enough for `file --mime-type` to read
+# it as video/mp4, exactly as it would a real recording's container header.
+write_test_mp4() {  # <path>
+  printf '\x00\x00\x00\x14ftypisom\x00\x00\x00\x00isom' > "$1"
+}
+
 test_page_path_is_label_scoped() {
   local home
   home=$(make_home path)
@@ -433,6 +439,124 @@ test_page_refuses_an_oversized_image_file() {
   pass "page refuses an image file over the size cap"
 }
 
+test_page_embeds_a_valid_video_as_a_page_relative_asset_and_renders_it_playable() {
+  local home data page out report mp4 png
+  home=$(make_home videos-ok)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  mp4="$home/candidate.mp4"
+  png="$home/poster.png"
+  write_test_mp4 "$mp4"
+  write_test_png "$png"
+  write_valid_payload "$data"
+  jq --arg vid "$mp4" --arg img "$png" '
+    .questions[0].video = $vid
+    | .questions[0].image = $img
+    | .questions[0].options[0].video = $vid
+  ' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+
+  out=$(run_page "$home" "$data" --label "$LABEL") || fail "a payload with a valid video did not build: $out"
+  assert_present "$page" "a valid-video build reported success without a page"
+  assert_present "$home/data/$LABEL/assets/q0.mp4" "the question video asset was not copied beside the page"
+  assert_present "$home/data/$LABEL/assets/q0-o0.mp4" "the option video asset was not copied beside the page"
+
+  extract_payload "$page" \
+    | jq -e '
+        (.questions[0].video == "assets/q0.mp4")
+          and (.questions[0].options[0].video == "assets/q0-o0.mp4")
+          and (.questions[0].image | startswith("data:image/png;base64,"))
+      ' >/dev/null \
+    || fail "the published page does not carry page-relative video references"
+  grep -qF "$mp4" "$page" \
+    && fail "the published page still references the source video path instead of a relative asset"
+
+  report=$(node "$ROOT/bin/fm-bearings-page-render.mjs" "$page") \
+    || fail "the built page could not be rendered: $report"
+  jq -e '
+    .questions[0].questionVideo == true and .questions[0].questionVideoPlayable == true
+      and .questions[0].optionVideoCount == 1 and .questions[0].optionVideoAllPlayable == true
+  ' <<< "$report" >/dev/null \
+    || fail "the rendered page did not draw the declared video(s) as playable: $report"
+  pass "a valid local video on a question and an option is copied as a page-relative asset and renders playable"
+}
+
+test_page_rebuild_clears_stale_video_assets_from_a_prior_build() {
+  local home data page out
+  home=$(make_home videos-stale)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_test_mp4 "$home/candidate.mp4"
+  write_valid_payload "$data"
+  jq --arg vid "$home/candidate.mp4" '.questions[0].video = $vid' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  out=$(run_page "$home" "$data" --label "$LABEL") || fail "first video build failed: $out"
+  assert_present "$home/data/$LABEL/assets/q0.mp4" "the first build did not copy its video asset"
+
+  write_valid_payload "$data"
+  out=$(run_page "$home" "$data" --label "$LABEL") || fail "the image-only rebuild failed: $out"
+  assert_absent "$home/data/$LABEL/assets/q0.mp4" "a rebuild with no video left the prior build's asset behind"
+  pass "a rebuild clears stale video assets a prior build left behind"
+}
+
+test_page_refuses_a_missing_video_file_before_touching_the_page() {
+  local home data page rc out
+  home=$(make_home videos-missing)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_valid_payload "$data"
+  jq --arg vid "$home/does-not-exist.mp4" '.questions[0].options[0].video = $vid' "$data" \
+    > "$data.tmp" && mv "$data.tmp" "$data"
+
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with a missing video file was accepted"
+  assert_contains "$out" "does not exist" "the missing-video refusal did not say why: $out"
+  assert_absent "$page" "a missing-video refusal still produced a page"
+  pass "page refuses a missing video file before touching the page"
+}
+
+test_page_refuses_a_non_video_file_and_a_relative_video_path() {
+  local home data page rc out nonvid
+  home=$(make_home videos-wrong-type)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  nonvid="$home/candidate.txt"
+  printf 'not a video\n' > "$nonvid"
+
+  write_valid_payload "$data"
+  jq --arg vid "$nonvid" '.questions[0].options[0].video = $vid' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with a non-video file was accepted"
+  assert_contains "$out" "unsupported video type" "the wrong-type refusal did not say why: $out"
+  assert_absent "$page" "a wrong-type-video refusal still produced a page"
+
+  write_valid_payload "$data"
+  jq '.questions[0].options[0].video = "relative/candidate.mp4"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with a relative video path was accepted"
+  assert_contains "$out" "must be absolute" "the relative-path refusal did not say why: $out"
+  assert_absent "$page" "a relative-path-video refusal still produced a page"
+  pass "page refuses a non-video file and a non-absolute video path"
+}
+
+test_page_refuses_an_oversized_video_file() {
+  local home data page rc out big
+  home=$(make_home videos-oversized)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  big="$home/big.mp4"
+  write_test_mp4 "$big"
+  # Pad well past the 25 MiB (26,214,400-byte) cap; the cap is enforced on
+  # file size alone.
+  head -c 27000000 /dev/zero >> "$big"
+
+  write_valid_payload "$data"
+  jq --arg vid "$big" '.questions[0].options[0].video = $vid' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload with an oversized video file was accepted"
+  assert_contains "$out" "exceeds the" "the oversized-video refusal did not say why: $out"
+  assert_absent "$page" "an oversized-video refusal still produced a page"
+  pass "page refuses a video file over the size cap"
+}
+
 test_page_path_is_label_scoped
 test_page_refuses_malformed_payloads_before_touching_the_page
 test_page_refuses_a_page_that_does_not_render_its_controls
@@ -443,3 +567,8 @@ test_page_embeds_a_valid_option_and_question_image_as_a_data_uri
 test_page_refuses_a_missing_image_file_before_touching_the_page
 test_page_refuses_a_non_image_file_and_a_relative_image_path
 test_page_refuses_an_oversized_image_file
+test_page_embeds_a_valid_video_as_a_page_relative_asset_and_renders_it_playable
+test_page_rebuild_clears_stale_video_assets_from_a_prior_build
+test_page_refuses_a_missing_video_file_before_touching_the_page
+test_page_refuses_a_non_video_file_and_a_relative_video_path
+test_page_refuses_an_oversized_video_file

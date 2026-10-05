@@ -94,30 +94,39 @@
 #     title         non-empty string
 #     body          optional string
 #     image         optional string: an absolute local path to an image file
-#                   shown above the question's options (a still frame is fine
-#                   for a video candidate; inline video playback is not
-#                   supported)
+#                   shown above the question's options (also used as the
+#                   `video`'s poster frame when both are given)
+#     video         optional string: an absolute local path to a video file
+#                   that plays inline (muted, looped, with controls) above
+#                   the question's options
 #     options       non-empty array of { value: slug, label: non-empty string,
 #                   hint: optional string, recommended: optional boolean,
-#                   image: optional string }; at most one option may carry
-#                   recommended: true
+#                   image: optional string, video: optional string }; at most
+#                   one option may carry recommended: true
 #     note          optional, one of "none" (default), "optional", "required";
 #                   anything but "none" adds a freeform note field, and
 #                   "required" refuses to queue an answer with no note
 #
-# IMAGES ARE RESOLVED, NEVER LINKED. A question's or option's `image` is an
-# absolute local filesystem path - typically under a home's data/ directory,
-# possibly a secondmate home elsewhere on disk - never a path relative to this
-# script or a URL. `page` resolves every such path before publishing: it
-# refuses unless the path exists, is a regular file (never a symlink), is
-# IMAGE_MAX_BYTES (5 MiB) or smaller, and `file --mime-type` reports one of
-# image/png, image/jpeg, image/gif, or image/webp. A resolved image is
-# embedded as a `data:` URI directly in the published page, so the page is
-# fully self-contained and needs no separate file reachable from wherever
-# Lavish serves it. This is presentation only: an image never changes an
-# answer's key or value, and the render-proof harness
+# MEDIA PATHS ARE RESOLVED, NEVER LINKED. A question's or option's `image` or
+# `video` is an absolute local filesystem path - typically under a home's
+# data/ directory, possibly a secondmate home elsewhere on disk - never a path
+# relative to this script or a URL. `page` resolves every such path before
+# publishing, refusing unless the path exists, is a regular file (never a
+# symlink), is within its type's size cap, and `file --mime-type` reports a
+# supported type: image/png, image/jpeg, image/gif, or image/webp for
+# IMAGE_MAX_BYTES (5 MiB); video/mp4, video/webm, or video/quicktime for
+# VIDEO_MAX_BYTES (25 MiB). An image is embedded as a `data:` URI directly in
+# the published page, so it needs no separate file reachable from wherever
+# Lavish serves it. A video is copied instead of embedded - base64 would
+# bloat the single HTML file, and Lavish already serves sibling files from an
+# artifact's own directory - into an `assets/` directory next to the
+# label-scoped page, referenced by a page-relative path (never a leading
+# `/`, which Lavish's own sibling-asset convention refuses to serve); that
+# directory is cleared and rebuilt on every `page` run, so it never
+# accumulates assets from a prior build. This is presentation only: neither
+# field ever changes an answer's key or value, and the render-proof harness
 # (bin/fm-bearings-page-render.mjs) asserts only on rendered controls, never
-# on image bytes.
+# on media bytes.
 #
 # RENDER-PROVEN BEFORE A PAGE'S LINK EVER SHIPS. `page` stages the page at a
 # temporary path and runs it through bin/fm-bearings-page-render.mjs, which
@@ -335,6 +344,7 @@ validate_page_payload() {  # <data.json>
       and (.label | nonempty_string)
       and optional_string("hint")
       and optional_string("image")
+      and optional_string("video")
       and ((has("recommended") | not) or (.recommended | type == "boolean"));
     def question:
       type == "object"
@@ -342,6 +352,7 @@ validate_page_payload() {  # <data.json>
       and (.title | nonempty_string)
       and optional_string("body")
       and optional_string("image")
+      and optional_string("video")
       and (.options | type == "array" and length > 0)
       and ([.options[] | option] | all)
       and (([.options[] | select(.recommended == true)] | length) <= 1)
@@ -602,15 +613,19 @@ finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
   fi
 }
 
-# --- Question-page image resolution -------------------------------------
-# A question's or option's `image` field is an absolute local filesystem
-# path, never a URL or a path relative to this script. Resolve every such
-# path into a `data:` URI BEFORE the payload is injected, so the published
-# page is fully self-contained and needs no file reachable alongside it
-# wherever Lavish serves it from. Fails closed on a missing path, a symlink,
-# an oversized file, or a file whose detected type is not a supported image
-# format - never silently drops or skips an image.
+# --- Question-page media resolution --------------------------------------
+# A question's or option's `image`/`video` field is an absolute local
+# filesystem path, never a URL or a path relative to this script. Resolve
+# every such path BEFORE the payload is injected: an image becomes a
+# `data:` URI inline in the payload, while a video is copied into an
+# `assets/` directory beside the published page and becomes a page-relative
+# path (Lavish serves sibling files from an artifact's own directory, and a
+# base64 video would bloat the single HTML file far more than an image
+# does). Fails closed on a missing path, a symlink, an oversized file, or a
+# file whose detected type is not supported - never silently drops or skips
+# a media reference.
 IMAGE_MAX_BYTES=$((5 * 1024 * 1024))
+VIDEO_MAX_BYTES=$((25 * 1024 * 1024))
 
 image_data_uri() {  # <path>
   local path=$1 size mime b64
@@ -636,13 +651,50 @@ image_data_uri() {  # <path>
   printf 'data:%s;base64,%s' "$mime" "$b64"
 }
 
-# Replace every question/option `image` path in <data.json> with its
-# resolved `data:` URI, writing the result to <dest.json>. The input's
-# schema is already validated by this point, so every `image` present is a
-# non-empty string; resolution only has to prove it is a safe, in-cap image
-# file.
-resolve_page_images() {  # <data.json> <dest.json>
-  local data=$1 dest=$2 json path uri qidx oidx
+# Validate <path> as a supported video file and copy it into <assets-dir> as
+# <basename> (caller picks a collision-free name), printing nothing. Unlike
+# images, a video is never base64-embedded.
+video_asset_extension() {  # <mime>
+  case "$1" in
+    video/mp4) printf 'mp4' ;;
+    video/webm) printf 'webm' ;;
+    video/quicktime) printf 'mov' ;;
+    *) return 1 ;;
+  esac
+}
+
+copy_video_asset() {  # <path> <assets-dir> <basename-stem>
+  local path=$1 assets_dir=$2 stem=$3 size mime ext
+  case "$path" in
+    /*) ;;
+    *) printf 'video path must be absolute: %s\n' "$path" >&2; return 1 ;;
+  esac
+  [ -e "$path" ] || { printf 'video file does not exist: %s\n' "$path" >&2; return 1; }
+  [ ! -L "$path" ] || { printf 'video file must not be a symlink: %s\n' "$path" >&2; return 1; }
+  [ -f "$path" ] || { printf 'video path is not a regular file: %s\n' "$path" >&2; return 1; }
+  command -v file >/dev/null 2>&1 \
+    || { printf 'the file command is required to validate video types\n' >&2; return 1; }
+  size=$(wc -c < "$path" | tr -d '[:space:]') || return 1
+  [ "$size" -le "$VIDEO_MAX_BYTES" ] \
+    || { printf 'video file exceeds the %d-byte cap: %s (%d bytes)\n' "$VIDEO_MAX_BYTES" "$path" "$size" >&2; return 1; }
+  mime=$(file --brief --mime-type "$path" 2>/dev/null) \
+    || { printf 'cannot determine the video type: %s\n' "$path" >&2; return 1; }
+  ext=$(video_asset_extension "$mime") \
+    || { printf 'unsupported video type %s for %s (mp4, webm, and quicktime/mov only)\n' "$mime" "$path" >&2; return 1; }
+  (umask 077; mkdir -p "$assets_dir") || { printf 'cannot create %s\n' "$assets_dir" >&2; return 1; }
+  (umask 077; cp -- "$path" "$assets_dir/$stem.$ext") \
+    || { printf 'cannot copy video asset: %s\n' "$path" >&2; return 1; }
+  printf 'assets/%s.%s' "$stem" "$ext"
+}
+
+# Replace every question/option `image`/`video` path in <data.json> with its
+# resolved reference, writing the result to <dest.json>. Video assets land in
+# <assets-dir>, which the caller creates fresh (so a rebuild never leaves a
+# prior build's orphaned files behind). The input's schema is already
+# validated by this point, so every `image`/`video` present is a non-empty
+# string; resolution only has to prove it is a safe, in-cap, supported file.
+resolve_page_media() {  # <data.json> <dest.json> <assets-dir>
+  local data=$1 dest=$2 assets_dir=$3 json path uri ref qidx oidx
   json=$(jq -c . "$data") || return 1
   while IFS=$'\t' read -r qidx path; do
     [ -n "$path" ] || continue
@@ -658,6 +710,21 @@ resolve_page_images() {  # <data.json> <dest.json>
     .questions | to_entries[] | .key as $qi
     | .value.options | to_entries[] | select(.value.image != null)
     | "\($qi)\t\(.key)\t\(.value.image)"
+  ' "$data")
+  while IFS=$'\t' read -r qidx path; do
+    [ -n "$path" ] || continue
+    ref=$(copy_video_asset "$path" "$assets_dir" "q${qidx}") || return 1
+    json=$(jq -c --argjson qi "$qidx" --arg ref "$ref" '.questions[$qi].video = $ref' <<< "$json") || return 1
+  done < <(jq -r '.questions | to_entries[] | select(.value.video != null) | "\(.key)\t\(.value.video)"' "$data")
+  while IFS=$'\t' read -r qidx oidx path; do
+    [ -n "$path" ] || continue
+    ref=$(copy_video_asset "$path" "$assets_dir" "q${qidx}-o${oidx}") || return 1
+    json=$(jq -c --argjson qi "$qidx" --argjson oi "$oidx" --arg ref "$ref" \
+      '.questions[$qi].options[$oi].video = $ref' <<< "$json") || return 1
+  done < <(jq -r '
+    .questions | to_entries[] | .key as $qi
+    | .value.options | to_entries[] | select(.value.video != null)
+    | "\($qi)\t\(.key)\t\(.value.video)"
   ' "$data")
   printf '%s\n' "$json" > "$dest"
 }
@@ -687,20 +754,40 @@ verify_render() {  # <data.json> <built-page>
   [ -z "$bad" ] \
     || fail "the built page did not render a working radio-button group for: $bad"
   # Order already proved equal above, so a positional zip ties each payload
-  # question to its render report: every declared question/option image must
-  # actually render, and no extra image must appear where none was declared.
+  # question to its render report: every declared question/option image or
+  # video must actually render, and nothing extra must appear where none was
+  # declared. A `video` takes over the rendered media slot and consumes any
+  # sibling `image` as its poster attribute instead of a separate <img> (see
+  # decision-card.js's build()/buildVideo()), so a standalone rendered image
+  # is expected only where no video was also declared for that same item.
   bad=$(jq -rn --slurpfile data "$data" --argjson report "$report" '
     ($data[0].questions) as $qs
     | [range(0; $qs | length)
       | $qs[.] as $q
       | $report.questions[.] as $r
+      | ([$q.options[] | select(.video == null and .image != null)] | length) as $expect_opt_images
       | select(
-          (($q.image != null) != ($r.questionImage == true))
-          or (([$q.options[] | select(.image != null)] | length) != $r.optionImageCount))
+          ((($q.image != null and $q.video == null)) != ($r.questionImage == true))
+          or ($expect_opt_images != $r.optionImageCount)
+          or (($q.video != null) != ($r.questionVideo == true))
+          or (([$q.options[] | select(.video != null)] | length) != $r.optionVideoCount))
       | $q.key] | join(",")
-  ') || fail "cannot compare declared and rendered images"
+  ') || fail "cannot compare declared and rendered media"
   [ -z "$bad" ] \
-    || fail "the built page did not render the declared image(s) for: $bad"
+    || fail "the built page did not render the declared image(s)/video(s) for: $bad"
+  # A rendered video must actually be set up to autoplay inline rather than
+  # sit as a silent poster the captain has to click through, so every
+  # declared video is also checked for the attributes the brief promised:
+  # muted, looped, controls, and playing without the captain's input.
+  bad=$(jq -r '
+    [.questions[]
+      | select(
+          (.questionVideo == true and .questionVideoPlayable != true)
+          or (.optionVideoCount > 0 and .optionVideoAllPlayable != true))
+      | .key] | join(",")
+  ' <<< "$report")
+  [ -z "$bad" ] \
+    || fail "the built page rendered a video that is not set up to autoplay muted/looped/controlled: $bad"
 }
 
 command_build() {
@@ -766,7 +853,7 @@ command_build() {
 }
 
 command_page() {
-  local data=${1-} label='' page json tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
+  local data=${1-} label='' page assets_dir json tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -788,6 +875,15 @@ command_page() {
   [ "$(grep -cxF "$PAGE_PLACEHOLDER" "$PAGE_TEMPLATE")" -eq 1 ] \
     || fail "page template does not carry exactly one data slot: $PAGE_TEMPLATE"
 
+  page=$(page_path "$label")
+  (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
+  # A video asset's page-relative path depends on this directory, so a
+  # rebuild of this label always starts it empty rather than accumulating
+  # the prior build's files underneath a payload that may no longer
+  # reference them.
+  assets_dir="${page%/*}/assets"
+  rm -rf -- "$assets_dir" || fail "cannot clear the stale assets directory: $assets_dir"
+
   resolved=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-decision-page-resolved.XXXXXX") \
     || fail "cannot stage the resolved page data"
   # A staged page or resolved-data file that never reaches `mv` - any refusal
@@ -796,8 +892,8 @@ command_page() {
   # `${var:-}` rather than tripping `set -u` once the function has returned
   # and they are gone.
   trap 'rm -f -- "${tmp:-}" "${tmp2:-}" "${resolved:-}"' EXIT
-  if ! resolve_page_images "$data" "$resolved"; then
-    fail "cannot resolve an image referenced by the page data: $data"
+  if ! resolve_page_media "$data" "$resolved" "$assets_dir"; then
+    fail "cannot resolve an image or video referenced by the page data: $data"
   fi
   data=$resolved
 
@@ -806,8 +902,6 @@ command_page() {
   # occurrence keeps the payload valid JSON while making </script> inert.
   json=${json//</\\u003c}
 
-  page=$(page_path "$label")
-  (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
   tmp=$(umask 077; mktemp "${page%/*}/.page.XXXXXX") || fail "cannot stage the page"
   if ! FM_DECISION_PAGE_JSON="$json" perl -pe "s/^\\Q$PAGE_PLACEHOLDER\\E\$/\$ENV{FM_DECISION_PAGE_JSON}/" "$PAGE_TEMPLATE" > "$tmp"; then
     fail "cannot inject the page data"

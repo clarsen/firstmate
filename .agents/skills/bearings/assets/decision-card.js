@@ -28,11 +28,48 @@ window.FMDecisionCard = (function () {
   function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
   var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
-  // item: { key, title, detail, image, options:[{value,label,hint,recommended,image}],
+  // A `video` src is a page-relative path (never a data: URI - see
+  // bin/fm-bearings-board.sh's resolve_page_media), so its extension is the
+  // only type signal the browser needs for the <source type> hint.
+  function videoMimeForSrc(src) {
+    var ext = (src.split(".").pop() || "").toLowerCase();
+    if (ext === "mp4") return "video/mp4";
+    if (ext === "webm") return "video/webm";
+    if (ext === "mov") return "video/quicktime";
+    return "";
+  }
+  // Plays inline without the viewer clicking through a silent poster: muted
+  // (required for autoplay in every major browser), looped, with controls
+  // so the viewer can pause/seek, and playsinline so mobile Safari does not
+  // force fullscreen. `posterSrc` (the item's/option's own `image`, when
+  // given) is shown before the first frame decodes.
+  function buildVideo(cls, src, posterSrc, alt) {
+    var v = document.createElement("video");
+    v.className = cls;
+    v.muted = true; v.setAttribute("muted", "");
+    v.loop = true; v.setAttribute("loop", "");
+    v.autoplay = true; v.setAttribute("autoplay", "");
+    v.controls = true; v.setAttribute("controls", "");
+    v.playsInline = true; v.setAttribute("playsinline", "");
+    if (posterSrc) v.poster = posterSrc;
+    v.setAttribute("aria-label", alt || "");
+    var source = document.createElement("source");
+    source.setAttribute("src", src);
+    var mime = videoMimeForSrc(src);
+    if (mime) source.setAttribute("type", mime);
+    v.appendChild(source);
+    return v;
+  }
+
+  // item: { key, title, detail, image, video,
+  //         options:[{value,label,hint,recommended,image,video}],
   //         allowFreeform, freeformHint, close }
-  // `image`, on the item or on any option, is a caller-supplied <img> src
-  // (typically a data: URI) and is purely presentational: it never reaches
-  // window.lavish.queuePrompt and never changes an answer's value.
+  // `image`/`video`, on the item or on any option, are caller-supplied media
+  // references (an `image` is typically a data: URI, a `video` a
+  // page-relative path) and are purely presentational: neither reaches
+  // window.lavish.queuePrompt or changes an answer's value. When both are
+  // given, `image` is the video's poster frame rather than a separate
+  // static image.
   // opts: { schema, promptLabel, buttonClass, top:[Node...], context:[Node...],
   //         alwaysShowContext, link:{text,url},
   //         validate:function(value,note) -> message string | falsy,
@@ -50,7 +87,9 @@ window.FMDecisionCard = (function () {
 
     pad.appendChild(el("h3", "bb-decision__title", item.title));
     if (item.detail) pad.appendChild(el("p", "bb-decision__detail", item.detail));
-    if (item.image) {
+    if (item.video) {
+      pad.appendChild(buildVideo("bb-decision__video", item.video, item.image, item.title));
+    } else if (item.image) {
       var itemImg = document.createElement("img");
       itemImg.className = "bb-decision__img";
       itemImg.src = item.image;
@@ -72,11 +111,13 @@ window.FMDecisionCard = (function () {
     form.setAttribute("data-lavish-question", item.key);
     var optsList = el("div", "bb-opts");
     item.options.forEach(function (o) {
-      var lab = el("label", "bb-opt" + (o.image ? " bb-opt--img" : ""));
+      var lab = el("label", "bb-opt" + ((o.image || o.video) ? " bb-opt--img" : ""));
       var input = document.createElement("input");
       input.type = "radio"; input.name = "answer"; input.value = o.value;
       lab.appendChild(input);
-      if (o.image) {
+      if (o.video) {
+        lab.appendChild(buildVideo("bb-opt__video", o.video, o.image, o.label));
+      } else if (o.image) {
         var optImg = document.createElement("img");
         optImg.className = "bb-opt__img";
         optImg.src = o.image;
