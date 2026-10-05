@@ -78,6 +78,17 @@ SH
   chmod +x "$1/$2"
 }
 
+install_settings_probe() {  # <fakebin> <harness>
+  cat > "$1/$2" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  [ "$1" = --settings ] && printf '%s\n' "$2"
+  shift
+done
+SH
+  chmod +x "$1/$2"
+}
+
 emitted_token() {  # <fakebin> <launch-log> <pane-log>
   local fakebin=$1 launchlog=$2 panelog=$3 launch preamble
   launch=$(cat "$launchlog")
@@ -89,7 +100,7 @@ $launch"
 }
 
 test_claude_launch_skips_the_limited_slot() {
-  local rec out status launch token meta
+  local rec out status launch token meta settings statusline_cmd statusline_out
   rec=$(make_case claude-select claude claude-select-a1)
   read_case "$rec"
   printf 'account-a\naccount-b\n' > "$HOME_DIR/config/claude-accounts"
@@ -113,8 +124,14 @@ test_claude_launch_skips_the_limited_slot() {
   assert_not_contains "$launch" tok-bbb "the recorded launch command must never contain the raw token"
   assert_not_contains "$launch" tok-aaa "the recorded launch command must never contain the raw token"
   assert_not_contains "$meta" tok-bbb "the task record must never contain the raw token"
-  assert_contains "$launch" "fm-claude-usage-record.sh" "the selected launch's --settings should inject the usage recorder's statusLine"
-  assert_contains "$launch" "statusLine" "the selected launch's --settings should carry a statusLine key"
+  install_settings_probe "$FAKEBIN_DIR" claude
+  settings=$(emitted_token "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "the emitted claude launch failed to run with the settings probe"
+  statusline_cmd=$(printf '%s' "$settings" | jq -er '.statusLine | select(.type == "command") | .command') \
+    || fail "the selected launch's --settings should parse as JSON carrying a command statusLine: $settings"
+  statusline_out=$(printf '{}' | FM_CLAUDE_ACCOUNT_SLOT=account-b FM_HOME="$HOME_DIR" /bin/sh -c "$statusline_cmd") \
+    || fail "the injected statusLine command should run as a shell command: $statusline_cmd"
+  assert_equals "firstmate:account-b" "$statusline_out" "the injected statusLine command should be the usage recorder"
   assert_quota_axi_never_called "a claude spawn's own slot selection"
   pass "a claude launch skips the limited slot and uses the other, recording only its name"
 }

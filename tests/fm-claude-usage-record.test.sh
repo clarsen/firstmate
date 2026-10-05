@@ -106,6 +106,39 @@ test_no_window_at_100_percent_leaves_the_mark_untouched() {
   pass "a reading with no window at 100% used leaves the slot's limited mark untouched"
 }
 
+test_a_lower_reading_in_the_same_window_generation_does_not_regress_the_record() {
+  local home out status now resets_5h resets_7d new_resets_7d file
+  home=$(new_case no-regress)
+  now=$(date +%s)
+  resets_5h=$((now + 7200))
+  resets_7d=$((now + 500000))
+  new_resets_7d=$((now + 600000))
+  run_recorder "$home" work-a \
+    "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":95,\"resets_at\":$resets_5h},\"seven_day\":{\"used_percentage\":60,\"resets_at\":$resets_7d}}}" >/dev/null
+  out=$(run_recorder "$home" work-a \
+    "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":$resets_5h},\"seven_day\":{\"used_percentage\":2,\"resets_at\":$new_resets_7d}}}") status=$?
+  expect_code 0 "$status" "the recorder must exit 0: $out"
+  file=$(usage_file "$home" work-a)
+  assert_equals "95 $resets_5h" "$(jq -r '"\(.five_hour.used_percentage) \(.five_hour.resets_at)"' "$file")" \
+    "a lower five_hour reading for the same resets_at must not replace the higher stored one"
+  assert_equals "2 $new_resets_7d" "$(jq -r '"\(.seven_day.used_percentage) \(.seven_day.resets_at)"' "$file")" \
+    "a seven_day reading for a new window generation should replace the stored one outright"
+  [ "$(jq -r '.observed_at' "$file")" -ge "$now" ] || fail "observed_at should be refreshed on every write"
+  pass "a stale lower reading never regresses its window's generation, while a new generation is accepted"
+}
+
+test_a_saturated_window_whose_reset_has_passed_does_not_mark() {
+  local home out status now markfile
+  home=$(new_case stale-saturated)
+  now=$(date +%s)
+  out=$(run_recorder "$home" work-a \
+    "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":100,\"resets_at\":$((now - 60))}}}") status=$?
+  expect_code 0 "$status" "the recorder must exit 0: $out"
+  markfile="$home/state/.claude-account-limited-work-a"
+  [ ! -f "$markfile" ] || fail "a saturated window whose reset has already passed must not write a limited mark"
+  pass "a stale saturated reading whose reset has passed never writes a limited mark"
+}
+
 test_the_recorder_never_prints_the_slot_name_as_a_secret_but_also_never_sees_a_token() {
   local home out
   home=$(new_case no-token)
@@ -130,5 +163,7 @@ test_missing_rate_limits_writes_no_file
 test_no_slot_env_does_nothing_but_still_succeeds
 test_a_window_at_100_percent_refreshes_the_limited_mark_with_the_real_reset
 test_no_window_at_100_percent_leaves_the_mark_untouched
+test_a_lower_reading_in_the_same_window_generation_does_not_regress_the_record
+test_a_saturated_window_whose_reset_has_passed_does_not_mark
 test_the_recorder_never_prints_the_slot_name_as_a_secret_but_also_never_sees_a_token
 test_malformed_stdin_does_not_fail_the_worker

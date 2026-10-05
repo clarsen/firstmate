@@ -16,7 +16,12 @@
 # fm_claude_account_usage_write/_room own the atomic write and the selection
 # read), and refreshes the slot's limited mark with the real reset time
 # (`fm-claude-account.sh mark-limited --until <resets_at>`) when a window
-# reports 100% used, rather than firstmate guessing a five-hour default.
+# reports 100% used with a reset still ahead, rather than firstmate guessing a
+# five-hour default. Several workers can share one slot, each seeing only its
+# own last response, so each window is merged with the slot's stored reading:
+# within one window generation (same resets_at) usage only rises, so a lower
+# incoming used_percentage never replaces a higher stored one, while a new
+# generation (different resets_at) replaces it outright.
 #
 # Never fails the worker: every exit is 0, and every step is best-effort. It
 # stores no session content and no token, and it never reads or prints one;
@@ -57,10 +62,24 @@ if [ -n "$SLOT" ] && fm_claude_account_slot_name_valid "$SLOT"; then
     ' >/dev/null 2>&1; then
       STATE_DIR=$(fm_claude_account_state_dir "$FM_HOME" "$STATE" 2>/dev/null) || STATE_DIR=
       if [ -n "$STATE_DIR" ]; then
+        EXISTING=$(jq -c 'objects' "$(fm_claude_account_usage_file "$STATE_DIR" "$SLOT")" 2>/dev/null) || EXISTING=
+        [ -n "$EXISTING" ] || EXISTING=null
+        RECORD=$(printf '%s' "$RECORD" | jq -c --argjson old "$EXISTING" '
+          def merge($o; $n):
+            if $n.used_percentage == null then ($o // $n)
+            elif ($o != null) and ($o.resets_at == $n.resets_at)
+              and (($o.used_percentage // -1) > $n.used_percentage) then $o
+            else $n
+            end;
+          .five_hour = merge($old.five_hour; .five_hour)
+          | .seven_day = merge($old.seven_day; .seven_day)
+        ' 2>/dev/null) || RECORD=
+      fi
+      if [ -n "$STATE_DIR" ] && [ -n "$RECORD" ]; then
         fm_claude_account_usage_write "$STATE_DIR" "$SLOT" "$RECORD" 2>/dev/null || true
-        SATURATED_UNTIL=$(printf '%s' "$RECORD" | jq -r '
+        SATURATED_UNTIL=$(printf '%s' "$RECORD" | jq -r --argjson now "$(date +%s)" '
           [.five_hour, .seven_day]
-          | map(select((.used_percentage // 0) >= 100 and (.resets_at != null)))
+          | map(select((.used_percentage // 0) >= 100 and (.resets_at != null) and (.resets_at > $now)))
           | map(.resets_at)
           | max // empty
         ' 2>/dev/null)

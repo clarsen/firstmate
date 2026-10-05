@@ -170,6 +170,24 @@ EOF
   pass "status reports each slot's mark and recorded reading without any token value"
 }
 
+test_status_reports_a_past_reset_window_as_reset() {
+  local rec fakebin store home out
+  rec=$(new_case status-reset)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  home="$TMP_ROOT/status-reset/home"
+  mkdir -p "$home/config" "$home/state"
+  printf 'account-a\n' > "$home/config/claude-accounts"
+  printf '{"five_hour":{"used_percentage":100,"resets_at":1},"seven_day":{"used_percentage":40,"resets_at":9999999999},"observed_at":1}\n' \
+    > "$home/state/.claude-account-usage-account-a"
+  out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" status)
+  assert_contains "$out" "5h=reset" "a window whose resets_at has passed should report as reset"
+  assert_not_contains "$out" "5h=100%" "a window whose resets_at has passed must not report its stale used percentage"
+  assert_contains "$out" "7d=40%" "a window still ahead of its reset should report its used percentage"
+  pass "status reports a window whose reset has passed as reset, as selection treats it"
+}
+
 test_status_reports_no_reading_for_a_never_recorded_slot() {
   local rec fakebin store home out
   rec=$(new_case status-empty)
@@ -206,5 +224,6 @@ test_remove_missing_slot_is_not_an_error
 test_list_reports_present_and_missing_without_values
 test_add_get_never_leak_the_secret_on_any_stream
 test_status_reports_mark_and_reading_without_values
+test_status_reports_a_past_reset_window_as_reset
 test_status_reports_no_reading_for_a_never_recorded_slot
 test_status_with_no_configured_slots

@@ -2,8 +2,9 @@
 # tests/fm-claude-account-lib.test.sh - bin/fm-claude-account-lib.sh slot
 # selection: disabled when unconfigured, skips slots carrying an unexpired
 # `fm-claude-account.sh mark-limited` mark, prefers more room in a slot's
-# recorded usage reading only as a tiebreaker, still selects when no slot has
-# a reading (the common case right after this feature is enabled), treats a
+# recorded usage reading, counts a slot with no reading yet as full room,
+# still selects when no slot has a reading (the common case right after this
+# feature is enabled), treats a
 # window whose resets_at has passed as reset rather than stale, never calls
 # quota-axi (the removed misattribution hazard), picks the soonest-expiring
 # slot when all are limited, and refuses a malformed config/claude-accounts
@@ -234,6 +235,37 @@ EOF
   pass "a reading whose window has already reset is treated as 0% used rather than stale"
 }
 
+test_unmeasured_slot_beats_a_nearly_exhausted_one() {
+  local rec config state fakebin calllog out
+  rec=$(new_case unmeasured-vs-nearly-full)
+  IFS='|' read -r config state fakebin calllog <<EOF
+$rec
+EOF
+  printf 'a\nb\n' > "$config/claude-accounts"
+  add_slot "$fakebin" a tok-a
+  add_slot "$fakebin" b tok-b
+  fm_claude_account_usage_reading "$state" a 99 5
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals b "$out" "a slot with no reading yet should count as full room and beat a slot recorded at 99% used"
+  pass "a slot with no recorded reading counts as full room against a nearly exhausted slot"
+}
+
+test_unparseable_reading_is_unknown_not_full_room() {
+  local rec config state fakebin calllog out
+  rec=$(new_case unparseable-reading)
+  IFS='|' read -r config state fakebin calllog <<EOF
+$rec
+EOF
+  printf 'corrupt-slot\nbusy-slot\n' > "$config/claude-accounts"
+  add_slot "$fakebin" corrupt-slot tok-corrupt
+  add_slot "$fakebin" busy-slot tok-busy
+  printf 'not json\n' > "$state/.claude-account-usage-corrupt-slot"
+  fm_claude_account_usage_reading "$state" busy-slot 50 5
+  out=$(select_slot "$config" "$state" "$fakebin")
+  assert_equals busy-slot "$out" "an unparseable reading must stay unknown and lose to a slot with a real reading"
+  pass "an unparseable reading is treated as unknown rather than as full room"
+}
+
 test_unreadable_slot_listed_first_loses_to_a_readable_slot() {
   local rec config state fakebin calllog out
   rec=$(new_case unreadable-first)
@@ -285,6 +317,8 @@ test_mark_limited_rejects_a_malformed_until
 test_exhausted_reading_loses_to_an_unmeasured_eligible_slot
 test_exhausted_reading_listed_first_still_loses
 test_a_reset_window_is_treated_as_zero_used_not_stale
+test_unmeasured_slot_beats_a_nearly_exhausted_one
+test_unparseable_reading_is_unknown_not_full_room
 test_unreadable_slot_listed_first_loses_to_a_readable_slot
 test_unconfigured_selection_never_resolves_the_parent_chain
 test_malformed_slot_name_refuses

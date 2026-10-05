@@ -34,8 +34,9 @@
 #   1. skips every slot whose mark exists and has not yet expired;
 #   2. among the remaining slots, prefers the one whose recorded reading
 #      shows the most room (100 minus the higher of its two current window
-#      used-percentages) when a reading exists, and otherwise takes the
-#      first eligible slot in file order - a slot with no reading is still
+#      used-percentages; a slot with no reading yet counts as full room, with
+#      file order breaking ties), and otherwise takes the first eligible slot
+#      in file order - a slot whose reading cannot be parsed is still
 #      eligible, a slot whose reading shows a window fully used (100%, no
 #      room) is used only when no other readable unmarked slot remains, and
 #      a slot whose token cannot be read by `fm-claude-account.sh get` (a
@@ -109,23 +110,32 @@ fm_claude_account_usage_write() {  # <state-dir> <slot> <json>
   fi
 }
 
+# jq definitions shared by every reader of a usage reading (selection here and
+# bin/fm-claude-account.sh status), so both apply one reset rule: a window is
+# current only while it has a used_percentage and a resets_at still ahead of
+# $now; any other window counts as reset (0% used) rather than stale.
+# shellcheck disable=SC2016  # jq program text; $now and $w are jq variables.
+FM_CLAUDE_ACCOUNT_USAGE_JQ_DEFS='
+  def window_current($w):
+    $w != null and ($w.used_percentage // null) != null
+    and ($w.resets_at // null) != null and $w.resets_at > $now;
+  def window_used($w): if window_current($w) then $w.used_percentage else 0 end;
+'
+
 # Print 100 minus the binding (higher-used) window's used_percentage from a
 # slot's recorded usage reading, clamped to 0, floored to a whole number. A
-# window whose resets_at has already passed (or is absent) counts as 0% used
-# rather than stale. Nothing with a non-zero exit when the slot has no
-# recorded reading or its reading cannot be parsed - callers treat that as an
-# unknown, not a zero.
+# slot with no recorded reading yet prints full room (100), optimistically,
+# until its first worker records a real one. Nothing with a non-zero exit when
+# a recorded reading cannot be parsed - callers treat that as an unknown, not
+# a zero.
 fm_claude_account_usage_room() {  # <state-dir> <slot> <now-epoch>
   local state_dir=$1 slot=$2 now=$3 file room
   file=$(fm_claude_account_usage_file "$state_dir" "$slot")
-  [ -f "$file" ] || return 1
-  room=$(jq -r --argjson now "$now" '
-    def window_used($w):
-      if $w == null then 0
-      elif ($w.resets_at // null) == null then 0
-      elif ($w.resets_at <= $now) then 0
-      else ($w.used_percentage // 0)
-      end;
+  if [ ! -f "$file" ]; then
+    printf '100\n'
+    return 0
+  fi
+  room=$(jq -r --argjson now "$now" "$FM_CLAUDE_ACCOUNT_USAGE_JQ_DEFS"'
     ([window_used(.five_hour), window_used(.seven_day)] | max) as $used
     | ([0, (100 - $used)] | max) | floor
   ' "$file" 2>/dev/null) || return 1

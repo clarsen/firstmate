@@ -5064,7 +5064,7 @@ if [ "$HARNESS" = claude ]; then
   CLAUDE_ACCOUNT_SLOT=$(printf '%s' "$CLAUDE_ACCOUNT_SLOT" | tr -d '[:space:]')
   if [ -n "$CLAUDE_ACCOUNT_SLOT" ] && fm_claude_account_slot_name_valid "$CLAUDE_ACCOUNT_SLOT"; then
     CLAUDE_ACCOUNT_TOKEN_FETCH="CLAUDE_CODE_OAUTH_TOKEN=\"\$($(shell_quote "$SCRIPT_DIR/fm-claude-account.sh") get $(shell_quote "$CLAUDE_ACCOUNT_SLOT"))\""
-    CLAUDE_STATUSLINE_JSON=",\"statusLine\":{\"type\":\"command\",\"command\":\"$SCRIPT_DIR/fm-claude-usage-record.sh\"}"
+    CLAUDE_STATUSLINE_JSON=",\"statusLine\":$(jq -nc --arg c "$(shell_quote "$SCRIPT_DIR/fm-claude-usage-record.sh")" '{type:"command",command:$c}' | sed "s/'/'\\\\''/g")"
   fi
 fi
 META_WINDOW=$T
@@ -5250,7 +5250,7 @@ LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
 LAUNCH=${LAUNCH//__CLAUDEADDDIRS__/$SPAWN_CLAUDE_ADD_DIRS}
-LAUNCH=${LAUNCH//__CLAUDESTATUSLINE__/$CLAUDE_STATUSLINE_JSON}
+LAUNCH=${LAUNCH//__CLAUDESTATUSLINE__/"$CLAUDE_STATUSLINE_JSON"}
 if [ "$HARNESS" = rovo ]; then
   ROVOCONFIGOVERRIDE=$(rovo_config_override_flag "$EFFORT" "$DATA" "$STATE" "$ID") || {
     echo "error: could not resolve this task's home paths for rovo's allowedExternalPaths grant" >&2

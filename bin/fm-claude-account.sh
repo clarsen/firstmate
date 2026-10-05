@@ -35,8 +35,9 @@
 #   status  Print, for each slot named in config/claude-accounts (or passed
 #           as arguments), its limited mark (if any) and its last recorded
 #           usage reading - the one bin/fm-claude-usage-record.sh's statusLine
-#           capture writes - with that reading's age. Names, percentages, and
-#           times only, never a token value. A quota-array-dispatch intake
+#           capture writes - with that reading's age, showing a window whose
+#           resets_at has passed as "reset" exactly as selection treats it.
+#           Names, percentages, and times only, never a token value. A quota-array-dispatch intake
 #           uses this as the claude candidate's quota evidence when
 #           config/claude-accounts is configured, because the plain
 #           `quota-axi` row then describes the ambient login, not these
@@ -245,8 +246,13 @@ cmd_status() {
     fi
     file=$(fm_claude_account_usage_file "$state" "$slot")
     if [ -f "$file" ]; then
-      reading=$(jq -r --argjson now "$now" '
-        "5h=\(.five_hour.used_percentage // "?")% 7d=\(.seven_day.used_percentage // "?")% (observed \($now - (.observed_at // $now))s ago)"
+      reading=$(jq -r --argjson now "$now" "$FM_CLAUDE_ACCOUNT_USAGE_JQ_DEFS"'
+        def window_text($w):
+          if ($w.used_percentage // null) == null then "?"
+          elif window_current($w) then "\($w.used_percentage)%"
+          else "reset"
+          end;
+        "5h=\(window_text(.five_hour)) 7d=\(window_text(.seven_day)) (observed \($now - (.observed_at // $now))s ago)"
       ' "$file" 2>/dev/null) || reading="reading unreadable"
     else
       reading="no recorded reading"
