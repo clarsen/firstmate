@@ -146,6 +146,57 @@ EOF
   pass "the token appears only on get's stdout, never on stderr, add's output, or any process argv"
 }
 
+test_status_reports_mark_and_reading_without_values() {
+  local rec fakebin store home out status
+  rec=$(new_case status)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  home="$TMP_ROOT/status/home"
+  mkdir -p "$home/config" "$home/state"
+  printf 'account-a\naccount-b\n' > "$home/config/claude-accounts"
+  printf '{"five_hour":{"used_percentage":42,"resets_at":9999999999},"seven_day":{"used_percentage":5,"resets_at":9999999999},"observed_at":1}\n' \
+    > "$home/state/.claude-account-usage-account-a"
+  FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" mark-limited account-b >/dev/null
+
+  out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" status) status=$?
+  expect_code 0 "$status" "status should succeed: $out"
+  assert_contains "$out" "account-a: no limited mark" "an unmarked slot should report no mark"
+  assert_contains "$out" "5h=42%" "a recorded reading should show its five_hour used percentage"
+  assert_contains "$out" "7d=5%" "a recorded reading should show its seven_day used percentage"
+  assert_contains "$out" "account-b: limited until" "a marked slot should report its limited-until time"
+  assert_contains "$out" "account-b" "the limited slot's own name should appear"
+  assert_not_contains "$out" "$SECRET" "status must never print a token value"
+  pass "status reports each slot's mark and recorded reading without any token value"
+}
+
+test_status_reports_no_reading_for_a_never_recorded_slot() {
+  local rec fakebin store home out
+  rec=$(new_case status-empty)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  home="$TMP_ROOT/status-empty/home"
+  mkdir -p "$home/config" "$home/state"
+  printf 'account-a\n' > "$home/config/claude-accounts"
+  out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" status)
+  assert_contains "$out" "no recorded reading" "a slot with no usage file should report no recorded reading"
+  pass "status reports no recorded reading for a slot the recorder has never written"
+}
+
+test_status_with_no_configured_slots() {
+  local rec fakebin store home out
+  rec=$(new_case status-unconfigured)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  home="$TMP_ROOT/status-unconfigured/home"
+  mkdir -p "$home/config" "$home/state"
+  out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" status)
+  assert_contains "$out" "no slots configured" "status with no config/claude-accounts should say so"
+  pass "status reports no configured slots when config/claude-accounts is absent or empty"
+}
+
 test_add_then_get_roundtrips
 test_add_rejects_empty_or_whitespace_token
 test_get_missing_slot_names_the_slot_only
@@ -154,3 +205,6 @@ test_remove_then_get_fails
 test_remove_missing_slot_is_not_an_error
 test_list_reports_present_and_missing_without_values
 test_add_get_never_leak_the_secret_on_any_stream
+test_status_reports_mark_and_reading_without_values
+test_status_reports_no_reading_for_a_never_recorded_slot
+test_status_with_no_configured_slots
