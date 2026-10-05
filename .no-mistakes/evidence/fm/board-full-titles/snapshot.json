@@ -1,0 +1,96 @@
+{
+  "schema": "fm-bearings.v1",
+  "home": "tmp/fm-fulltitle.Zl6G",
+  "generated": "2026-10-04T18:00:00Z",
+  "prs": "not_requested (run: /bearings include PRs)",
+  "contributions": {
+    "scope": "owned contributions per home",
+    "known": 0,
+    "checked": 0,
+    "counts": {
+      "captain": 0,
+      "fleet": 0,
+      "maintainer": 0,
+      "nobody": 0
+    },
+    "complete": true,
+    "proven_clear": true,
+    "unmeasured_homes": 0,
+    "unreadable_records": 0,
+    "unmeasured": 0,
+    "stale_verdicts": 0,
+    "missing_verdicts": 0,
+    "captain_omitted": 0,
+    "captain": []
+  },
+  "in_flight": [],
+  "secondmates": [],
+  "secondmate_reconcile": [],
+  "decisions_open": [],
+  "landed": [
+    {
+      "id": "landed-one",
+      "what": "Close backlog items delivered as GitLab merge requests and record the …",
+      "what_full": "Close backlog items delivered as GitLab merge requests and record the MR url as the landed artifact on the board",
+      "artifact": "-",
+      "owner": "(main)"
+    }
+  ],
+  "gates": [
+    {
+      "id": "gate-beta",
+      "title": "Teach fm-herdr-lab teardown to retire stale lab sessions tha…",
+      "title_full": "Teach fm-herdr-lab teardown to retire stale lab sessions that survived a host reboot without their pane registry entries",
+      "blocked_by": "-",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": "2026-10-02"
+    },
+    {
+      "id": "gate-alpha",
+      "title": "Investigate why the captain decision card loses its recommen…",
+      "title_full": "Investigate why the captain decision card loses its recommended option when the payload carries a markdown note longer than one paragraph",
+      "blocked_by": "-",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": "2026-10-01"
+    },
+    {
+      "id": "gate-short",
+      "title": "Short title",
+      "title_full": "Short title",
+      "blocked_by": "-",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": "2026-09-30"
+    }
+  ],
+  "reports": [],
+  "recorded_prs": [],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}

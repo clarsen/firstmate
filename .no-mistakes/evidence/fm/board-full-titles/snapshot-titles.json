@@ -1,0 +1,30 @@
+{
+  "gates": [
+    {
+      "id": "gate-beta",
+      "title": "Teach fm-herdr-lab teardown to retire stale lab sessions tha…",
+      "title_full": "Teach fm-herdr-lab teardown to retire stale lab sessions that survived a host reboot without their pane registry entries",
+      "filed": "2026-10-02"
+    },
+    {
+      "id": "gate-alpha",
+      "title": "Investigate why the captain decision card loses its recommen…",
+      "title_full": "Investigate why the captain decision card loses its recommended option when the payload carries a markdown note longer than one paragraph",
+      "filed": "2026-10-01"
+    },
+    {
+      "id": "gate-short",
+      "title": "Short title",
+      "title_full": "Short title",
+      "filed": "2026-09-30"
+    }
+  ],
+  "landed": [
+    {
+      "id": "landed-one",
+      "what": "Close backlog items delivered as GitLab merge requests and record the …",
+      "what_full": "Close backlog items delivered as GitLab merge requests and record the MR url as the landed artifact on the board"
+    }
+  ],
+  "in_flight": []
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "tmp/fm-fulltitle.Zl6G",
+  "generated": "2026-10-04T18:00:00Z",
+  "prs_live": false,
+  "captains_call": [],
+  "underway": [
+    {
+      "id": "long-ship",
+      "kind": "ship",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Stop truncating fleet board row titles so the captain can recognize every Charted Next item at a glance",
+      "doing": "no-mistakes review round 2 - validating that the board wraps long titles and long sub-lines instead of cutting them off with an ellipsis"
+    },
+    {
+      "id": "unbreakable",
+      "kind": "scout",
+      "state": "working",
+      "repo": "firstmate",
+      "name": "Path-token stress test: /Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M454ETM7DPD54Y7GHJWHT7X5/.agents/skills/bearings/assets/board-template.html",
+      "doing": "working"
+    }
+  ],
+  "landed": [
+    {
+      "id": "landed-one",
+      "repo": "firstmate",
+      "what": "Close backlog items delivered as GitLab merge requests and record the MR url as the landed artifact on the board",
+      "owner": "(main)"
+    }
+  ],
+  "charted": [
+    {
+      "id": "gate-beta",
+      "repo": "firstmate",
+      "title": "Teach fm-herdr-lab teardown to retire stale lab sessions that survived a host reboot without their pane registry entries",
+      "reason": "-",
+      "dispatchable": true,
+      "filed": "2026-10-02"
+    },
+    {
+      "id": "gate-alpha",
+      "repo": "firstmate",
+      "title": "Investigate why the captain decision card loses its recommended option when the payload carries a markdown note longer than one paragraph",
+      "reason": "-",
+      "dispatchable": true,
+      "filed": "2026-10-01"
+    },
+    {
+      "id": "gate-short",
+      "repo": "firstmate",
+      "title": "Short title",
+      "reason": "-",
+      "dispatchable": true,
+      "filed": "2026-09-30"
+    }
+  ]
+}
