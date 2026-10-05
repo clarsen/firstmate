@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # tests/fm-claude-account-spawn.test.sh - config/claude-accounts end to end
-# through bin/fm-spawn.sh: with the realistic unmeasurable setup-token
-# readings, a claude launch skips a slot marked limited, the launched process actually receives that slot's
-# token as CLAUDE_CODE_OAUTH_TOKEN, the task record carries the slot NAME, and
-# the token value itself never appears in the recorded launch command or task
-# metadata. A non-claude harness spawn is untouched even when
-# config/claude-accounts is configured.
+# through bin/fm-spawn.sh: with the realistic no-recorded-reading case, a
+# claude launch skips a slot marked limited, the launched process actually
+# receives that slot's token as CLAUDE_CODE_OAUTH_TOKEN, the task record
+# carries the slot NAME, the token value itself never appears in the recorded
+# launch command or task metadata, selection never calls quota-axi, and the
+# emitted --settings JSON injects the usage-recorder statusLine only when a
+# slot was actually selected. A non-claude harness spawn is untouched even
+# when config/claude-accounts is configured.
 #
 # As with tests/fm-spawn-compact-adviser-disable.test.sh, assertions execute
 # the real emitted launch command against a fake pane rather than reading
@@ -21,9 +23,9 @@ TMP_ROOT=$(fm_test_tmproot fm-claude-account-spawn)
 ACCOUNT_BIN="$ROOT/bin/fm-claude-account.sh"
 
 # make_case <name> <harness> <id>...
-# Echoes "<case-dir>|<home>|<project>|<worktree>|<fakebin>|<launch-log>|<pane-log>|<map-file>".
+# Echoes "<case-dir>|<home>|<project>|<worktree>|<fakebin>|<launch-log>|<pane-log>|<quota-call-log>".
 make_case() {
-  local name=$1 harness=$2 case_dir home proj wt fakebin launchlog panelog map id
+  local name=$1 harness=$2 case_dir home proj wt fakebin launchlog panelog calllog id
   shift 2
   case_dir="$TMP_ROOT/$name"
   home="$case_dir/home"
@@ -31,24 +33,27 @@ make_case() {
   wt="$case_dir/wt"
   launchlog="$case_dir/launch.log"
   panelog="$case_dir/pane.log"
-  map="$case_dir/quota-map"
+  calllog="$case_dir/quota-axi-calls"
   mkdir -p "$case_dir"
-  : > "$map"
   fakebin=$(fm_test_make_spawn_fakebin "$case_dir/fake")
   fm_claude_account_fake_security "$fakebin" "$case_dir/keychain"
-  fm_claude_account_fake_quota_axi "$fakebin" "$map"
+  fm_claude_account_fake_quota_axi_forbidden "$fakebin" "$calllog"
   fm_test_spawn_home "$home" "$harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   for id in "$@"; do
     fm_test_spawn_brief "$home" "$id"
   done
-  printf '%s\n' "$home|$proj|$wt|$fakebin|$launchlog|$panelog|$map"
+  printf '%s\n' "$home|$proj|$wt|$fakebin|$launchlog|$panelog|$calllog"
 }
 
 read_case() {
-  IFS='|' read -r HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG PANE_LOG MAP_FILE <<EOF
+  IFS='|' read -r HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG PANE_LOG QUOTA_CALL_LOG <<EOF
 $1
 EOF
+}
+
+assert_quota_axi_never_called() {  # <message>
+  [ ! -s "$QUOTA_CALL_LOG" ] || fail "$1: quota-axi was invoked: $(cat "$QUOTA_CALL_LOG")"
 }
 
 run_case_spawn() {
@@ -73,6 +78,17 @@ SH
   chmod +x "$1/$2"
 }
 
+install_settings_probe() {  # <fakebin> <harness>
+  cat > "$1/$2" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  [ "$1" = --settings ] && printf '%s\n' "$2"
+  shift
+done
+SH
+  chmod +x "$1/$2"
+}
+
 emitted_token() {  # <fakebin> <launch-log> <pane-log>
   local fakebin=$1 launchlog=$2 panelog=$3 launch preamble
   launch=$(cat "$launchlog")
@@ -84,7 +100,7 @@ $launch"
 }
 
 test_claude_launch_skips_the_limited_slot() {
-  local rec out status launch token meta
+  local rec out status launch token meta settings statusline_cmd statusline_out
   rec=$(make_case claude-select claude claude-select-a1)
   read_case "$rec"
   printf 'account-a\naccount-b\n' > "$HOME_DIR/config/claude-accounts"
@@ -108,6 +124,15 @@ test_claude_launch_skips_the_limited_slot() {
   assert_not_contains "$launch" tok-bbb "the recorded launch command must never contain the raw token"
   assert_not_contains "$launch" tok-aaa "the recorded launch command must never contain the raw token"
   assert_not_contains "$meta" tok-bbb "the task record must never contain the raw token"
+  install_settings_probe "$FAKEBIN_DIR" claude
+  settings=$(emitted_token "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+    || fail "the emitted claude launch failed to run with the settings probe"
+  statusline_cmd=$(printf '%s' "$settings" | jq -er '.statusLine | select(.type == "command") | .command') \
+    || fail "the selected launch's --settings should parse as JSON carrying a command statusLine: $settings"
+  statusline_out=$(printf '{}' | FM_CLAUDE_ACCOUNT_SLOT=account-b FM_HOME="$HOME_DIR" /bin/sh -c "$statusline_cmd") \
+    || fail "the injected statusLine command should run as a shell command: $statusline_cmd"
+  assert_equals "firstmate:account-b" "$statusline_out" "the injected statusLine command should be the usage recorder"
+  assert_quota_axi_never_called "a claude spawn's own slot selection"
   pass "a claude launch skips the limited slot and uses the other, recording only its name"
 }
 
@@ -174,6 +199,54 @@ printf 'after=%s\\n' \"\${CLAUDE_CODE_OAUTH_TOKEN-unset}\"")
   assert_contains "$after" "tok-aaa" "the launched claude should still receive the slot's token"
   assert_contains "$after" "after=unset" "the pane shell must not keep the token once the launch returns"
   pass "the slot token is scoped to the launch and unset in the pane shell afterwards"
+}
+
+# A probe harness binary that prints FM_CLAUDE_ACCOUNT_SLOT (the plain,
+# non-secret slot name, never the token) the launch is supposed to have
+# resolved.
+install_slot_probe() {  # <fakebin> <harness>
+  cat > "$1/$2" <<'SH'
+#!/bin/sh
+printf '%s\n' "${FM_CLAUDE_ACCOUNT_SLOT-unset}"
+SH
+  chmod +x "$1/$2"
+}
+
+test_fm_claude_account_slot_is_exported_then_cleared_in_the_pane_shell() {
+  local rec out status launch preamble slot after
+  rec=$(make_case claude-slot-env claude claude-slot-env-a1)
+  read_case "$rec"
+  printf 'account-a\n' > "$HOME_DIR/config/claude-accounts"
+  add_slot account-a tok-aaa
+  out=$(run_case_spawn claude-slot-env-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "claude spawn should succeed: $out"
+  install_slot_probe "$FAKEBIN_DIR" claude
+  launch=$(cat "$LAUNCH_LOG")
+  preamble=$(grep '^export ' "$PANE_LOG")
+  slot=$(env -i HOME="$TMP_ROOT/pane-home" PATH="$FAKEBIN_DIR:$PATH" TERM=xterm \
+    TMUX=synthetic-pane /bin/sh -c "$preamble
+$launch") || fail "the emitted claude launch failed to run"
+  assert_equals account-a "$slot" "the launched claude should receive the selected slot's name"
+  after=$(env -i HOME="$TMP_ROOT/pane-home" PATH="$FAKEBIN_DIR:$PATH" TERM=xterm \
+    TMUX=synthetic-pane /bin/sh -c "$preamble
+$launch
+printf 'after=%s\\n' \"\${FM_CLAUDE_ACCOUNT_SLOT-unset}\"")
+  assert_contains "$after" "after=unset" "the pane shell must not keep the slot name once the launch returns"
+  pass "FM_CLAUDE_ACCOUNT_SLOT is exported to the launch and unset in the pane shell afterwards"
+}
+
+test_unconfigured_launch_injects_no_statusline() {
+  local rec out status launch
+  rec=$(make_case claude-no-statusline claude claude-no-statusline-a1)
+  read_case "$rec"
+  out=$(run_case_spawn claude-no-statusline-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "unconfigured claude spawn should succeed: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "fm-claude-usage-record.sh" "a claude launch with no configured slot must not inject the usage recorder"
+  assert_not_contains "$launch" "statusLine" "a claude launch with no configured slot must not carry a statusLine key"
+  pass "a claude launch with no configured slot injects no statusLine recorder"
 }
 
 # run_unconfigured_launch <name> <pane-env> runs a claude launch from a home
@@ -286,7 +359,7 @@ test_claude_relaunch_falls_over_after_exhaustion() {
   touch "$home/state/.last-watcher-beat"
   fakebin=$(fm_fakebin "$dir")
   fm_claude_account_fake_security "$fakebin" "$dir/keychain"
-  fm_claude_account_fake_quota_axi "$fakebin" "$map"
+  fm_claude_account_fake_quota_axi_forbidden "$fakebin" "$map"
   make_relaunch_stub "$fakebin" "$fakestate"
   fm_git_worktree "$proj" "$wt" "wt-claude-fallover"
   fm_test_spawn_brief "$home" "$id"
@@ -316,8 +389,8 @@ test_claude_relaunch_falls_over_after_exhaustion() {
   } > "$home/state/$id.meta"
   mkdir -p "$dir/user-home"
 
-  # account-a's session limit is hit and firstmate marks it; quota-axi still
-  # cannot read either setup token, so the relaunch should pick account-b.
+  # account-a's session limit is hit and firstmate marks it; neither slot has
+  # a recorded reading, so the relaunch should pick account-b by file order.
   FM_HOME="$home" "$ACCOUNT_BIN" mark-limited account-a >/dev/null
 
   out=$(env PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_DIR="$fakestate" \
@@ -336,6 +409,7 @@ test_claude_relaunch_falls_over_after_exhaustion() {
 $launch") || fail "relaunch's emitted launch failed to run"
   assert_equals tok-bbb "$token" "the relaunch should fall over to account-b once account-a is marked limited"
   assert_contains "$(cat "$home/state/$id.meta")" "claude_account=account-b" "the relaunched task record should name the new slot"
+  [ ! -s "$map" ] || fail "relaunch selection must never call quota-axi: $(cat "$map")"
   pass "a relaunch re-selects and falls over to the other account once the chosen one is marked limited"
 }
 
@@ -345,7 +419,6 @@ test_non_claude_harness_is_unaffected() {
   read_case "$rec"
   printf 'account-a\n' > "$HOME_DIR/config/claude-accounts"
   add_slot account-a tok-aaa
-  printf 'tok-aaa 50\n' > "$MAP_FILE"
 
   out=$(run_case_spawn codex-untouched-a1 "$PROJ_DIR" --mode no-mistakes --yolo off)
   status=$?
@@ -361,6 +434,8 @@ test_claude_launch_skips_the_limited_slot
 test_mark_from_a_secondmate_home_is_honored_by_the_primary
 test_failed_token_fetch_does_not_launch_on_the_ambient_login
 test_token_does_not_outlive_the_launch_in_the_pane_shell
+test_fm_claude_account_slot_is_exported_then_cleared_in_the_pane_shell
+test_unconfigured_launch_injects_no_statusline
 test_no_slot_launch_clears_a_stale_injected_token
 test_no_slot_launch_keeps_an_operator_set_token
 test_claude_relaunch_falls_over_after_exhaustion

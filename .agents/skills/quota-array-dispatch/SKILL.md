@@ -73,6 +73,10 @@ A provider-level or `all_models`/`all_products` scope bounds every model you est
 A named-model or named-product scope is an additional bound for that model alone.
 Match the candidate to its `quota[]` row by that established provider, its `accountKey` when the snapshot is schema 6 (a Pi lane's auth provider id such as `openai-codex-work`, or `codex-home` for native Codex including Pi's `codex-native/` adapter, then the `default` row, else unmeasured; never a row picked by position, never rows summed across accounts), and scope; a stale, auth-required, or unmeasurable scope is named in `attention[]` instead of a fabricated number.
 
+A `harness=claude` candidate is a special case of this same rule when `config/claude-accounts` is configured: the snapshot's `claude` row then still describes only the ambient Claude Code login, not the configured per-slot accounts firstmate actually launches workers on, because the Claude provider carries no `accountKey` lanes (upstream issue 165, still open) and a setup-token slot cannot answer the usage endpoint at all (403, scope `user:profile`) for quota-axi to measure directly.
+Use `bin/fm-claude-account.sh status` as that candidate's quota evidence instead - firstmate's own disclosed observation of each slot's limited mark and last recorded usage reading, never a quota-axi number - and treat a missing or old reading as unknown, never healthy, under the same disclosed-uncertainty rule below.
+This does not apply when `config/claude-accounts` is unconfigured, where the plain `claude` row is the ambient login the candidate will actually run on.
+
 A candidate authenticates through its own tuple's surface; another harness's CLI can never gate it, and `harness=pi` with `model=xai/grok-*` is Pi using xAI rather than the standalone Grok CLI.
 `quota-axi auth --json` lists each provider's credential sources independently, so read the one source the candidate actually uses rather than collapsing a provider to a single status.
 A provider can carry a healthy source beside a missing or expired one; the unused source's state is not the candidate's state.

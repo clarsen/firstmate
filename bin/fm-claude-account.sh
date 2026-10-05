@@ -9,6 +9,7 @@
 #        fm-claude-account.sh get <slot>
 #        fm-claude-account.sh mark-limited <slot> [--until <iso8601>]
 #        fm-claude-account.sh clear-limited <slot>
+#        fm-claude-account.sh status [<slot>...]
 #
 #   add     Prompt (hidden input, read from stdin) for a Claude Code setup
 #           token (from `claude setup-token`, used as CLAUDE_CODE_OAUTH_TOKEN)
@@ -31,6 +32,17 @@
 #           state/ (shared by every home in its tree), one file per slot.
 #   clear-limited
 #           Remove the slot's limited mark. Missing is not an error.
+#   status  Print, for each slot named in config/claude-accounts (or passed
+#           as arguments), its limited mark (if any) and its last recorded
+#           usage reading - the one bin/fm-claude-usage-record.sh's statusLine
+#           capture writes - with that reading's age, showing a window whose
+#           resets_at has passed as "reset" exactly as selection treats it.
+#           Names, percentages, and times only, never a token value. A quota-array-dispatch intake
+#           uses this as the claude candidate's quota evidence when
+#           config/claude-accounts is configured, because the plain
+#           `quota-axi` row then describes the ambient login, not these
+#           per-slot accounts (docs/configuration.md "Claude account
+#           switching").
 #
 # Each slot is one macOS Keychain generic-password item, service
 # "firstmate-claude-account-<slot>", account the current OS user, added with
@@ -50,7 +62,7 @@
 set -u
 
 usage() {
-  sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -204,6 +216,53 @@ cmd_clear_limited() {
   echo "cleared limited mark for slot '$slot' (if it existed)"
 }
 
+cmd_status() {
+  local state slots slot now until mark reading file
+  state=$(fm_claude_account_state_dir "$FM_HOME" "$STATE")
+  if [ "$#" -gt 0 ]; then
+    slots=$(printf '%s\n' "$@")
+  else
+    slots=$(fm_claude_account_configured_slots "$CONFIG") || return 1
+  fi
+  [ -n "$slots" ] || {
+    echo "no slots configured (config/claude-accounts is absent or empty)"
+    return 0
+  }
+  now=$(date +%s)
+  while IFS= read -r slot; do
+    [ -n "$slot" ] || continue
+    if ! fm_claude_account_slot_name_valid "$slot"; then
+      printf '%s: invalid slot name\n' "$slot"
+      continue
+    fi
+    if until=$(fm_claude_account_limited_until "$state" "$slot"); then
+      if [ "$until" -gt "$now" ]; then
+        mark="limited until $(jq -nr --argjson e "$until" '$e | todateiso8601')"
+      else
+        mark="limited mark expired"
+      fi
+    else
+      mark="no limited mark"
+    fi
+    file=$(fm_claude_account_usage_file "$state" "$slot")
+    if [ -f "$file" ]; then
+      reading=$(jq -r --argjson now "$now" "$FM_CLAUDE_ACCOUNT_USAGE_JQ_DEFS"'
+        def window_text($w):
+          if ($w.used_percentage // null) == null then "?"
+          elif window_current($w) then "\($w.used_percentage)%"
+          else "reset"
+          end;
+        "5h=\(window_text(.five_hour)) 7d=\(window_text(.seven_day)) (observed \($now - (.observed_at // $now))s ago)"
+      ' "$file" 2>/dev/null) || reading="reading unreadable"
+    else
+      reading="no recorded reading"
+    fi
+    printf '%s: %s; %s\n' "$slot" "$mark" "$reading"
+  done <<EOF
+$slots
+EOF
+}
+
 case "${1:-}" in
   -h | --help | '')
     usage
@@ -238,6 +297,10 @@ case "${1:-}" in
   list)
     shift
     cmd_list "$@"
+    ;;
+  status)
+    shift
+    cmd_status "$@"
     ;;
   *)
     usage >&2

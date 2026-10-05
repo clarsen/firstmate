@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tests/fm-claude-account-fakes.sh - shared fakes for the Claude account
-# switching suites: a file-backed `security` Keychain stub and a
-# `quota-axi` stub whose answer is keyed by the CLAUDE_CODE_OAUTH_TOKEN it
-# was called with, so a test can assign each fake token a distinct
-# remaining-allowance percentage.
+# switching suites: a file-backed `security` Keychain stub, a `quota-axi`
+# tripwire that proves selection never makes a live call with a slot's token
+# (the misattribution hazard the recorder/selection redesign removed), and a
+# writer for a slot's recorded usage reading.
 #
 # fm_claude_account_fake_security <fakebin> <store-dir>
 # Drops a `security` shim at <fakebin>/security backed by one file per
@@ -77,32 +77,45 @@ SH
   chmod +x "$fakebin/security"
 }
 
-# fm_claude_account_fake_quota_axi <fakebin> <map-file>
-# Drops a `quota-axi` shim that only understands
-# `--provider claude --json --no-credential-refresh`. <map-file> holds
-# "<token> <percent>" lines. A token with no matching line gets the default
-# answer a real `claude setup-token` token gets: the usage endpoint refuses
-# the inference-only bearer, so quota-axi (0.1.52 README, "inference opt-in")
-# reports the provider as unavailable with no effectiveAvailability.
-fm_claude_account_fake_quota_axi() {
-  local fakebin=$1 map=$2
+# fm_claude_account_fake_quota_axi_forbidden <fakebin> <call-log>
+# Drops a `quota-axi` shim that only ever appends its invocation (argv plus
+# the CLAUDE_CODE_OAUTH_TOKEN it was handed, if any) to <call-log> and exits
+# 1. Selection and the usage recorder never call quota-axi with a slot's
+# token (that live call was the misattribution hazard: a non-definitive env
+# failure made quota-axi fall through to the ambient Keychain login and
+# credit its reading to the wrong account), so a passing test asserts
+# <call-log> stays absent or empty.
+fm_claude_account_fake_quota_axi_forbidden() {
+  local fakebin=$1 log=$2
   cat > "$fakebin/quota-axi" <<SH
 #!/usr/bin/env bash
 set -u
-map="$map"
+log="$log"
 SH
   cat >> "$fakebin/quota-axi" <<'SH'
-token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-pct=$(awk -v t="$token" '$1 == t { print $2; exit }' "$map" 2>/dev/null)
-if [ -z "$pct" ]; then
-  cat <<JSON
-{"providers":[{"provider":"claude","state":{"status":"unavailable","reason":"inference_opt_in_required"},"quotaSemantics":{}}]}
-JSON
-  exit 0
-fi
-cat <<JSON
-{"providers":[{"provider":"claude","quotaSemantics":{"effectiveAvailability":[{"scope":"all_models","effectivePercentRemaining":$pct}]}}]}
-JSON
+{
+  printf 'argv: %s\n' "$*"
+  printf 'token: %s\n' "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+} >> "$log"
+exit 1
 SH
   chmod +x "$fakebin/quota-axi"
+}
+
+# fm_claude_account_usage_reading <state-dir> <slot> <five-hour-used%> <seven-day-used%> [<five-hour-resets-in-seconds>] [<seven-day-resets-in-seconds>]
+# Writes a slot's recorded usage reading file directly, in the schema
+# bin/fm-claude-usage-record.sh produces, for a test to seed without running
+# the recorder. The two "resets-in-seconds" offsets default to comfortably in
+# the future (18000s / 5h); pass a negative offset to simulate an already-past
+# reset.
+fm_claude_account_usage_reading() {
+  local state_dir=$1 slot=$2 five_used=$3 seven_used=$4 five_offset=${5:-18000} seven_offset=${6:-604800}
+  local now five_resets seven_resets
+  mkdir -p "$state_dir"
+  now=$(date +%s)
+  five_resets=$((now + five_offset))
+  seven_resets=$((now + seven_offset))
+  printf '{"five_hour":{"used_percentage":%s,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s},"observed_at":%s}\n' \
+    "$five_used" "$five_resets" "$seven_used" "$seven_resets" "$now" \
+    > "$state_dir/.claude-account-usage-$slot"
 }
