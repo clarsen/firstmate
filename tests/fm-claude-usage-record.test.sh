@@ -127,6 +127,23 @@ test_a_lower_reading_in_the_same_window_generation_does_not_regress_the_record()
   pass "a stale lower reading never regresses its window's generation, while a new generation is accepted"
 }
 
+test_an_older_window_generation_does_not_replace_a_newer_stored_one() {
+  local home out status now old_resets new_resets file
+  home=$(new_case no-older-generation)
+  now=$(date +%s)
+  old_resets=$((now - 60))
+  new_resets=$((now + 7200))
+  run_recorder "$home" work-a \
+    "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":80,\"resets_at\":$new_resets}}}" >/dev/null
+  out=$(run_recorder "$home" work-a \
+    "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":40,\"resets_at\":$old_resets}}}") status=$?
+  expect_code 0 "$status" "the recorder must exit 0: $out"
+  file=$(usage_file "$home" work-a)
+  assert_equals "80 $new_resets" "$(jq -r '"\(.five_hour.used_percentage) \(.five_hour.resets_at)"' "$file")" \
+    "a reading from an older, superseded window generation must not replace the newer stored one"
+  pass "a stale reading from an older window generation never replaces a newer stored reading"
+}
+
 test_a_saturated_window_whose_reset_has_passed_does_not_mark() {
   local home out status now markfile
   home=$(new_case stale-saturated)
@@ -164,6 +181,7 @@ test_no_slot_env_does_nothing_but_still_succeeds
 test_a_window_at_100_percent_refreshes_the_limited_mark_with_the_real_reset
 test_no_window_at_100_percent_leaves_the_mark_untouched
 test_a_lower_reading_in_the_same_window_generation_does_not_regress_the_record
+test_an_older_window_generation_does_not_replace_a_newer_stored_one
 test_a_saturated_window_whose_reset_has_passed_does_not_mark
 test_the_recorder_never_prints_the_slot_name_as_a_secret_but_also_never_sees_a_token
 test_malformed_stdin_does_not_fail_the_worker

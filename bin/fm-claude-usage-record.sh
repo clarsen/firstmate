@@ -20,8 +20,9 @@
 # five-hour default. Several workers can share one slot, each seeing only its
 # own last response, so each window is merged with the slot's stored reading:
 # within one window generation (same resets_at) usage only rises, so a lower
-# incoming used_percentage never replaces a higher stored one, while a new
-# generation (different resets_at) replaces it outright.
+# incoming used_percentage never replaces a higher stored one, a newer
+# generation (later resets_at) replaces it outright, and an older, already
+# superseded generation (earlier resets_at) never replaces it.
 #
 # Never fails the worker: every exit is 0, and every step is best-effort. It
 # stores no session content and no token, and it never reads or prints one;
@@ -67,8 +68,10 @@ if [ -n "$SLOT" ] && fm_claude_account_slot_name_valid "$SLOT"; then
         RECORD=$(printf '%s' "$RECORD" | jq -c --argjson old "$EXISTING" '
           def merge($o; $n):
             if $n.used_percentage == null then ($o // $n)
-            elif ($o != null) and ($o.resets_at == $n.resets_at)
-              and (($o.used_percentage // -1) > $n.used_percentage) then $o
+            elif $o == null then $n
+            elif $n.resets_at > $o.resets_at then $n
+            elif $n.resets_at < $o.resets_at then $o
+            elif ($o.used_percentage // -1) > $n.used_percentage then $o
             else $n
             end;
           .five_hour = merge($old.five_hour; .five_hour)
