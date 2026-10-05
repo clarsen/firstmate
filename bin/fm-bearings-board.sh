@@ -192,6 +192,20 @@
 # first; a row with no comparable date keeps its payload order after every dated
 # row. Anything else in that field refuses rather than sorting on garbage.
 #
+# A Charted Next row MAY also carry `detail`, an object giving the board's
+# expandable "details" panel more context than the compact row's title/reason:
+#   body     optional string - the backlog item's own body text (why it
+#            exists, its decided delivery posture, the evidence behind it),
+#            rendered as plain text, never HTML
+#   kind     optional non-empty string - the backlog item's durable kind
+#            (ship, scout, secondmate, ...)
+#   links    optional array of { label: non-empty string, url: an https:// URL },
+#            the backlog-recorded artifacts (a PR, a scout report, a Lavish
+#            board or page) rendered as real links
+# A row with no `detail`, or an empty one, renders exactly as it did before
+# this field existed: no details toggle appears. The detail panel expands
+# inline on the board itself - never a separate Lavish session per row.
+#
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
 # re-invocation rebuilds the same file in place, which keeps the same Lavish
 # session URL and the same canonical process-event source id. A page path is
@@ -310,12 +324,25 @@ validate_payload() {  # <data.json>
       and (.what | nonempty_string) and (.owner | nonempty_string)
       and optional_https_url("pr_url")
       and optional_subject;
+    def https_url:
+      type == "string"
+        and test("^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?(?:[/?#][^[:space:]]*)?$");
+    def link_item:
+      type == "object" and (.label | nonempty_string) and (.url | https_url);
+    def optional_detail:
+      (has("detail") | not)
+      or (.detail
+        | type == "object"
+          and ((has("body") | not) or (.body | type == "string"))
+          and ((has("kind") | not) or (.kind | nonempty_string))
+          and ((has("links") | not) or (.links | type == "array" and ([.[] | link_item] | all))));
     def charted_item:
       type == "object" and repo_marker and (.id | slug(128))
       and (.title | nonempty_string) and (.reason | type == "string")
       and (.dispatchable | type == "boolean")
       and ((has("kind") | not) or (.kind == "queued" or .kind == "warning"))
       and optional_filed
+      and optional_detail
       and (if .kind == "warning" then .dispatchable == false else true end);
     type == "object"
     and (.schema == $schema)

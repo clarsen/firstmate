@@ -149,7 +149,8 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner}, landed{id,what,what_full,artifact,owner},
-  gates{id,title,title_full,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
+  gates{id,title,title_full,blocked_by,reason,owner,filed,repo,kind,body,pr_url,report_path,links},
+  reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 in_flight.name, landed.what, and gates.title are compact chat-oriented labels
   bounded at 70/70/60 characters with a trailing ellipsis; their *_full sibling
@@ -157,6 +158,11 @@ in_flight.name, landed.what, and gates.title are compact chat-oriented labels
   wants the whole durable title instead.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
+Each gate also carries its durable repo, kind, a bounded body excerpt (why it
+  exists), and any backlog-recorded artifact links (pr_url, report_path, and a
+  bounded list of other URLs found in the row, e.g. a Lavish board or page) -
+  every one of these is null/empty when the underlying record has none, which
+  is the common case for a secondmate's cross-home queued summary.
 landed merges this home's Done with registered secondmate homes' Done, bounded by
   a per-home cap (FM_BEARINGS_LANDED_PER_HOME) and an overall cap (FM_BEARINGS_LANDED),
   with omitted[] disclosure. Default selection is balanced across deterministic home
@@ -420,11 +426,20 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            + ($base | fit($context_n - $title_n)))
         end
       end;
+  def bounded_string($n):
+    if . == null then null else (. | trunc($n)) end;
   def as_gate($owner):
     {id, title:(.title | trunc(60)), title_full:(.title | tostring | gsub("\\s+"; " ")),
      blocked_by:((.unresolved_blocker_ids // []) | if length > 0 then join(",") else "-" end | trunc(120)),
      reason:(hold_gate_reason | trunc(40)), owner:$owner,
-     filed:((.since // null) | trunc(40))};
+     filed:((.since // null) | trunc(40)),
+     repo:((.repo // null) | bounded_string(80)),
+     kind:((.kind // null) | bounded_string(40)),
+     body:((.body_excerpt // null) | bounded_string(300)),
+     pr_url:((.pr_url // null) | bounded_string(500)),
+     report_path:((.report_path // null) | bounded_string(500)),
+     links:(((.links // []) | map(select(type == "string")))
+            - [(.pr_url // null)] | unique | .[0:5] | map(trunc(300)))};
   def round_robin_landed($n):
     . as $groups
     | [range(0; (($groups | map(length) | max) // 0)) as $i
