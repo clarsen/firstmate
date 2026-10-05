@@ -1,0 +1,10 @@
+== rebuild without any video
+page: /tmp/fm-nm-imgtest/home/data/imagery/decision-page.html
+link: http://127.0.0.1:4387/session/0123456789abcdef
+assets after:
+.
+..
+.
+..
+assets
+decision-page.html

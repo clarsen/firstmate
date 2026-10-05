@@ -1,0 +1,40 @@
+result: ""{
+ "imgs": [
+  {
+   "naturalWidth": 2400,
+   "naturalHeight": 1600,
+   "decoded": true
+  },
+  {
+   "naturalWidth": 1200,
+   "naturalHeight": 800,
+   "decoded": true
+  }
+ ],
+ "videos": [
+  {
+   "src": "assets/q1.mp4",
+   "readyState": 4,
+   "paused": false,
+   "currentTime": "2.88",
+   "muted": true,
+   "loop": true,
+   "controls": true,
+   "hasPoster": true,
+   "error": null
+  },
+  {
+   "src": "assets/q1-o0.mp4",
+   "readyState": 4,
+   "paused": false,
+   "currentTime": "2.88",
+   "muted": true,
+   "loop": true,
+   "controls": true,
+   "hasPoster": false,
+   "error": null
+  }
+ ]
+}""
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

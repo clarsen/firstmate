@@ -1,0 +1,48 @@
+== baseline: published page + assets (assets/inside.png is a mate-placed source photo)
+680b82664dace28506afd08c41ae7864a598ed79  decision-page.html
+0ffca0571a7d90051578fa7aa294bfae833e1a2d  assets/inside.png
+1882daec963a71fe825327b499215bda12e7d50c  assets/q1-o0.mp4
+1882daec963a71fe825327b499215bda12e7d50c  assets/q1.mp4
+ .: . .. assets decision-page.html  assets: . .. inside.png q1-o0.mp4 q1.mp4 
+
+== rebuild with option image: /tmp/fm-nm-imgtest/media/missing.jpg
+image file does not exist: /tmp/fm-nm-imgtest/media/missing.jpg
+fm-bearings-board: cannot resolve an image or video referenced by the page data: /tmp/fm-nm-imgtest/bad.json
+exit=1
+no link printed
+published page, assets, and source photo unchanged; no staging leftovers: yes
+
+== rebuild with option image: /tmp/fm-nm-imgtest/media/notimage.jpg
+unsupported image type application/octet-stream for /tmp/fm-nm-imgtest/media/notimage.jpg (png, jpeg, gif, and webp only)
+fm-bearings-board: cannot resolve an image or video referenced by the page data: /tmp/fm-nm-imgtest/bad.json
+exit=1
+no link printed
+published page, assets, and source photo unchanged; no staging leftovers: yes
+
+== rebuild with option image: /tmp/fm-nm-imgtest/media/link.jpg
+image file must not be a symlink: /tmp/fm-nm-imgtest/media/link.jpg
+fm-bearings-board: cannot resolve an image or video referenced by the page data: /tmp/fm-nm-imgtest/bad.json
+exit=1
+no link printed
+published page, assets, and source photo unchanged; no staging leftovers: yes
+
+== rebuild with option image: relative/hero.jpg
+image path must be absolute: relative/hero.jpg
+fm-bearings-board: cannot resolve an image or video referenced by the page data: /tmp/fm-nm-imgtest/bad.json
+exit=1
+no link printed
+published page, assets, and source photo unchanged; no staging leftovers: yes
+
+== rebuild with option image: /tmp/fm-nm-imgtest/media/huge.jpg
+image file exceeds the 5242880-byte cap: /tmp/fm-nm-imgtest/media/huge.jpg (8739329 bytes)
+fm-bearings-board: cannot resolve an image or video referenced by the page data: /tmp/fm-nm-imgtest/bad.json
+exit=1
+no link printed
+published page, assets, and source photo unchanged; no staging leftovers: yes
+
+== rebuild with option image: /tmp/fm-nm-imgtest/home/data/imagery/assets/inside.png
+media path lies inside the builder-owned assets directory /private/tmp/fm-nm-imgtest/home/data/imagery/assets, which every rebuild replaces: /tmp/fm-nm-imgtest/home/data/imagery/assets/inside.png
+fm-bearings-board: cannot resolve an image or video referenced by the page data: /tmp/fm-nm-imgtest/bad.json
+exit=1
+no link printed
+published page, assets, and source photo unchanged; no staging leftovers: yes
