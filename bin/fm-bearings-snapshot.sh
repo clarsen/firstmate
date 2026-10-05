@@ -145,12 +145,16 @@ Default collection performs bounded concurrent remote-ledger reads for registere
 remote homes under one shared snapshot budget and may refresh the parent-side cache.
 --include-prs additionally performs live GitHub discovery and checks.
 
-Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
+Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,name_full,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
-  gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
+  decisions_open{id,key,verb,summary,owner}, landed{id,what,what_full,artifact,owner},
+  gates{id,title,title_full,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
+in_flight.name, landed.what, and gates.title are compact chat-oriented labels
+  bounded at 70/70/60 characters with a trailing ellipsis; their *_full sibling
+  carries the same label with no length bound, for a renderer (the board) that
+  wants the whole durable title instead.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
 landed merges this home's Done with registered secondmate homes' Done, bounded by
@@ -417,7 +421,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         end
       end;
   def as_gate($owner):
-    {id, title:(.title | trunc(60)),
+    {id, title:(.title | trunc(60)), title_full:(.title | tostring | gsub("\\s+"; " ")),
      blocked_by:((.unresolved_blocker_ids // []) | if length > 0 then join(",") else "-" end | trunc(120)),
      reason:(hold_gate_reason | trunc(40)), owner:$owner,
      filed:((.since // null) | trunc(40))};
@@ -493,23 +497,28 @@ MODEL=$(printf '%s' "$SNAP" | jq \
        | select(.kind != "secondmate")
        | select(.backlog.current_role != "program")
        | select(.backlog.current_role != "held" or .current_state.state == "working")
+       | ((.backlog.title // "") as $name
+          | (if ($name | test("[^[:space:]]")) then $name else .id end)) as $full_name
        | {id, kind,
         state: .current_state.state,
         repo:(.backlog.repo // .project // null),
-        name:((.backlog.title // "") as $name
-              | (if ($name | test("[^[:space:]]")) then $name else .id end) | trunc(70)),
+        name:($full_name | trunc(70)),
+        name_full:$full_name,
         doing: ((.current_state.detail // "") as $d
                 | (if $d != "" then $d else (.hints.last_event_text // "") end) | trunc(90))
       } ]
      + [ $secondmate_views[] as $m
          | $m.active_children[]?
+         | . as $child
+         | (($child.name // "") as $name
+            | (if (($name | type) == "string" and ($name | test("[^[:space:]]")))
+               then $name else ($m.id + "/" + $child.id) end)) as $full_name
          | {id:($m.id + "/" + .id),
             kind:(.kind // "secondmate"),
             state:(.state // "working"),
             repo:(.repo // null),
-            name:((.name // "") as $name
-                  | (if (($name | type) == "string" and ($name | test("[^[:space:]]")))
-                     then $name else ($m.id + "/" + .id) end) | trunc(70)),
+            name:($full_name | trunc(70)),
+            name_full:$full_name,
             doing:((.doing // .state) | trunc(90))} ]) as $in_flight_all
   | ([ .backlog.records[]
          | . as $record
@@ -541,21 +550,25 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | select(.hold_kind == "captain" and projected_deferred_hold) ]
      | length) as $decisions_marked_deferred
   | (if ($return_catchup.pending // false) then
-       [{id:"(return-catchup)",
-         title:((if ($return_catchup.blockers // 0) > 0 then
-                   "\($return_catchup.blockers) blocker(s) to clear before ordinary work"
-                 elif (($return_catchup.reason // "") != "") then
-                   ("catch-up retained: " +
-                    ($return_catchup.reason | sub("[,;] *catch-up stays gated$"; "")))
-                 else "away-return catch-up is still open" end) | trunc(60)),
-         blocked_by:"-",
-         reason:"away-return catch-up",
-         owner:"(main)",
-         filed:null}]
+       ((if ($return_catchup.blockers // 0) > 0 then
+           "\($return_catchup.blockers) blocker(s) to clear before ordinary work"
+         elif (($return_catchup.reason // "") != "") then
+           ("catch-up retained: " +
+            ($return_catchup.reason | sub("[,;] *catch-up stays gated$"; "")))
+         else "away-return catch-up is still open" end) as $full_title
+        | [{id:"(return-catchup)",
+            title:($full_title | trunc(60)),
+            title_full:$full_title,
+            blocked_by:"-",
+            reason:"away-return catch-up",
+            owner:"(main)",
+            filed:null}])
      else [] end) as $return_catchup_gate
-  | ((if (.main_inventory.valid == false) then
+  | ((.main_inventory.reason // "main inventory invalid") as $full_title
+     | (if (.main_inventory.valid == false) then
         [{id:"(main-inventory)",
-          title:((.main_inventory.reason // "main inventory invalid") | trunc(60)),
+          title:($full_title | trunc(60)),
+          title_full:$full_title,
           blocked_by:"-",
           reason:"main inventory",
           owner:"(main)",
@@ -630,7 +643,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         | select(.reconcile_inventory != null)
         | {id, spawn_gen:(.spawn_gen // null), host:(.host // null), kind:(.reconcile_inventory.kind // null), ids:((.reconcile_inventory.ids // []) | map(select(type == "string")) | sort)} ],
       decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
-      landed: ($done | map({id, what:(.title | trunc(70)),
+      landed: ($done | map({id, what:(.title | trunc(70)), what_full:(.title | tostring | gsub("\\s+"; " ")),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
       gates: ($return_catchup_gate
               + ($gates_all | newest_filed_first
