@@ -428,6 +428,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       end;
   def bounded_string($n):
     if . == null then null else (. | trunc($n)) end;
+  def bounded_ref($n):
+    if . == null or (tostring | length) > $n then null else . end;
   def as_gate($owner):
     {id, title:(.title | trunc(60)), title_full:(.title | tostring | gsub("\\s+"; " ")),
      blocked_by:((.unresolved_blocker_ids // []) | if length > 0 then join(",") else "-" end | trunc(120)),
@@ -436,10 +438,10 @@ MODEL=$(printf '%s' "$SNAP" | jq \
      repo:((.repo // null) | bounded_string(80)),
      kind:((.kind // null) | bounded_string(40)),
      body:((.body_excerpt // null) | bounded_string(300)),
-     pr_url:((.pr_url // null) | bounded_string(500)),
-     report_path:((.report_path // null) | bounded_string(500)),
-     links:(((.links // []) | map(select(type == "string")))
-            - [(.pr_url // null)] | unique | .[0:5] | map(trunc(300)))};
+     pr_url:((.pr_url // null) | bounded_ref(500)),
+     report_path:((.report_path // null) | bounded_ref(500)),
+     links:(((.links // []) | map(select(type == "string" and length <= 300)))
+            - [(.pr_url // null)] | unique | .[0:5])};
   def round_robin_landed($n):
     . as $groups
     | [range(0; (($groups | map(length) | max) // 0)) as $i

@@ -2542,7 +2542,7 @@ EOF
 }
 
 test_gate_rows_carry_backlog_detail_and_artifact_links() {
-  local home fakebin json
+  local home fakebin json long_url
   home=$(make_home gate-detail)
   : > "$home/data/secondmates.md"
   cat > "$home/data/backlog.md" <<'EOF'
@@ -2555,10 +2555,15 @@ test_gate_rows_carry_backlog_detail_and_artifact_links() {
 
 ## Done
 EOF
+  long_url="https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/long?q=$(printf 'x%.0s' {1..300})"
+  awk -v line="- [ ] long-link-gate - Overlong artifact link (repo: firstmate) (kind: ship) $long_url" \
+    '/^## Done/ { print line; print "" } { print }' "$home/data/backlog.md" > "$home/data/backlog.md.tmp"
+  mv "$home/data/backlog.md.tmp" "$home/data/backlog.md"
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
-    (.gates | any(.id == "detail-gate"
+    (.gates | any(.id == "long-link-gate" and .links == []))
+    and (.gates | any(.id == "detail-gate"
       and .repo == "firstmate" and .kind == "ship"
       and (.body | contains("flaked twice in a row"))
       and .pr_url == "https://github.com/acme/firstmate/pull/42"

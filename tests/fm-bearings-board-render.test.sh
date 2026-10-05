@@ -234,7 +234,7 @@ test_a_charted_row_with_detail_renders_its_panel_and_links() {
   out=$(render "$home" '[
     {"id":"detail-gate","repo":"firstmate","title":"Needs richer context","reason":"waiting on evidence",
      "dispatchable":true,
-     "detail":{"body":"Captain asked for deeper evidence before dispatch.","kind":"ship",
+     "detail":{"body":"Captain asked for deeper evidence before dispatch.",
        "links":[{"label":"PR","url":"https://github.com/acme/firstmate/pull/42"},
                 {"label":"Lavish board","url":"https://example.com:4387/session/abc123"}]}}
   ]')

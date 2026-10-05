@@ -197,8 +197,6 @@
 #   body     optional string - the backlog item's own body text (why it
 #            exists, its decided delivery posture, the evidence behind it),
 #            rendered as plain text, never HTML
-#   kind     optional non-empty string - the backlog item's durable kind
-#            (ship, scout, secondmate, ...)
 #   links    optional array of { label: non-empty string, url: an https:// URL },
 #            the backlog-recorded artifacts (a PR, a scout report, a Lavish
 #            board or page) rendered as real links
@@ -275,11 +273,11 @@ validate_payload() {  # <data.json>
     def optional_filed:
       (has("filed") | not) or (.filed == null) or (.filed | valid_filed);
     def optional_string($name): (has($name) | not) or (.[$name] | type == "string");
+    def https_url:
+      type == "string"
+        and test("^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?(?:[/?#][^[:space:]]*)?$");
     def optional_https_url($name):
-      (has($name) | not)
-      or (.[$name]
-        | type == "string"
-          and test("^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?(?:[/?#][^[:space:]]*)?$"));
+      (has($name) | not) or (.[$name] | https_url);
     def version: type == "string" and test("^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$");
     def optional_subject:
       (has("subject") | not)
@@ -324,9 +322,6 @@ validate_payload() {  # <data.json>
       and (.what | nonempty_string) and (.owner | nonempty_string)
       and optional_https_url("pr_url")
       and optional_subject;
-    def https_url:
-      type == "string"
-        and test("^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?(?:[/?#][^[:space:]]*)?$");
     def link_item:
       type == "object" and (.label | nonempty_string) and (.url | https_url);
     def optional_detail:
@@ -334,7 +329,6 @@ validate_payload() {  # <data.json>
       or (.detail
         | type == "object"
           and ((has("body") | not) or (.body | type == "string"))
-          and ((has("kind") | not) or (.kind | nonempty_string))
           and ((has("links") | not) or (.links | type == "array" and ([.[] | link_item] | all))));
     def charted_item:
       type == "object" and repo_marker and (.id | slug(128))
