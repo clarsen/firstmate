@@ -2541,6 +2541,37 @@ EOF
   pass "Underway rows carry the durable task name and gates carry their filed date"
 }
 
+test_underway_landed_and_gate_rows_carry_untruncated_full_titles() {
+  local home fakebin long_title json
+  home=$(make_home full-titles)
+  long_title="A genuinely long durable title that runs well past the sixty to seventy character compact field bound used for chat"
+  mkdir -p "$home/projects/long-wt"
+  cat > "$home/data/backlog.md" <<EOF
+## In flight
+- [ ] long-ship - $long_title (repo: firstmate) (kind: ship) (since 2026-07-09)
+
+## Queued
+- [ ] long-gate - $long_title (repo: firstmate) (kind: ship) (since 2026-07-10)
+
+## Done
+- [x] long-landed - $long_title (repo: firstmate) (kind: ship) (merged 2026-07-11)
+EOF
+  fm_write_meta "$home/state/long-ship.meta" \
+    "window=firstmate:fm-long-ship" "worktree=$home/projects/long-wt" "project=firstmate" \
+    "harness=claude" "kind=ship" "mode=no-mistakes"
+  record_claude_state "$home/state" long-ship busy
+  printf 'working: no-mistakes review round 1\n' > "$home/state/long-ship.status"
+
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e --arg full "$long_title" '
+    (.in_flight | any(.id == "long-ship" and .name_full == $full and (.name | length) < ($full | length)))
+      and (.gates | any(.id == "long-gate" and .title_full == $full and (.title | length) < ($full | length)))
+      and (.landed | any(.id == "long-landed" and .what_full == $full and (.what | length) < ($full | length)))
+  ' >/dev/null || fail "a durably long title was truncated with no full-title field to recover it: $json"
+  pass "Underway, gate, and landed rows each carry an untruncated full-title field alongside their compact one"
+}
+
 test_mixed_secondmate_roles_partial_state_and_captain_readiness() {
   local home fakebin hibit wheel sshhip ha canonical json
   home=$(make_home mixed-domain-regressions)
@@ -3356,6 +3387,7 @@ test_active_children_project_independent_of_home_captain_hold
 test_nameless_legacy_summary_uses_its_durable_identifier
 test_newest_filed_gates_are_selected_before_snapshot_bounds
 test_underway_and_gate_rows_carry_the_durable_name_and_filed_date
+test_underway_landed_and_gate_rows_carry_untruncated_full_titles
 test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection
 test_completed_scout_report_not_pending
