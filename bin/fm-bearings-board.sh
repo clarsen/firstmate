@@ -127,9 +127,10 @@
 # prior build and a refused rebuild leaves the published page and its assets
 # intact. That directory is owned by the builder: a media path inside it is
 # refused, since the next rebuild replaces it. This is presentation only: neither
-# field ever changes an answer's key or value, and the render-proof harness
-# (bin/fm-bearings-page-render.mjs) asserts only on rendered controls, never
-# on media bytes.
+# field ever changes an answer's key or value. The render proof below checks
+# that every declared image and video rendered where declared (a video
+# taking its sibling `image` as its poster) and that each video is set to
+# play inline muted, looped, and with controls, never the media bytes.
 #
 # RENDER-PROVEN BEFORE A PAGE'S LINK EVER SHIPS. `page` stages the page at a
 # temporary path and runs it through bin/fm-bearings-page-render.mjs, which
