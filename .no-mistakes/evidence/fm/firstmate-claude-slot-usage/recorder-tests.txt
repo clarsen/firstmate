@@ -1,0 +1,10 @@
+ok - the recorder writes both windows' used_percentage and resets_at plus observed_at
+ok - a status-line payload with no rate_limits writes no usage file and still exits 0
+ok - a recorder run with FM_CLAUDE_ACCOUNT_SLOT unset writes nothing and still exits 0
+ok - a window reported at 100% used refreshes the limited mark with that window's real reset time
+ok - a reading with no window at 100% used leaves the slot's limited mark untouched
+ok - a stale lower reading never regresses its window's generation, while a new generation is accepted
+ok - a stale reading from an older window generation never replaces a newer stored reading
+ok - a stale saturated reading whose reset has passed never writes a limited mark
+ok - the recorder's output never carries a token value
+ok - malformed stdin never fails the worker and still prints a status line

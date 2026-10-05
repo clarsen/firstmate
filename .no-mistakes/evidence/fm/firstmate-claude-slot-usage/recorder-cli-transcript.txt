@@ -1,0 +1,39 @@
+## 1. first reading recorded (status line prints firstmate:<slot>)
+$ echo '{"rate_limits":{"five_hour":{"used_percentage":60,"resets_at":1791232426},"seven_day":{"used_percentage":20,"resets_at":1791315226}}}' | FM_CLAUDE_ACCOUNT_SLOT=a fm-claude-usage-record.sh
+firstmate:a
+exit=0  stored: {"five_hour":{"used_percentage":60,"resets_at":1791232426},"seven_day":{"used_percentage":20,"resets_at":1791315226},"observed_at":1791228826}
+## 2. same generation, lower 5h (stale worker) -> kept at 60
+$ echo '{"rate_limits":{"five_hour":{"used_percentage":30,"resets_at":1791232426},"seven_day":{"used_percentage":25,"resets_at":1791315226}}}' | FM_CLAUDE_ACCOUNT_SLOT=a fm-claude-usage-record.sh
+firstmate:a
+exit=0  stored: {"five_hour":{"used_percentage":60,"resets_at":1791232426},"seven_day":{"used_percentage":25,"resets_at":1791315226},"observed_at":1791228826}
+## 3. older generation (resets_at in past) lower -> rejected
+$ echo '{"rate_limits":{"five_hour":{"used_percentage":100,"resets_at":1791228766},"seven_day":{"used_percentage":25,"resets_at":1791315226}}}' | FM_CLAUDE_ACCOUNT_SLOT=a fm-claude-usage-record.sh
+firstmate:a
+exit=0  stored: {"five_hour":{"used_percentage":60,"resets_at":1791232426},"seven_day":{"used_percentage":25,"resets_at":1791315226},"observed_at":1791228826}
+(no limited mark written for stale saturated reading)
+## 4. newer generation lower -> accepted
+$ echo '{"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":1791236026},"seven_day":{"used_percentage":25,"resets_at":1791315226}}}' | FM_CLAUDE_ACCOUNT_SLOT=a fm-claude-usage-record.sh
+firstmate:a
+exit=0  stored: {"five_hour":{"used_percentage":5,"resets_at":1791236026},"seven_day":{"used_percentage":25,"resets_at":1791315226},"observed_at":1791228826}
+## 5. saturated window with reset ahead -> auto mark-limited with real reset time
+$ echo '{"rate_limits":{"five_hour":{"used_percentage":100,"resets_at":1791236026},"seven_day":{"used_percentage":25,"resets_at":1791315226}}}' | FM_CLAUDE_ACCOUNT_SLOT=a fm-claude-usage-record.sh
+firstmate:a
+exit=0  stored: {"five_hour":{"used_percentage":100,"resets_at":1791236026},"seven_day":{"used_percentage":25,"resets_at":1791315226},"observed_at":1791228826}
+mark: 2026-10-05T21:33:46Z  expected: 2026-10-05T21:33:46Z
+## 6. slot with only a past-reset reading
+## 7. no slot env / malformed input never fails worker
+firstmate
+exit=0
+firstmate:a
+exit=0
+firstmate
+exit=0
+
+/private/tmp/fmlive/cli/home:
+state
+
+/private/tmp/fmlive/cli/home/state:
+## 8. status
+a: limited until 2026-10-05T21:33:46Z; 5h=100% 7d=25% (observed 1s ago)
+c: no limited mark; 5h=reset 7d=40% (observed 61s ago)
+never: no limited mark; no recorded reading

@@ -1,0 +1,9 @@
+# launch command (fm-spawn statusLine fragment, bin dir: main)
+export FM_CLAUDE_ACCOUNT_SLOT=labslot; claude --settings '{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false},"statusLine":{"type":"command","command":"'\''/Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M46Q2HSWQYN7G9V0WSTRQACJ/bin/fm-claude-usage-record.sh'\''"}}' 
+
+# recorded <state>/.claude-account-usage-labslot after one real prompt
+{"five_hour":{"used_percentage":28,"resets_at":1791231600},"seven_day":{"used_percentage":73,"resets_at":1791266400},"observed_at":1791228772}
+
+# rendered status line occurrences in pty
+   1 firstmate:labslot
+labslot: no limited mark; 5h=28% 7d=73% (observed 75s ago)

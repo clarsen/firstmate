@@ -1,0 +1,16 @@
+ok - selection is a no-op when config/claude-accounts is absent
+ok - slots with no recorded reading still select the first configured slot
+ok - a recorded reading, when available, prefers the eligible slot with more room
+ok - a slot marked limited is skipped in favor of the other slot
+ok - an expired limited mark no longer excludes its slot
+ok - with every slot limited, selection picks the soonest-to-expire slot and explains why
+ok - clear-limited makes a slot selectable again
+ok - mark-limited rejects a malformed --until without writing a mark
+ok - a slot recorded as exhausted loses to an eligible slot with no reading
+ok - a recorded-exhausted slot loses regardless of file order and is only a last resort
+ok - a reading whose window has already reset is treated as 0% used rather than stale
+ok - a slot with no recorded reading counts as full room against a nearly exhausted slot
+ok - an unparseable reading is treated as unknown rather than as full room
+ok - a slot whose token cannot be read loses to a readable unmarked slot
+ok - selection with the feature off never walks the parent chain or prints its note
+ok - a malformed config/claude-accounts entry refuses selection instead of guessing
