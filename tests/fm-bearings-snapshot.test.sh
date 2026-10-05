@@ -2541,6 +2541,41 @@ EOF
   pass "Underway rows carry the durable task name and gates carry their filed date"
 }
 
+test_gate_rows_carry_backlog_detail_and_artifact_links() {
+  local home fakebin json long_url
+  home=$(make_home gate-detail)
+  : > "$home/data/secondmates.md"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] detail-gate - Needs richer context (repo: firstmate) (kind: ship) https://github.com/acme/firstmate/pull/42 https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/abc123 data/detail-gate/report.md
+  Captain asked for deeper evidence before dispatch; the integration test flaked twice in a row.
+- [ ] bare-gate - No extra context (repo: firstmate) (kind: ship)
+
+## Done
+EOF
+  long_url="https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/long?q=$(printf 'x%.0s' {1..300})"
+  awk -v line="- [ ] long-link-gate - Overlong artifact link (repo: firstmate) (kind: ship) $long_url" \
+    '/^## Done/ { print line; print "" } { print }' "$home/data/backlog.md" > "$home/data/backlog.md.tmp"
+  mv "$home/data/backlog.md.tmp" "$home/data/backlog.md"
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.gates | any(.id == "long-link-gate" and .links == []))
+    and (.gates | any(.id == "detail-gate"
+      and .repo == "firstmate" and .kind == "ship"
+      and (.body | contains("flaked twice in a row"))
+      and .pr_url == "https://github.com/acme/firstmate/pull/42"
+      and .report_path == "data/detail-gate/report.md"
+      and (.links == ["https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/abc123"])))
+      and (.gates | any(.id == "bare-gate"
+        and .repo == "firstmate" and .kind == "ship"
+        and .body == null and .pr_url == null and .report_path == null and .links == []))
+  ' >/dev/null || fail "gate rows must carry their durable backlog detail and artifact links: $json"
+  pass "gate rows carry backlog body/repo/kind and recorded artifact links"
+}
+
 test_underway_landed_and_gate_rows_carry_untruncated_full_titles() {
   local home fakebin long_title json
   home=$(make_home full-titles)
@@ -3387,6 +3422,7 @@ test_active_children_project_independent_of_home_captain_hold
 test_nameless_legacy_summary_uses_its_durable_identifier
 test_newest_filed_gates_are_selected_before_snapshot_bounds
 test_underway_and_gate_rows_carry_the_durable_name_and_filed_date
+test_gate_rows_carry_backlog_detail_and_artifact_links
 test_underway_landed_and_gate_rows_carry_untruncated_full_titles
 test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection

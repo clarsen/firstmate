@@ -228,6 +228,44 @@ test_charted_rows_without_a_filed_date_follow_the_dated_rows_in_payload_order() 
   pass "charted rows with no filed date follow the dated rows in payload order"
 }
 
+test_a_charted_row_with_detail_renders_its_panel_and_links() {
+  local home out
+  home=$(make_home charted-detail)
+  out=$(render "$home" '[
+    {"id":"detail-gate","repo":"firstmate","title":"Needs richer context","reason":"waiting on evidence",
+     "dispatchable":true,
+     "detail":{"body":"Captain asked for deeper evidence before dispatch.",
+       "links":[{"label":"PR","url":"https://github.com/acme/firstmate/pull/42"},
+                {"label":"Lavish board","url":"https://example.com:4387/session/abc123"}]}}
+  ]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null \
+    || fail "the board rendered its fail-closed error instead of the fleet: $out"
+  printf '%s' "$out" | jq -e '
+    (.charted | length) == 1
+      and (.charted[0].detail.body == "Captain asked for deeper evidence before dispatch.")
+      and (.charted[0].detail.links == [
+        {"label":"PR","url":"https://github.com/acme/firstmate/pull/42"},
+        {"label":"Lavish board","url":"https://example.com:4387/session/abc123"}])
+  ' >/dev/null || fail "a Charted Next row with detail did not render its panel and links: $out"
+  pass "a Charted Next row with detail renders its panel body and artifact links"
+}
+
+test_a_charted_row_without_detail_renders_unchanged() {
+  local home out
+  home=$(make_home charted-no-detail)
+  out=$(render "$home" '[
+    {"id":"bare-gate","repo":"firstmate","title":"No extra context","reason":"queued","dispatchable":true}
+  ]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null \
+    || fail "the board rendered its fail-closed error instead of the fleet: $out"
+  printf '%s' "$out" | jq -e '
+    (.charted | length) == 1
+      and (.charted[0].title == "No extra context")
+      and (.charted[0].detail == null)
+  ' >/dev/null || fail "a Charted Next row with no detail changed its rendering: $out"
+  pass "a Charted Next row with no detail renders exactly as it did before the feature existed"
+}
+
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first
@@ -237,3 +275,5 @@ test_warnings_are_excluded_from_the_charted_next_count
 test_a_board_of_only_warnings_still_reports_nothing_queued
 test_omitted_warnings_never_count_as_more_queued
 test_an_omitted_kind_keeps_the_existing_queued_rendering
+test_a_charted_row_with_detail_renders_its_panel_and_links
+test_a_charted_row_without_detail_renders_unchanged

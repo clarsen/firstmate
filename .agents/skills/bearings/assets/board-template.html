@@ -112,6 +112,28 @@ __FM_DECISION_CARD_CSS__
 }
 .bb-empty { padding: 18px; font-size: var(--fs-sm); color: var(--text-muted); }
 
+/* ---- Charted Next details toggle + inline expandable panel ---- */
+.bb-row__details {
+  flex: none; font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700;
+  letter-spacing: 0.03em; text-transform: uppercase; color: var(--ocean-600);
+  background: none; border: none; cursor: pointer; padding: 4px 2px;
+}
+.bb-row__details:hover { text-decoration: underline; }
+.bb-row__details:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.bb-detail {
+  padding: 2px 18px 14px 56px; border-top: none; background: var(--paper-100);
+}
+.bb-detail__body {
+  margin: 0 0 8px; font-size: var(--fs-xs); color: var(--text-strong); line-height: 1.5;
+  overflow-wrap: break-word; white-space: pre-wrap;
+}
+.bb-detail__links { display: flex; flex-direction: column; gap: 4px; }
+.bb-detail__link {
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--ocean-600);
+  overflow-wrap: break-word; width: fit-content;
+}
+.bb-detail__link:hover { text-decoration: underline; }
+
 /* ---- Charted Next dispatch picker ---- */
 /* margin:0 kills the UA default checkbox margin so picker rows and spacer rows
    share one text left edge */
@@ -490,7 +512,39 @@ __FM_DECISION_CARD_JS__
     row.appendChild(main);
     if (isWarning(t)) row.appendChild(badge("danger", "needs repair"));
     else if (t.reason) row.appendChild(badge("warn", "waiting"));
+    /* the detail panel is an anchored sibling in this same page - never a
+       separate Lavish session - and renders only when the row actually
+       carries one, so a row with no detail looks exactly as it did before. */
+    var hasDetail = t.detail && typeof t.detail === "object" &&
+      (t.detail.body || (Array.isArray(t.detail.links) && t.detail.links.length));
+    var panel = null;
+    if (hasDetail) {
+      panel = el("div", "bb-detail");
+      panel.hidden = true;
+      if (t.detail.body) panel.appendChild(el("p", "bb-detail__body", t.detail.body));
+      if (Array.isArray(t.detail.links) && t.detail.links.length) {
+        var linkWrap = el("div", "bb-detail__links");
+        t.detail.links.forEach(function (lk) {
+          var a = el("a", "bb-detail__link", lk.label);
+          a.href = lk.url; a.target = "_blank"; a.rel = "noopener";
+          linkWrap.appendChild(a);
+        });
+        panel.appendChild(linkWrap);
+      }
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "bb-row__details";
+      toggle.textContent = "details";
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.addEventListener("click", function () {
+        panel.hidden = !panel.hidden;
+        toggle.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
+        toggle.textContent = panel.hidden ? "details" : "hide";
+      });
+      row.appendChild(toggle);
+    }
     ch.appendChild(row);
+    if (panel) ch.appendChild(panel);
   });
   var chartedShown = chartedQueued(data.charted).length;
   var chartedTotal = chartedShown + chartedMoreQueued;

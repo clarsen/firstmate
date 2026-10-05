@@ -4,8 +4,10 @@
 //
 // Usage: node board-render-harness.mjs <built-board.html>
 // Prints one JSON document:
-//   { stats:[{n,label}], underway:[{title,sub,badges}],
-//     charted:[{title,sub,badges,pickable}], empty, more, error }
+//   { stats:[{n,label}], underway:[{title,sub,badges,detail}],
+//     charted:[{title,sub,badges,pickable,detail}], empty, more, error }
+// `detail` is null for a row with no expandable panel, or
+// {body, links:[{label,url}]} for a row that carries one.
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -101,18 +103,39 @@ const stats = strip.children.map((t) => ({
   label: t.children.find((c) => c.className.includes("bb-stat__label"))?.textContent,
 }));
 
-const rowsOf = (container) =>
-  container.children
-    .filter((r) => r.className.split(/\s+/).includes("bb-row"))
-    .map((row) => {
-      const main = row.children.find((c) => c.className.includes("bb-row__main"));
-      return {
-        title: main?.children.find((c) => c.className.includes("bb-row__title"))?.textContent ?? "",
-        sub: main?.children.find((c) => c.className.includes("bb-row__sub"))?.textContent ?? "",
-        badges: badgesOf(row),
-        pickable: row.children.some((c) => c.className.includes("bb-pick") && !c.className.includes("spacer")),
-      };
+// A Charted Next row with a detail panel is followed in the container by a
+// sibling `.bb-detail` element (see board-template.html); anything else
+// means the row carries no detail and renders exactly as it did before that
+// feature existed.
+const detailOf = (panel) => {
+  if (!panel) return null;
+  const body = panel.children.find((c) => c.className.includes("bb-detail__body"));
+  const linkWrap = panel.children.find((c) => c.className.includes("bb-detail__links"));
+  const links = linkWrap
+    ? linkWrap.children.map((a) => ({ label: a.textContent, url: a.href || "" }))
+    : [];
+  return { body: body ? body.textContent : null, links };
+};
+
+const rowsOf = (container) => {
+  const kids = container.children;
+  const out = [];
+  for (let i = 0; i < kids.length; i++) {
+    const row = kids[i];
+    if (!row.className.split(/\s+/).includes("bb-row")) continue;
+    const main = row.children.find((c) => c.className.includes("bb-row__main"));
+    const next = kids[i + 1];
+    const hasDetailPanel = !!next && next.className.split(/\s+/).includes("bb-detail");
+    out.push({
+      title: main?.children.find((c) => c.className.includes("bb-row__title"))?.textContent ?? "",
+      sub: main?.children.find((c) => c.className.includes("bb-row__sub"))?.textContent ?? "",
+      badges: badgesOf(row),
+      pickable: row.children.some((c) => c.className.includes("bb-pick") && !c.className.includes("spacer")),
+      detail: hasDetailPanel ? detailOf(next) : null,
     });
+  }
+  return out;
+};
 
 const uw = byId.get("bb-underway") || new Node("div");
 const underway = rowsOf(uw);
