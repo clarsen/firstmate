@@ -105,6 +105,87 @@ test_a_recommended_option_and_a_hint_survive_render() {
   pass "a hinted option and a recommended option both still render"
 }
 
+test_question_and_option_images_render_and_stay_presentational() {
+  local home out
+  home=$(fm_test_tmproot render-images)
+  out=$(render "$home" '{
+    "schema": "fm-decision-page.v1",
+    "title": "Pick a photo",
+    "questions": [
+      { "key": "q1", "title": "First", "image": "data:image/png;base64,iVBORw0KGgo=",
+        "options": [
+          {"value":"a","label":"A","image":"data:image/png;base64,iVBORw0KGgo="},
+          {"value":"b","label":"B"} ] }
+    ]
+  }')
+  jq -e '
+    .error == ""
+      and (.questions | length) == 1
+      and (.questions[0] | .key == "q1" and .optionCount == 2
+        and .questionImage == true and .optionImageCount == 1)
+  ' <<< "$out" >/dev/null || fail "the question and option images did not render as declared: $out"
+  pass "a question-level image and one option-level image both render"
+}
+
+test_question_and_option_videos_render_playable_and_poster_is_honored() {
+  local home out
+  home=$(fm_test_tmproot render-videos)
+  out=$(render "$home" '{
+    "schema": "fm-decision-page.v1",
+    "title": "Pick a clip",
+    "questions": [
+      { "key": "q1", "title": "First", "image": "data:image/png;base64,iVBORw0KGgo=",
+        "video": "assets/q0.mp4",
+        "options": [
+          {"value":"a","label":"A","video":"assets/q0-o0.webm"},
+          {"value":"b","label":"B"} ] }
+    ]
+  }')
+  jq -e '
+    .error == ""
+      and (.questions | length) == 1
+      and (.questions[0] | .key == "q1" and .optionCount == 2
+        and .questionVideo == true and .questionVideoPlayable == true
+        and .optionVideoCount == 1 and .optionVideoAllPlayable == true)
+  ' <<< "$out" >/dev/null || fail "the question and option videos did not render playable as declared: $out"
+  pass "a question-level video and one option-level video both render muted/looped/controlled"
+}
+
+test_a_question_with_no_videos_reports_none_rendered() {
+  local home out
+  home=$(fm_test_tmproot render-no-videos)
+  out=$(render "$home" '{
+    "schema": "fm-decision-page.v1",
+    "title": "Pick one",
+    "questions": [
+      { "key": "q1", "title": "First", "options": [
+        {"value":"a","label":"A"}, {"value":"b","label":"B"} ] }
+    ]
+  }')
+  jq -e '
+    .questions[0].questionVideo == false and .questions[0].questionVideoPlayable == true
+      and .questions[0].optionVideoCount == 0 and .questions[0].optionVideoAllPlayable == true
+  ' <<< "$out" >/dev/null \
+    || fail "a page with no declared videos reported a rendered video: $out"
+  pass "a page with no declared videos reports no rendered videos and stays vacuously playable"
+}
+
+test_a_question_with_no_images_reports_none_rendered() {
+  local home out
+  home=$(fm_test_tmproot render-no-images)
+  out=$(render "$home" '{
+    "schema": "fm-decision-page.v1",
+    "title": "Pick one",
+    "questions": [
+      { "key": "q1", "title": "First", "options": [
+        {"value":"a","label":"A"}, {"value":"b","label":"B"} ] }
+    ]
+  }')
+  jq -e '.questions[0].questionImage == false and .questions[0].optionImageCount == 0' <<< "$out" >/dev/null \
+    || fail "a page with no declared images reported a rendered image: $out"
+  pass "a page with no declared images reports no rendered images"
+}
+
 test_deleting_the_questions_container_is_caught_as_a_render_failure() {
   local home out broken_template
   home=$(fm_test_tmproot render-deleted-container)
@@ -128,4 +209,8 @@ test_two_questions_each_render_their_own_radio_group
 test_a_question_with_no_options_never_reaches_the_page
 test_a_wrong_schema_payload_renders_the_fail_closed_error
 test_a_recommended_option_and_a_hint_survive_render
+test_question_and_option_images_render_and_stay_presentational
+test_a_question_with_no_images_reports_none_rendered
+test_question_and_option_videos_render_playable_and_poster_is_honored
+test_a_question_with_no_videos_reports_none_rendered
 test_deleting_the_questions_container_is_caught_as_a_render_failure

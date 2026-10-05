@@ -93,12 +93,44 @@
 #                   ordinary answer on the source's check wake.
 #     title         non-empty string
 #     body          optional string
+#     image         optional string: an absolute local path to an image file
+#                   shown above the question's options (also used as the
+#                   `video`'s poster frame when both are given)
+#     video         optional string: an absolute local path to a video file
+#                   that plays inline (muted, looped, with controls) above
+#                   the question's options
 #     options       non-empty array of { value: slug, label: non-empty string,
-#                   hint: optional string, recommended: optional boolean };
-#                   at most one option may carry recommended: true
+#                   hint: optional string, recommended: optional boolean,
+#                   image: optional string, video: optional string }; at most
+#                   one option may carry recommended: true
 #     note          optional, one of "none" (default), "optional", "required";
 #                   anything but "none" adds a freeform note field, and
 #                   "required" refuses to queue an answer with no note
+#
+# MEDIA PATHS ARE RESOLVED, NEVER LINKED. A question's or option's `image` or
+# `video` is an absolute local filesystem path - typically under a home's
+# data/ directory, possibly a secondmate home elsewhere on disk - never a path
+# relative to this script or a URL. `page` resolves every such path before
+# publishing, refusing unless the path exists, is a regular file (never a
+# symlink), is within its type's size cap, and `file --mime-type` reports a
+# supported type: image/png, image/jpeg, image/gif, or image/webp for
+# IMAGE_MAX_BYTES (5 MiB); video/mp4, video/webm, or video/quicktime for
+# VIDEO_MAX_BYTES (25 MiB). An image is embedded as a `data:` URI directly in
+# the published page, so it needs no separate file reachable from wherever
+# Lavish serves it. A video is copied instead of embedded - base64 would
+# bloat the single HTML file, and Lavish already serves sibling files from an
+# artifact's own directory - into an `assets/` directory next to the
+# label-scoped page, referenced by a page-relative path (never a leading
+# `/`, which Lavish's own sibling-asset convention refuses to serve). Every
+# `page` run stages a fresh assets directory and swaps it in only after the
+# page passes its render proof, so a rebuild never accumulates assets from a
+# prior build and a refused rebuild leaves the published page and its assets
+# intact. That directory is owned by the builder: a media path inside it is
+# refused, since the next rebuild replaces it. This is presentation only: neither
+# field ever changes an answer's key or value. The render proof below checks
+# that every declared image and video rendered where declared (a video
+# taking its sibling `image` as its poster) and that each video is set to
+# play inline muted, looped, and with controls, never the media bytes.
 #
 # RENDER-PROVEN BEFORE A PAGE'S LINK EVER SHIPS. `page` stages the page at a
 # temporary path and runs it through bin/fm-bearings-page-render.mjs, which
@@ -315,12 +347,16 @@ validate_page_payload() {  # <data.json>
       and (.value | slug(128))
       and (.label | nonempty_string)
       and optional_string("hint")
+      and optional_string("image")
+      and optional_string("video")
       and ((has("recommended") | not) or (.recommended | type == "boolean"));
     def question:
       type == "object"
       and (.key | slug(128))
       and (.title | nonempty_string)
       and optional_string("body")
+      and optional_string("image")
+      and optional_string("video")
       and (.options | type == "array" and length > 0)
       and ([.options[] | option] | all)
       and (([.options[] | select(.recommended == true)] | length) <= 1)
@@ -581,6 +617,139 @@ finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
   fi
 }
 
+# --- Question-page media resolution --------------------------------------
+# A question's or option's `image`/`video` field is an absolute local
+# filesystem path, never a URL or a path relative to this script. Resolve
+# every such path BEFORE the payload is injected: an image becomes a
+# `data:` URI inline in the payload, while a video is copied into an
+# `assets/` directory beside the published page and becomes a page-relative
+# path (Lavish serves sibling files from an artifact's own directory, and a
+# base64 video would bloat the single HTML file far more than an image
+# does). Fails closed on a missing path, a symlink, an oversized file, or a
+# file whose detected type is not supported - never silently drops or skips
+# a media reference.
+IMAGE_MAX_BYTES=$((5 * 1024 * 1024))
+VIDEO_MAX_BYTES=$((25 * 1024 * 1024))
+
+image_data_uri() {  # <path> <out-file>
+  local path=$1 out=$2 size mime
+  case "$path" in
+    /*) ;;
+    *) printf 'image path must be absolute: %s\n' "$path" >&2; return 1 ;;
+  esac
+  [ -e "$path" ] || { printf 'image file does not exist: %s\n' "$path" >&2; return 1; }
+  [ ! -L "$path" ] || { printf 'image file must not be a symlink: %s\n' "$path" >&2; return 1; }
+  [ -f "$path" ] || { printf 'image path is not a regular file: %s\n' "$path" >&2; return 1; }
+  command -v file >/dev/null 2>&1 \
+    || { printf 'the file command is required to validate image types\n' >&2; return 1; }
+  size=$(wc -c < "$path" | tr -d '[:space:]') || return 1
+  [ "$size" -le "$IMAGE_MAX_BYTES" ] \
+    || { printf 'image file exceeds the %d-byte cap: %s (%d bytes)\n' "$IMAGE_MAX_BYTES" "$path" "$size" >&2; return 1; }
+  mime=$(file --brief --mime-type "$path" 2>/dev/null) \
+    || { printf 'cannot determine the image type: %s\n' "$path" >&2; return 1; }
+  case "$mime" in
+    image/png|image/jpeg|image/gif|image/webp) ;;
+    *) printf 'unsupported image type %s for %s (png, jpeg, gif, and webp only)\n' "$mime" "$path" >&2; return 1 ;;
+  esac
+  { printf 'data:%s;base64,' "$mime" && base64 < "$path" | tr -d '\n'; } > "$out" || return 1
+}
+
+# Validate <path> as a supported video file and copy it into <assets-dir> as
+# <basename> (caller picks a collision-free name), printing nothing. Unlike
+# images, a video is never base64-embedded.
+video_asset_extension() {  # <mime>
+  case "$1" in
+    video/mp4) printf 'mp4' ;;
+    video/webm) printf 'webm' ;;
+    video/quicktime) printf 'mov' ;;
+    *) return 1 ;;
+  esac
+}
+
+copy_video_asset() {  # <path> <assets-dir> <basename-stem>
+  local path=$1 assets_dir=$2 stem=$3 size mime ext
+  case "$path" in
+    /*) ;;
+    *) printf 'video path must be absolute: %s\n' "$path" >&2; return 1 ;;
+  esac
+  [ -e "$path" ] || { printf 'video file does not exist: %s\n' "$path" >&2; return 1; }
+  [ ! -L "$path" ] || { printf 'video file must not be a symlink: %s\n' "$path" >&2; return 1; }
+  [ -f "$path" ] || { printf 'video path is not a regular file: %s\n' "$path" >&2; return 1; }
+  command -v file >/dev/null 2>&1 \
+    || { printf 'the file command is required to validate video types\n' >&2; return 1; }
+  size=$(wc -c < "$path" | tr -d '[:space:]') || return 1
+  [ "$size" -le "$VIDEO_MAX_BYTES" ] \
+    || { printf 'video file exceeds the %d-byte cap: %s (%d bytes)\n' "$VIDEO_MAX_BYTES" "$path" "$size" >&2; return 1; }
+  mime=$(file --brief --mime-type "$path" 2>/dev/null) \
+    || { printf 'cannot determine the video type: %s\n' "$path" >&2; return 1; }
+  ext=$(video_asset_extension "$mime") \
+    || { printf 'unsupported video type %s for %s (mp4, webm, and quicktime/mov only)\n' "$mime" "$path" >&2; return 1; }
+  (umask 077; mkdir -p "$assets_dir") || { printf 'cannot create %s\n' "$assets_dir" >&2; return 1; }
+  (umask 077; cp -- "$path" "$assets_dir/$stem.$ext") \
+    || { printf 'cannot copy video asset: %s\n' "$path" >&2; return 1; }
+  printf 'assets/%s.%s' "$stem" "$ext"
+}
+
+# Replace every question/option `image`/`video` path in <data.json> with its
+# resolved reference, writing the result to <dest.json>. Video assets land in
+# <stage-dir>, a fresh directory the caller swaps in as <published-assets-dir>
+# only once the page is proven (so a rebuild never leaves a prior build's
+# orphaned files behind, and a refused one never disturbs them). The input's
+# schema is already validated by this point, so every `image`/`video` present
+# is a non-empty string; resolution only has to prove it is a safe, in-cap,
+# supported file outside the builder-owned published assets directory. Image
+# bytes travel through files and stdin only, never argv or the environment,
+# whose size limits a real photo's data URI would exceed.
+resolve_page_media() {  # <data.json> <dest.json> <stage-dir> <published-assets-dir>
+  local data=$1 dest=$2 assets_dir=$3 published=$4 json path dir uri ref qidx oidx
+  published=$(cd -- "$published" 2>/dev/null && pwd -P) || published=''
+  if [ -n "$published" ]; then
+    while IFS= read -r path; do
+      dir=$(cd -- "${path%/*}/" 2>/dev/null && pwd -P) || continue
+      case "$dir/" in
+        "$published"/*)
+          printf 'media path lies inside the builder-owned assets directory %s, which every rebuild replaces: %s\n' "$published" "$path" >&2
+          return 1
+          ;;
+      esac
+    done < <(jq -r '.questions[] | (., .options[]) | (.image, .video) | select(. != null)' "$data")
+  fi
+  uri="$assets_dir/.data-uri"
+  json=$(jq -c . "$data") || return 1
+  while IFS=$'\t' read -r qidx path; do
+    [ -n "$path" ] || continue
+    image_data_uri "$path" "$uri" || return 1
+    json=$(jq -c --argjson qi "$qidx" --rawfile uri "$uri" '.questions[$qi].image = $uri' <<< "$json") || return 1
+  done < <(jq -r '.questions | to_entries[] | select(.value.image != null) | "\(.key)\t\(.value.image)"' "$data")
+  while IFS=$'\t' read -r qidx oidx path; do
+    [ -n "$path" ] || continue
+    image_data_uri "$path" "$uri" || return 1
+    json=$(jq -c --argjson qi "$qidx" --argjson oi "$oidx" --rawfile uri "$uri" \
+      '.questions[$qi].options[$oi].image = $uri' <<< "$json") || return 1
+  done < <(jq -r '
+    .questions | to_entries[] | .key as $qi
+    | .value.options | to_entries[] | select(.value.image != null)
+    | "\($qi)\t\(.key)\t\(.value.image)"
+  ' "$data")
+  while IFS=$'\t' read -r qidx path; do
+    [ -n "$path" ] || continue
+    ref=$(copy_video_asset "$path" "$assets_dir" "q${qidx}") || return 1
+    json=$(jq -c --argjson qi "$qidx" --arg ref "$ref" '.questions[$qi].video = $ref' <<< "$json") || return 1
+  done < <(jq -r '.questions | to_entries[] | select(.value.video != null) | "\(.key)\t\(.value.video)"' "$data")
+  while IFS=$'\t' read -r qidx oidx path; do
+    [ -n "$path" ] || continue
+    ref=$(copy_video_asset "$path" "$assets_dir" "q${qidx}-o${oidx}") || return 1
+    json=$(jq -c --argjson qi "$qidx" --argjson oi "$oidx" --arg ref "$ref" \
+      '.questions[$qi].options[$oi].video = $ref' <<< "$json") || return 1
+  done < <(jq -r '
+    .questions | to_entries[] | .key as $qi
+    | .value.options | to_entries[] | select(.value.video != null)
+    | "\($qi)\t\(.key)\t\(.value.video)"
+  ' "$data")
+  rm -f -- "$uri"
+  printf '%s\n' "$json" > "$dest"
+}
+
 # Run the built page through a real headless DOM execution and refuse unless
 # every payload question rendered exactly one radio group with options and no
 # fail-closed render error fired.
@@ -605,6 +774,41 @@ verify_render() {  # <data.json> <built-page>
   ' <<< "$report")
   [ -z "$bad" ] \
     || fail "the built page did not render a working radio-button group for: $bad"
+  # Order already proved equal above, so a positional zip ties each payload
+  # question to its render report: every declared question/option image or
+  # video must actually render, and nothing extra must appear where none was
+  # declared. A `video` takes over the rendered media slot and consumes any
+  # sibling `image` as its poster attribute instead of a separate <img> (see
+  # decision-card.js's build()/buildVideo()), so a standalone rendered image
+  # is expected only where no video was also declared for that same item.
+  bad=$(jq -rn --slurpfile data "$data" --argjson report "$report" '
+    ($data[0].questions) as $qs
+    | [range(0; $qs | length)
+      | $qs[.] as $q
+      | $report.questions[.] as $r
+      | ([$q.options[] | select(.video == null and .image != null)] | length) as $expect_opt_images
+      | select(
+          ((($q.image != null and $q.video == null)) != ($r.questionImage == true))
+          or ($expect_opt_images != $r.optionImageCount)
+          or (($q.video != null) != ($r.questionVideo == true))
+          or (([$q.options[] | select(.video != null)] | length) != $r.optionVideoCount))
+      | $q.key] | join(",")
+  ') || fail "cannot compare declared and rendered media"
+  [ -z "$bad" ] \
+    || fail "the built page did not render the declared image(s)/video(s) for: $bad"
+  # A rendered video must actually be set up to autoplay inline rather than
+  # sit as a silent poster the captain has to click through, so every
+  # declared video is also checked for the attributes the brief promised:
+  # muted, looped, controls, and playing without the captain's input.
+  bad=$(jq -r '
+    [.questions[]
+      | select(
+          (.questionVideo == true and .questionVideoPlayable != true)
+          or (.optionVideoCount > 0 and .optionVideoAllPlayable != true))
+      | .key] | join(",")
+  ' <<< "$report")
+  [ -z "$bad" ] \
+    || fail "the built page rendered a video that is not set up to autoplay muted/looped/controlled: $bad"
 }
 
 command_build() {
@@ -670,7 +874,7 @@ command_build() {
 }
 
 command_page() {
-  local data=${1-} label='' page json tmp tmp2='' sid extracted pre_reopen_owner link_url
+  local data=${1-} label='' page assets_dir stage_assets='' retired='' tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -692,21 +896,37 @@ command_page() {
   [ "$(grep -cxF "$PAGE_PLACEHOLDER" "$PAGE_TEMPLATE")" -eq 1 ] \
     || fail "page template does not carry exactly one data slot: $PAGE_TEMPLATE"
 
-  json=$(jq -c . "$data") || fail "cannot compact the page data"
-  # `<` never appears in JSON syntax outside strings, so escaping every
-  # occurrence keeps the payload valid JSON while making </script> inert.
-  json=${json//</\\u003c}
-
   page=$(page_path "$label")
   (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
+  # A video asset's page-relative path depends on this directory, so each
+  # build resolves into a fresh staged directory that replaces it only after
+  # the page is proven, rather than accumulating the prior build's files or
+  # disturbing them on a refusal.
+  assets_dir="${page%/*}/assets"
+
+  # A staged page, assets directory, or resolved-data file that never
+  # reaches `mv` - any refusal below - is cleaned up by this trap rather than
+  # by a rm at every call site. The trap outlives this function's own locals,
+  # so it reads `${var:-}` rather than tripping `set -u` once the function
+  # has returned and they are gone.
+  trap 'rm -f -- "${tmp:-}" "${tmp2:-}" "${resolved:-}"; rm -rf -- "${stage_assets:-}" "${retired:-}"' EXIT
+  resolved=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-decision-page-resolved.XXXXXX") \
+    || fail "cannot stage the resolved page data"
+  stage_assets=$(umask 077; mktemp -d "${page%/*}/.page-assets-stage.XXXXXX") \
+    || fail "cannot stage the page's assets"
+  if ! resolve_page_media "$data" "$resolved" "$stage_assets" "$assets_dir"; then
+    fail "cannot resolve an image or video referenced by the page data: $data"
+  fi
+  data=$resolved
+
   tmp=$(umask 077; mktemp "${page%/*}/.page.XXXXXX") || fail "cannot stage the page"
-  # A staged page that never reaches `mv` - any refusal below - is cleaned up
-  # by this trap rather than by a rm at every call site. The trap outlives
-  # this function's own `local tmp`/`tmp2`, so it reads `${tmp:-}`/`${tmp2:-}`
-  # rather than tripping `set -u` once the function has returned and they are
-  # gone.
-  trap 'rm -f -- "${tmp:-}" "${tmp2:-}"' EXIT
-  if ! FM_DECISION_PAGE_JSON="$json" perl -pe "s/^\\Q$PAGE_PLACEHOLDER\\E\$/\$ENV{FM_DECISION_PAGE_JSON}/" "$PAGE_TEMPLATE" > "$tmp"; then
+  # The payload is read from its file, never passed through the environment
+  # or argv, whose size limits an embedded photo would exceed. `<` never
+  # appears in JSON syntax outside strings, so escaping every occurrence
+  # keeps the payload valid JSON while making </script> inert.
+  if ! FM_PAGE_PLACEHOLDER="$PAGE_PLACEHOLDER" perl -pe '
+      BEGIN { my $f = shift @ARGV; open my $fh, "<", $f or die "$f: $!\n"; local $/; $json = <$fh>; chomp $json; $json =~ s/</\\u003c/g }
+      s/^\Q$ENV{FM_PAGE_PLACEHOLDER}\E$/$json/' "$data" "$PAGE_TEMPLATE" > "$tmp"; then
     fail "cannot inject the page data"
   fi
   if grep -qxF "$PAGE_PLACEHOLDER" "$tmp"; then
@@ -728,9 +948,18 @@ command_page() {
   # verify_render fails closed (via `fail`, which exits) rather than
   # returning, so a render-check failure never falls through to publish.
   verify_render "$data" "$tmp"
-  if ! { chmod 0600 "$tmp" && mv -f -- "$tmp" "$page"; }; then
-    fail "cannot publish the page"
+  chmod 0600 "$tmp" || fail "cannot publish the page"
+  retired="$stage_assets.retired"
+  if [ -e "$assets_dir" ] && ! mv -- "$assets_dir" "$retired"; then
+    fail "cannot retire the prior build's assets directory: $assets_dir"
   fi
+  if ! mv -- "$stage_assets" "$assets_dir"; then
+    [ ! -e "$retired" ] || mv -- "$retired" "$assets_dir"
+    fail "cannot publish the page's assets directory: $assets_dir"
+  fi
+  stage_assets=''
+  mv -f -- "$tmp" "$page" || fail "cannot publish the page"
+  rm -rf -- "$retired"
   printf 'page: %s\n' "$page"
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
