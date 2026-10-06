@@ -1189,11 +1189,12 @@ SH
 
 # firstmate-resume-wrong-copy regression coverage: a restored herdr pane's
 # native resume_agents_on_restore must never relaunch an agent into the
-# frozen project-clone cwd a pane was created with. These tests cover the
-# function that disables it and its path resolution; fm-spawn.sh's own
-# wiring is covered by its real-backend=herdr call site reaching it, not
-# re-tested here since it would need the whole adapter faked again for no
-# additional coverage over bin/fm-herdr-resume-config.test.sh plus these.
+# frozen project-clone cwd a pane was created with. Firstmate does not edit
+# the captain's shared config.toml to fix this (it may be dotfiles-managed),
+# so these tests cover only the detect-and-warn function and its path
+# resolution, never a write; fm-spawn.sh's own wiring is covered by its
+# real-backend=herdr call site reaching it, not re-tested here since it
+# would need the whole adapter faked again for no additional coverage.
 # shellcheck disable=SC2016 # $0/$1 belong to the inner bash -c process.
 test_resume_config_path_resolution_precedence() {
   local override hcp xdg home
@@ -1219,24 +1220,34 @@ test_resume_config_path_resolution_precedence() {
   pass "fm_backend_herdr_resume_config_path: FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE, HERDR_CONFIG_PATH, XDG_CONFIG_HOME, and HOME resolve in that precedence"
 }
 
-test_ensure_safe_resume_config_writes_once_then_reports_unchanged() {
-  local dir cfg out1 out2
-  dir="$TMP_ROOT/resume-config"; mkdir -p "$dir"; cfg="$dir/config.toml"
-  out1=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_ensure_safe_resume_config' "$ROOT")
-  expect_code 0 $? "fm_backend_herdr_ensure_safe_resume_config should succeed against an absent file"
-  [ "$out1" = changed ] || fail "first call against an absent config should report 'changed' (got '$out1')"
-  assert_contains "$(cat "$cfg")" "resume_agents_on_restore = false" \
-    "fm_backend_herdr_ensure_safe_resume_config did not disable herdr's native agent auto-resume"
-
-  out2=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_ensure_safe_resume_config' "$ROOT")
-  expect_code 0 $? "a second call against an already-safe file should still succeed"
-  [ "$out2" = unchanged ] || fail "a second call against an already-safe file should report 'unchanged' (got '$out2')"
-  pass "fm_backend_herdr_ensure_safe_resume_config: writes resume_agents_on_restore = false once, then reports unchanged"
+test_warn_unsafe_resume_config_warns_when_absent_and_never_creates_it() {
+  local dir cfg rc out
+  dir="$TMP_ROOT/resume-config-absent"; mkdir -p "$dir"; cfg="$dir/config.toml"
+  out=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_warn_unsafe_resume_config' "$ROOT" 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an absent config.toml is the unsafe default and should report nonzero"
+  assert_contains "$out" "$cfg" "the warning should name the exact file to edit"
+  assert_contains "$out" "resume_agents_on_restore = false" "the warning should name the exact line to add"
+  [ ! -e "$cfg" ] || fail "fm_backend_herdr_warn_unsafe_resume_config must never create the file, only warn"
+  pass "fm_backend_herdr_warn_unsafe_resume_config: warns naming the file and fix when the setting is absent, and never writes"
 }
 
-test_ensure_safe_resume_config_refuses_an_unparseable_file() {
+test_warn_unsafe_resume_config_silent_when_already_disabled() {
+  local dir cfg before out rc
+  dir="$TMP_ROOT/resume-config-safe"; mkdir -p "$dir"; cfg="$dir/config.toml"
+  printf '%s\n' '[session]' 'resume_agents_on_restore = false' > "$cfg"
+  before=$(cat "$cfg")
+  out=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_warn_unsafe_resume_config' "$ROOT" 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "an already-disabled setting should report success"
+  [ -z "$out" ] || fail "an already-safe config must print no warning, got: $out"
+  [ "$(cat "$cfg")" = "$before" ] || fail "fm_backend_herdr_warn_unsafe_resume_config must never modify the file it read"
+  pass "fm_backend_herdr_warn_unsafe_resume_config: stays silent and read-only when resume_agents_on_restore is already false"
+}
+
+test_warn_unsafe_resume_config_warns_on_an_unparseable_file_without_touching_it() {
   local dir cfg original rc out
   dir="$TMP_ROOT/resume-config-bad"; mkdir -p "$dir"; cfg="$dir/config.toml"
   original='[session
@@ -1244,14 +1255,14 @@ resume_agents_on_restore = true
 '
   printf '%s' "$original" > "$cfg"
   out=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_ensure_safe_resume_config' "$ROOT" 2>&1)
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_warn_unsafe_resume_config' "$ROOT" 2>&1)
   rc=$?
-  expect_code 1 "$rc" "an unparseable existing config.toml must be refused rather than silently rewritten"
-  assert_contains "$out" "refusing to touch it" "the refusal should name the file as left untouched"
+  expect_code 1 "$rc" "an unparseable config.toml cannot be confirmed safe and should report nonzero"
+  assert_contains "$out" "$cfg" "the warning should name the exact file to edit"
   # Compare byte-for-byte: a $(...) read would silently strip original's
-  # trailing newline and mask a real truncation.
-  printf '%s' "$original" | cmp -s - "$cfg" || fail "an unparseable config.toml must be left byte-identical on refusal"
-  pass "fm_backend_herdr_ensure_safe_resume_config: refuses an unparseable existing config.toml and leaves it untouched"
+  # trailing newline and mask a real modification.
+  printf '%s' "$original" | cmp -s - "$cfg" || fail "an unparseable config.toml must be left byte-identical; this check never writes"
+  pass "fm_backend_herdr_warn_unsafe_resume_config: warns on an unparseable config.toml without touching it"
 }
 
 test_container_ensure_reuses_existing_workspace() {
@@ -5399,8 +5410,9 @@ test_container_ensure_starts_server_and_workspace
 test_server_ensure_scrubs_home_and_harness_identity
 test_server_ensure_does_not_strand_a_wrapper_holding_caller_fds
 test_resume_config_path_resolution_precedence
-test_ensure_safe_resume_config_writes_once_then_reports_unchanged
-test_ensure_safe_resume_config_refuses_an_unparseable_file
+test_warn_unsafe_resume_config_warns_when_absent_and_never_creates_it
+test_warn_unsafe_resume_config_silent_when_already_disabled
+test_warn_unsafe_resume_config_warns_on_an_unparseable_file_without_touching_it
 test_container_ensure_reuses_existing_workspace
 test_container_ensure_creates_with_no_focus_flag
 test_container_ensure_uses_secondmate_home_label
