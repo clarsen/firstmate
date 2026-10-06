@@ -81,6 +81,13 @@ FM_BACKLOG_CLOSE_REPLAY_RESULT=
 # library does not source fm-tasks-axi-lib.sh does not apply.
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+# fm-pr-lib.sh owns which URL is a Gerrit change. It is functions and empty
+# globals only, so it is sourced once rather than re-initialising a caller's
+# parsed identity.
+if ! declare -F fm_pr_url_parse >/dev/null 2>&1; then
+  # shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
+fi
 
 # GitLab merge-request URL parsing is fm-pr-lib.sh's alone (fm_pr_url_parse),
 # reused here so a captured --note deliverable for a GitLab merge request is
@@ -330,28 +337,17 @@ fm_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
 # Run `tasks-axi` with an optional FM_TASKS_AXI_TIMEOUT bound. A caller that
 # holds a lock across the call - the spawn commit and its preservation
 # read-back run under the per-task meta lock - sets the bound, so an
-# unresponsive tasks-axi cannot hold that lock open indefinitely; a timed-out
-# call exits 124, or 137 when the kill-after had to fire (GNU timeout's own
-# status for a KILL-forced expiry), and the callers treat either as the bound
-# expiring and report the timeout as the reason through their existing error
-# plumbing. GNU timeout is used where it exists,
-# gtimeout where coreutils ships under that name, and a small perl watchdog
-# elsewhere (a stock macOS host has perl but no timeout variant; perl is
-# already a hard dependency of this library's byte validators, so the
-# fallback adds no new tool). Every bounded path forces termination: a
-# tasks-axi that ignores SIGTERM must not outlive the bound, since an
-# unbounded call under the lock is exactly the hang the bound exists to
-# prevent - so the GNU variants carry a kill-after of one further bound
-# (TERM at the bound, KILL after that grace) and the watchdog kills the
-# same way. When a bound was requested but no bounding mechanism exists at
-# all, the call fails closed instead of running unbounded. Must be the last
-# command of a subshell: the exec keeps the tasks-axi process exactly where
-# the plain call sat, and the bound kills the child, not the caller.
+# unresponsive tasks-axi cannot hold that lock open indefinitely. The bound is
+# fm_exec_timed's (bin/fm-timeout-lib.sh), with one further bound of grace
+# before KILL so a tasks-axi that ignores SIGTERM cannot outlive it either; the
+# callers treat fm_timed_out statuses as the bound expiring and report the
+# timeout as the reason through their existing error plumbing. A bound that
+# cannot be enforced on this host fails closed instead of running unbounded.
+# Must be the last command of a subshell: the exec keeps the tasks-axi process
+# exactly where the plain call sat, and the bound kills the child, not the
+# caller.
 fm_tasks_axi_timeout_expired() {  # <status>
-  case $1 in
-    124 | 137) return 0 ;;
-  esac
-  return 1
+  fm_timed_out "$1"
 }
 
 fm_tasks_axi() {
@@ -359,49 +355,7 @@ fm_tasks_axi() {
   if [ -z "$bound" ]; then
     exec tasks-axi "$@"
   fi
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout -k "$bound" "$bound" tasks-axi "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -k "$bound" "$bound" tasks-axi "$@"
-  elif command -v perl >/dev/null 2>&1; then
-    # Fork, run tasks-axi in the child, and poll waitpid(WNOHANG) until the
-    # child exits or the bound expires: the same contract as
-    # `timeout $bound tasks-axi ...`. Expiry kills the child with TERM, waits
-    # one further bound of grace, then KILL, and exits 124 so the callers'
-    # timeout plumbing reports it. Polling rather than alarm+die keeps the
-    # bound off perl's platform-dependent syscall-restart signal semantics.
-    exec perl -MPOSIX=WNOHANG -e '
-      my $bound = shift;
-      exit 127 unless defined $bound && $bound =~ /\A[0-9]+\z/;
-      my $pid = fork;
-      exit 127 unless defined $pid;
-      if ($pid == 0) { exec @ARGV; exit 127 }
-      my $step = 0.05;
-      my $elapsed = 0;
-      while (1) {
-        my $done = waitpid $pid, WNOHANG;
-        exit(($? & 127) ? 128 + ($? & 127) : $? >> 8) if $done == $pid;
-        exit 127 if $done == -1;
-        if ($elapsed >= $bound) {
-          kill "TERM", $pid;
-          my $grace = 0;
-          my $gone = waitpid $pid, WNOHANG;
-          while ($gone == 0 && $grace < $bound) {
-            select undef, undef, undef, $step;
-            $grace += $step;
-            $gone = waitpid $pid, WNOHANG;
-          }
-          kill "KILL", $pid if $gone == 0;
-          waitpid $pid, 0;
-          exit 124;
-        }
-        select undef, undef, undef, $step;
-        $elapsed += $step;
-      }
-    ' -- "$bound" tasks-axi "$@"
-  fi
-  printf 'fm_tasks_axi: cannot bound tasks-axi within %ss: none of timeout, gtimeout, or perl is available\n' "$bound" >&2
-  exit 127
+  fm_exec_timed "$bound" "$bound" tasks-axi "$@"
 }
 
 # Print one row's `tasks-axi show` output (plus stderr) from the addressing
@@ -575,19 +529,32 @@ fm_backlog_start() {  # <data-dir> <id>
 
 # tasks-axi's --pr link is validated as a canonical GitHub pull-request or
 # Forgejo pulls URL (tasks-axi done --help) and rejects every other shape,
-# including a GitLab merge-request URL. fm-pr-lib.sh already distinguishes
-# providers (fm_pr_url_parse), so a GitLab --pr pair is rewritten here into a
-# --note tasks-axi accepts, rather than hand-rolling a second URL check at
-# every call site; GitHub and Forgejo --pr pairs, and every other argument,
-# pass through unchanged. Sets FM_BACKLOG_TASKS_AXI_ARGS.
+# including a GitLab merge-request or Gerrit change URL. fm-pr-lib.sh already
+# distinguishes providers (fm_pr_url_parse), so an unsupported --pr pair is
+# rewritten here into a --note tasks-axi accepts, rather than hand-rolling a
+# second URL check at every call site; GitHub and Forgejo --pr pairs pass
+# through unchanged. Prints the note label and succeeds for an unsupported
+# provider; fails with no output for GitHub/Forgejo or an unparseable URL.
+# The subshell keeps the parse from overwriting a caller's FM_PR_* identity.
+fm_backlog_pr_note_label() {  # <url>
+  ( fm_pr_url_parse "$1" || exit 1
+    case "$FM_PR_PROVIDER" in
+      gitlab) printf 'merge request' ;;
+      gerrit) printf 'Gerrit change' ;;
+      *) exit 1 ;;
+    esac
+  )
+}
+
+# Sets FM_BACKLOG_TASKS_AXI_ARGS.
 fm_backlog_tasks_axi_rewrite_pr() {  # <arg>...
   local -a args=("$@")
-  local i=0 n=${#args[@]}
+  local i=0 n=${#args[@]} label
   FM_BACKLOG_TASKS_AXI_ARGS=()
   while [ "$i" -lt "$n" ]; do
     if [ "${args[$i]}" = --pr ] && [ $((i + 1)) -lt "$n" ] \
-       && fm_pr_url_parse "${args[$((i + 1))]}" && [ "$FM_PR_PROVIDER" = gitlab ]; then
-      FM_BACKLOG_TASKS_AXI_ARGS+=(--note "merge request ${args[$((i + 1))]}")
+       && label=$(fm_backlog_pr_note_label "${args[$((i + 1))]}"); then
+      FM_BACKLOG_TASKS_AXI_ARGS+=(--note "$label ${args[$((i + 1))]}")
       i=$((i + 2))
     else
       FM_BACKLOG_TASKS_AXI_ARGS+=("${args[$i]}")
@@ -606,12 +573,7 @@ fm_backlog_done() {  # <data-dir> <id> [flag...]
 fm_backlog_row_artifact_supported() {
   local id=$1 flag=${2:-} value=${3:-}
   case "$flag" in
-    --pr)
-      if fm_pr_url_parse "$value" && [ "$FM_PR_PROVIDER" = gitlab ]; then
-        return 1
-      fi
-      return 0
-      ;;
+    --pr) ! fm_backlog_pr_note_label "$value" >/dev/null ;;
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
@@ -626,7 +588,7 @@ fm_backlog_row_artifact_supported() {
 # fields; only bin/fm-captain-hold.sh answer resolves the call.
 fm_backlog_retain() {  # <data-dir> <id> [flag...]
   local data authorized_data=$1 id=$2 out command_status previous_arg=''
-  local arg deliverable='' line body new_body tmp
+  local arg deliverable='' line body new_body tmp label
   local -a row_args=()
   if ! data=$(fm_backlog_data_absolute "$1"); then
     FM_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $1"
@@ -643,8 +605,8 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
         fi
         ;;
       --pr)
-        if fm_pr_url_parse "$arg" && [ "$FM_PR_PROVIDER" = gitlab ]; then
-          deliverable="${deliverable:+$deliverable; }merge request $arg"
+        if label=$(fm_backlog_pr_note_label "$arg"); then
+          deliverable="${deliverable:+$deliverable; }$label $arg"
         else
           deliverable="${deliverable:+$deliverable; }PR $arg"
           row_args=(--pr "$arg")
