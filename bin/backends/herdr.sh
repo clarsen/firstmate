@@ -1679,6 +1679,43 @@ fm_backend_herdr_server_launch_exec() {  # <session> <herdr-subcommand-and-args.
   HERDR_SESSION="$session" exec "$client_bin" "$@" --session "$session"
 }
 
+# fm_backend_herdr_resume_config_path: resolve the single, machine-shared
+# Herdr config.toml this adapter must keep safe (see
+# fm_backend_herdr_ensure_safe_resume_config below). FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE
+# is a test-only escape hatch, parallel to FM_ROOT_OVERRIDE and friends, so a
+# unit test's fake HOME never leaks into - and a production caller never
+# touches a captain's real file by accident the other way around.
+fm_backend_herdr_resume_config_path() {
+  if [ -n "${FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE:-}" ]; then
+    printf '%s' "$FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE"
+    return 0
+  fi
+  if [ -n "${HERDR_CONFIG_PATH:-}" ]; then
+    printf '%s' "$HERDR_CONFIG_PATH"
+    return 0
+  fi
+  printf '%s/herdr/config.toml' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+# fm_backend_herdr_ensure_safe_resume_config: idempotently disable Herdr's
+# native [session].resume_agents_on_restore so a Herdr SERVER restart never
+# relaunches a worker's agent into the wrong directory on its own. See
+# docs/herdr-backend.md's "Native resume safety" section for the full
+# rationale and why this is never called from fm_backend_herdr_server_ensure
+# or any other shared adapter primitive - only from fm-spawn.sh.
+# bin/fm-herdr-resume-config.py owns the file edit itself. Prints exactly
+# "changed" or "unchanged" (the python script's own stdout) so the caller can
+# decide whether an already-running server needs an explicit reload.
+fm_backend_herdr_ensure_safe_resume_config() {
+  local config_path result
+  config_path=$(fm_backend_herdr_resume_config_path) || return 1
+  result=$(python3 "$FM_BACKEND_HERDR_ROOT/bin/fm-herdr-resume-config.py" "$config_path") || {
+    echo "error: could not disable herdr's native agent auto-resume in $config_path; refusing to spawn a worker herdr could silently resume in the wrong directory after a restart" >&2
+    return 1
+  }
+  printf '%s' "$result"
+}
+
 # fm_backend_herdr_server_ensure: start the herdr server for <session>
 # headless (no TUI client) if not already running, mirroring tmux's `tmux
 # has-session || tmux new-session -d`. Verified: a bare socket CLI call does

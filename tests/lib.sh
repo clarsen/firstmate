@@ -111,6 +111,25 @@ FM_TEST_OWNER_IDENTITY=$(fm_test_pid_identity "$$") || {
   return 1
 }
 
+# Every test process gets its own sandboxed Herdr config.toml path by
+# default: fm_backend_herdr_ensure_safe_resume_config (bin/backends/herdr.sh,
+# AGENTS.md task firstmate-resume-wrong-copy) is a real filesystem write
+# (python3, never faked by any PATH stub) that fm-spawn.sh now makes on
+# every backend=herdr spawn, so a test exercising that path must never
+# resolve a captain's real ~/.config/herdr/config.toml. This has to be
+# top-level script code, not inside a function: fm_test_tmproot's own call
+# sites capture it through command substitution, which forks a subshell
+# whose own `export` dies with it and never reaches the real caller (see
+# that function's header comment) - sourcing this file is the one place
+# that reliably runs in the real caller instead. A test that wants to assert
+# on the write exports its own more specific path after sourcing this file.
+FM_TEST_HERDR_RESUME_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/.fm-test-herdr-config.$$.XXXXXX") || {
+  rm -f "$FM_TEST_CLEANUP_REGISTRY"
+  return 1
+}
+printf '%s\n' "$FM_TEST_HERDR_RESUME_CONFIG_DIR" >> "$FM_TEST_CLEANUP_REGISTRY"
+export FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$FM_TEST_HERDR_RESUME_CONFIG_DIR/config.toml"
+
 # --- process-event runner reaping -------------------------------------------
 #
 # A process-event runner is detached into its own process group and reparents to

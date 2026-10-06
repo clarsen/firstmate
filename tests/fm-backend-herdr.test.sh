@@ -1187,6 +1187,73 @@ SH
   pass "fm_backend_herdr_server_ensure: a backgrounded long-lived server launch leaves no wrapper process holding the caller's descriptors open"
 }
 
+# firstmate-resume-wrong-copy regression coverage: a restored herdr pane's
+# native resume_agents_on_restore must never relaunch an agent into the
+# frozen project-clone cwd a pane was created with. These tests cover the
+# function that disables it and its path resolution; fm-spawn.sh's own
+# wiring is covered by its real-backend=herdr call site reaching it, not
+# re-tested here since it would need the whole adapter faked again for no
+# additional coverage over bin/fm-herdr-resume-config.test.sh plus these.
+# shellcheck disable=SC2016 # $0/$1 belong to the inner bash -c process.
+test_resume_config_path_resolution_precedence() {
+  local override hcp xdg home
+  override=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/override/config.toml \
+    HERDR_CONFIG_PATH=/hcp/config.toml XDG_CONFIG_HOME=/xdg HOME=/home \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_resume_config_path' "$ROOT")
+  [ "$override" = /override/config.toml ] || fail "FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE should win over every other source (got '$override')"
+
+  hcp=$(env -u FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE \
+    HERDR_CONFIG_PATH=/hcp/config.toml XDG_CONFIG_HOME=/xdg HOME=/home \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_resume_config_path' "$ROOT")
+  [ "$hcp" = /hcp/config.toml ] || fail "HERDR_CONFIG_PATH should win over XDG_CONFIG_HOME and HOME (got '$hcp')"
+
+  xdg=$(env -u FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE -u HERDR_CONFIG_PATH \
+    XDG_CONFIG_HOME=/xdg HOME=/home \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_resume_config_path' "$ROOT")
+  [ "$xdg" = /xdg/herdr/config.toml ] || fail "XDG_CONFIG_HOME should win over HOME when neither override is set (got '$xdg')"
+
+  home=$(env -u FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE -u HERDR_CONFIG_PATH -u XDG_CONFIG_HOME \
+    HOME=/home \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_resume_config_path' "$ROOT")
+  [ "$home" = /home/.config/herdr/config.toml ] || fail "HOME/.config/herdr/config.toml should be the last-resort default (got '$home')"
+  pass "fm_backend_herdr_resume_config_path: FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE, HERDR_CONFIG_PATH, XDG_CONFIG_HOME, and HOME resolve in that precedence"
+}
+
+test_ensure_safe_resume_config_writes_once_then_reports_unchanged() {
+  local dir cfg out1 out2
+  dir="$TMP_ROOT/resume-config"; mkdir -p "$dir"; cfg="$dir/config.toml"
+  out1=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_ensure_safe_resume_config' "$ROOT")
+  expect_code 0 $? "fm_backend_herdr_ensure_safe_resume_config should succeed against an absent file"
+  [ "$out1" = changed ] || fail "first call against an absent config should report 'changed' (got '$out1')"
+  assert_contains "$(cat "$cfg")" "resume_agents_on_restore = false" \
+    "fm_backend_herdr_ensure_safe_resume_config did not disable herdr's native agent auto-resume"
+
+  out2=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_ensure_safe_resume_config' "$ROOT")
+  expect_code 0 $? "a second call against an already-safe file should still succeed"
+  [ "$out2" = unchanged ] || fail "a second call against an already-safe file should report 'unchanged' (got '$out2')"
+  pass "fm_backend_herdr_ensure_safe_resume_config: writes resume_agents_on_restore = false once, then reports unchanged"
+}
+
+test_ensure_safe_resume_config_refuses_an_unparseable_file() {
+  local dir cfg original rc out
+  dir="$TMP_ROOT/resume-config-bad"; mkdir -p "$dir"; cfg="$dir/config.toml"
+  original='[session
+resume_agents_on_restore = true
+'
+  printf '%s' "$original" > "$cfg"
+  out=$(FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_ensure_safe_resume_config' "$ROOT" 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an unparseable existing config.toml must be refused rather than silently rewritten"
+  assert_contains "$out" "refusing to touch it" "the refusal should name the file as left untouched"
+  # Compare byte-for-byte: a $(...) read would silently strip original's
+  # trailing newline and mask a real truncation.
+  printf '%s' "$original" | cmp -s - "$cfg" || fail "an unparseable config.toml must be left byte-identical on refusal"
+  pass "fm_backend_herdr_ensure_safe_resume_config: refuses an unparseable existing config.toml and leaves it untouched"
+}
+
 test_container_ensure_reuses_existing_workspace() {
   local dir log resp fb out
   dir="$TMP_ROOT/container-reuse"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5331,6 +5398,9 @@ test_container_ensure_refuses_an_ambiguous_home_label
 test_container_ensure_starts_server_and_workspace
 test_server_ensure_scrubs_home_and_harness_identity
 test_server_ensure_does_not_strand_a_wrapper_holding_caller_fds
+test_resume_config_path_resolution_precedence
+test_ensure_safe_resume_config_writes_once_then_reports_unchanged
+test_ensure_safe_resume_config_refuses_an_unparseable_file
 test_container_ensure_reuses_existing_workspace
 test_container_ensure_creates_with_no_focus_flag
 test_container_ensure_uses_secondmate_home_label

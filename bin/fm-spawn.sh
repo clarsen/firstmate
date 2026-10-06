@@ -3708,6 +3708,27 @@ if [ -e "$STATE/$ID.backlog-close" ] || [ -L "$STATE/$ID.backlog-close" ]; then
 fi
 
 W="fm-$ID"
+if [ "$BACKEND" = herdr ]; then
+  # Disable Herdr's native agent auto-resume once, early, before any herdr
+  # pane this script creates or adopts below (fresh spawn, relaunch rebind,
+  # or relaunch adopt) can be relaunched into the wrong directory by it.
+  # docs/herdr-backend.md's "Native resume safety" section owns the full
+  # rationale; bin/backends/herdr.sh's fm_backend_herdr_ensure_safe_resume_config
+  # owns the file edit itself.
+  HERDR_RESUME_CONFIG_RESULT=$(fm_backend_herdr_ensure_safe_resume_config) || exit 1
+  if [ "$HERDR_RESUME_CONFIG_RESULT" = changed ]; then
+    # Best-effort only: reload whichever session this spawn will actually
+    # use (the task's own recorded session on a relaunch, the ambient
+    # default on a fresh spawn) if its server already happens to be running.
+    # A server that is not up yet reads the just-corrected file on its own.
+    if [ "$RELAUNCH" -eq 1 ]; then
+      HERDR_RESUME_CONFIG_SESSION=${RELAUNCH_TARGET%%:*}
+    else
+      HERDR_RESUME_CONFIG_SESSION=$(fm_backend_herdr_session)
+    fi
+    fm_backend_herdr_cli "$HERDR_RESUME_CONFIG_SESSION" server reload-config >/dev/null 2>&1 || true
+  fi
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.

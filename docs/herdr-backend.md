@@ -302,6 +302,17 @@ Native registration still identifies Pi by name where tmux would see a generic i
 The session-start sweep uses this probe.
 Mid-session secondmate agent-process liveness is not implemented because idle secondmates are deliberately exempt from stale-pane escalation and need a separate periodic identity signal.
 
+### Native resume safety
+
+Herdr's own `[session].resume_agents_on_restore` (default `true`) relaunches a registered agent session (e.g. `claude --resume <id>`) after a Herdr SERVER restart, independently of and before firstmate's own supervision ever runs.
+It does this using the pane's `cwd` field, not `foreground_cwd`: every ship/scout task's pane is created with `--cwd` set to the project clone (`fm_backend_herdr_create_task`'s callers), and only reaches its real pooled worktree at runtime through `treehouse get`, which opens a nested subshell that `cwd` never tracks past pane-creation time (confirmed live in a Herdr 0.9.3 session.json, which persists exactly that frozen value for a restored pane).
+Left alone, a Herdr-native resume after a restart relaunches a worker's agent straight into the project clone instead of its recorded task worktree - the captain-observed `firstmate-resume-wrong-copy` bug (stray `claude --resume` in `<home>/projects/<project>`, then a wedged external-CLAUDE.md-import dialog for that copy).
+
+`bin/fm-herdr-resume-config.py` idempotently sets `resume_agents_on_restore = false` in Herdr's shared `config.toml`, and `fm_backend_herdr_ensure_safe_resume_config` (`bin/backends/herdr.sh`) wraps it with a best-effort `server reload-config` for an already-running session.
+`fm-spawn.sh` calls it once, early, for every `backend=herdr` spawn - fresh, relaunch rebind, and relaunch adopt alike - which is the only place a real herdr pane is ever created, so disabling this from inside a shared adapter primitive the unit tests drive directly would inject an unscripted extra herdr CLI call into those tests' exact response-count assumptions for no additional coverage.
+With native resume disabled, every real resumption goes through fm-spawn.sh's own `--relaunch` path, which already verifies the adopted endpoint's live cwd against its recorded `worktree=` and self-corrects (`cd`) or refuses rather than resuming elsewhere.
+This is a machine-shared setting (one `config.toml`, not scoped per session), so a test must set `FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE` before touching anything that reaches it; `tests/lib.sh` does this once per test process by default.
+
 ## Push events and polling fallback
 
 Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-socket reader.
@@ -357,6 +368,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 
 ```sh
 tests/fm-backend-herdr.test.sh
+tests/fm-herdr-resume-config.test.sh
 tests/fm-composer-lib.test.sh
 tests/fm-herdr-submit-confirm-live-e2e.test.sh
 tests/fm-backend-herdr-smoke.test.sh
