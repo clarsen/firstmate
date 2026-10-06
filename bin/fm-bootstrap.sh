@@ -9,6 +9,7 @@
 #                 "PRESENTATION_UNAVAILABLE: lavish-axi (requires >=<floor>; install: <command>) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish",
 #                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
+#                 "HERDR_RESUME: unsafe|unverified: <config.toml> ...",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
@@ -1524,8 +1525,27 @@ detect_local_config() {
     && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
     echo "BOOTSTRAP_INFO: tasks-axi available"
   fi
+  detect_herdr_resume_config
   detect_code_root_backlog_fork
   detect_home_summary_publication
+}
+
+# Herdr native-resume check for a backend=herdr home. Detect-only: the captain
+# owns Herdr's shared config.toml, so this never writes it; it names the file
+# and the exact line to set. bin/backends/herdr.sh's
+# fm_backend_herdr_resume_config_state owns the check, and
+# docs/herdr-backend.md "Native resume safety" owns why it matters.
+detect_herdr_resume_config() {
+  local config_path state=0
+  [ "$BACKEND" = herdr ] || return 0
+  fm_backend_source herdr || return 0
+  config_path=$(fm_backend_herdr_resume_config_path) || return 0
+  fm_backend_herdr_resume_config_state "$config_path" || state=$?
+  case "$state" in
+    0) ;;
+    2) echo "HERDR_RESUME: unverified: could not check $config_path because python3 with tomllib (3.11+) is unavailable; confirm it contains: [session] resume_agents_on_restore = false" ;;
+    *) echo "HERDR_RESUME: unsafe: $config_path does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to $config_path: [session] resume_agents_on_restore = false" ;;
+  esac
 }
 
 # Shadow-backlog check. When this home's data directory is not the code root's,

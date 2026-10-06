@@ -1265,6 +1265,22 @@ resume_agents_on_restore = true
   pass "fm_backend_herdr_warn_unsafe_resume_config: warns on an unparseable config.toml without touching it"
 }
 
+test_warn_unsafe_resume_config_reports_unverifiable_without_tomllib() {
+  local dir cfg fakebin rc out
+  dir="$TMP_ROOT/resume-config-no-tomllib"; mkdir -p "$dir/bin"; cfg="$dir/config.toml"; fakebin="$dir/bin"
+  printf '%s\n' '[session]' 'resume_agents_on_restore = false' > "$cfg"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/python3"
+  chmod +x "$fakebin/python3"
+  out=$(PATH="$fakebin:$PATH" FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_warn_unsafe_resume_config' "$ROOT" 2>&1)
+  rc=$?
+  expect_code 2 "$rc" "a config that cannot be checked should report the distinct unverifiable status"
+  assert_contains "$out" "could not check" "the warning should say the check could not run"
+  assert_contains "$out" "$cfg" "the warning should name the file to confirm"
+  assert_not_contains "$out" "is not explicitly disabled" "an uncheckable config must not be claimed unsafe"
+  pass "fm_backend_herdr_warn_unsafe_resume_config: reports an uncheckable config instead of claiming it unsafe when python3 lacks tomllib"
+}
+
 test_container_ensure_reuses_existing_workspace() {
   local dir log resp fb out
   dir="$TMP_ROOT/container-reuse"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -5413,6 +5429,7 @@ test_resume_config_path_resolution_precedence
 test_warn_unsafe_resume_config_warns_when_absent_and_never_creates_it
 test_warn_unsafe_resume_config_silent_when_already_disabled
 test_warn_unsafe_resume_config_warns_on_an_unparseable_file_without_touching_it
+test_warn_unsafe_resume_config_reports_unverifiable_without_tomllib
 test_container_ensure_reuses_existing_workspace
 test_container_ensure_creates_with_no_focus_flag
 test_container_ensure_uses_secondmate_home_label

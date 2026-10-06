@@ -558,11 +558,24 @@ make_fake_toolchain_no_tmux() {  # <case-dir> <extra-cli...>
   printf '%s\n' "$fakebin"
 }
 
+# A python3 with tomllib (3.11+) from the caller's PATH, linked into <fakebin>
+# so a backend=herdr case can run the real resume-config check. Fails when the
+# host has none, since the Herdr resume check cannot be proven safe without it.
+link_tomllib_python3() {  # <fakebin>
+  local py
+  py=$(command -v python3) && "$py" -c 'import tomllib' >/dev/null 2>&1 \
+    || fail "these cases need a python3 with tomllib (3.11+) on PATH"
+  ln -s "$py" "$1/python3"
+}
+
 test_session_provider_backends_do_not_require_tmux() {
-  local backend cli case_dir fakebin out
+  local backend cli case_dir fakebin out resume_config
   # herdr/zellij/cmux are session providers only: they require their own CLI, jq,
   # and treehouse, never tmux. With all genuine deps present and tmux absent,
-  # bootstrap must be silent.
+  # bootstrap must be silent. The herdr home also has its native resume
+  # explicitly disabled, so its HERDR_RESUME check is silent too.
+  resume_config="$TMP_ROOT/herdr-resume-safe.toml"
+  printf '%s\n' '[session]' 'resume_agents_on_restore = false' > "$resume_config"
   while IFS='^' read -r backend cli; do
     [ -n "$backend" ] || continue
     case_dir="$TMP_ROOT/$backend-no-tmux"
@@ -570,7 +583,9 @@ test_session_provider_backends_do_not_require_tmux() {
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir" "$cli")
+    link_tomllib_python3 "$fakebin"
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$resume_config" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     [ -z "$out" ] || fail "backend=$backend with tmux absent but its own deps present should be silent, got: $out"
   done <<'ROWS'
@@ -612,6 +627,44 @@ zellij^zellij
 cmux^cmux
 ROWS
   pass "bootstrap: a session-provider backend gates its own CLI, never a false tmux requirement"
+}
+
+test_herdr_resume_config_diagnostic() {
+  local case_dir fakebin out cfg expected
+  # backend=herdr with Herdr's native resume left at its default (no
+  # config.toml) must be reported at session start, naming the file and the
+  # exact line, without ever creating the captain's file.
+  case_dir="$TMP_ROOT/herdr-resume-unsafe"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' herdr > "$case_dir/home/config/backend"
+  fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
+  link_tomllib_python3 "$fakebin"
+  cfg="$case_dir/herdr/config.toml"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  expected="HERDR_RESUME: unsafe: $cfg does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to $cfg: [session] resume_agents_on_restore = false"
+  [ "$out" = "$expected" ] || fail "an unset Herdr resume setting should print exactly the HERDR_RESUME unsafe line, got: $out"
+  [ ! -e "$cfg" ] || fail "bootstrap must never create the captain's Herdr config.toml"
+
+  # An explicit true is just as unsafe.
+  mkdir -p "${cfg%/*}"
+  printf '%s\n' '[session]' 'resume_agents_on_restore = true' > "$cfg"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = "$expected" ] || fail "an explicit true should print the HERDR_RESUME unsafe line, got: $out"
+
+  # Without python3+tomllib the file cannot be checked: say so rather than
+  # claiming an already-fixed config is unsafe.
+  printf '%s\n' '[session]' 'resume_agents_on_restore = false' > "$cfg"
+  rm -f "$fakebin/python3"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/python3"
+  chmod +x "$fakebin/python3"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE="$cfg" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = "HERDR_RESUME: unverified: could not check $cfg because python3 with tomllib (3.11+) is unavailable; confirm it contains: [session] resume_agents_on_restore = false" ] \
+    || fail "an uncheckable Herdr config should print the HERDR_RESUME unverified line, got: $out"
+  pass "bootstrap: backend=herdr reports an unsafe or uncheckable Herdr native-resume setting, naming the file and line, and never writes it"
 }
 
 test_herdr_install_requires_manual_action() {
@@ -1246,6 +1299,7 @@ test_quota_axi_min_version
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux
+test_herdr_resume_config_diagnostic
 test_session_provider_backends_gate_own_cli_not_tmux
 test_herdr_install_requires_manual_action
 test_cmux_bundled_cli_satisfies_dependency

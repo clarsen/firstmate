@@ -1696,19 +1696,18 @@ fm_backend_herdr_resume_config_path() {
   printf '%s/herdr/config.toml' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 
-# fm_backend_herdr_warn_unsafe_resume_config: detect-only, never writes. The
-# captain owns Herdr's shared config.toml directly (it may be
-# dotfiles-managed), so this reads the effective file and, when
-# [session].resume_agents_on_restore is not explicitly false, prints one
-# warning naming the setting, the file, and the exact block to add - then
-# returns nonzero so a caller can tell, but never as a reason to refuse the
-# spawn. See docs/herdr-backend.md's "Native resume safety" section for the
-# full rationale and why this is called only from fm-spawn.sh, never from
-# fm_backend_herdr_server_ensure or any other shared adapter primitive.
-fm_backend_herdr_warn_unsafe_resume_config() {
-  local config_path
-  config_path=$(fm_backend_herdr_resume_config_path) || return 0
-  if [ -f "$config_path" ] && python3 -c '
+# fm_backend_herdr_resume_config_state: detect-only, never writes. Reads the
+# effective Herdr config.toml at <config-path> and returns 0 when
+# [session].resume_agents_on_restore is explicitly false, 1 when it is not
+# (including an absent or unparseable file, since Herdr's default is true),
+# and 2 when python3 with tomllib (3.11+) is unavailable so the file could not
+# be checked. Shared by the spawn-time warning below and fm-bootstrap.sh's
+# session-start HERDR_RESUME diagnostic.
+fm_backend_herdr_resume_config_state() {  # <config-path>
+  local config_path=$1
+  [ -f "$config_path" ] || return 1
+  python3 -c 'import tomllib' >/dev/null 2>&1 || return 2
+  python3 -c '
 import sys
 import tomllib
 try:
@@ -1718,9 +1717,31 @@ except Exception:
     sys.exit(1)
 session = doc.get("session")
 sys.exit(0 if isinstance(session, dict) and session.get("resume_agents_on_restore") is False else 1)
-' "$config_path" 2>/dev/null; then
-    return 0
-  fi
+' "$config_path" 2>/dev/null || return 1
+}
+
+# fm_backend_herdr_warn_unsafe_resume_config: detect-only, never writes. The
+# captain owns Herdr's shared config.toml directly (it may be
+# dotfiles-managed), so this reads the effective file and, when
+# [session].resume_agents_on_restore is not explicitly false, prints one
+# warning naming the setting, the file, and the exact block to add - then
+# returns nonzero so a caller can tell, but never as a reason to refuse the
+# spawn. When the file cannot be checked it says so instead of claiming the
+# setting is unsafe. See docs/herdr-backend.md's "Native resume safety"
+# section for the full rationale and why this is called only from
+# fm-spawn.sh, never from fm_backend_herdr_server_ensure or any other shared
+# adapter primitive.
+fm_backend_herdr_warn_unsafe_resume_config() {
+  local config_path state=0
+  config_path=$(fm_backend_herdr_resume_config_path) || return 0
+  fm_backend_herdr_resume_config_state "$config_path" || state=$?
+  case "$state" in
+    0) return 0 ;;
+    2)
+      echo "warning: could not check herdr's native agent auto-resume (resume_agents_on_restore) in $config_path: python3 with tomllib (3.11+) is unavailable; confirm it contains [session] resume_agents_on_restore = false" >&2
+      return 2
+      ;;
+  esac
   {
     echo "warning: herdr's native agent auto-resume (resume_agents_on_restore) is not explicitly disabled in $config_path; a Herdr server restart can relaunch a worker's agent into the directory its pane was created in (often a project clone, not its task worktree) instead of going through firstmate's own verified relaunch path."
     echo "add this to $config_path to disable it:"
