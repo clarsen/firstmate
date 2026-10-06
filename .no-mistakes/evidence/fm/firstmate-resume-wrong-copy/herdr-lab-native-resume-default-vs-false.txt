@@ -1,0 +1,14 @@
+===== config mode: default
+lab session: fm-lab-nrdefault-69508-26790   config(default): # herdr defaults 
+pane w1:p1 created with cwd=/private/tmp/fmnr.dSvW/home/projects/proj (the project clone)
+pane before restart: {"cwd":"/private/tmp/fmnr.dSvW/home/projects/proj","foreground_cwd":"/private/tmp/fmnr.dSvW/worktrees/task-wt","agent":"claude"}
+pane after restart: {"cwd":"/private/tmp/fmnr.dSvW/home/projects/proj","foreground_cwd":"/private/tmp/fmnr.dSvW/home/projects/proj","agent":null}
+RESULT: herdr natively resumed the agent -> native-resume ran: pwd=/private/tmp/fmnr.dSvW/home/projects/proj args=--resume sess-123 --session fm-lab-nrdefault-69508-26790
+teardown rc=0
+===== config mode: false
+lab session: fm-lab-nrfalse-84638-27620   config(false): [session] resume_agents_on_restore = false 
+pane w1:p1 created with cwd=/private/tmp/fmnr.KYuU/home/projects/proj (the project clone)
+pane before restart: {"cwd":"/private/tmp/fmnr.KYuU/home/projects/proj","foreground_cwd":"/private/tmp/fmnr.KYuU/worktrees/task-wt","agent":"claude"}
+pane after restart: {"cwd":"/private/tmp/fmnr.KYuU/home/projects/proj","foreground_cwd":"/private/tmp/fmnr.KYuU/home/projects/proj","agent":null}
+RESULT: no native resume ran
+teardown rc=0

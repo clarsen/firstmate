@@ -1,0 +1,13 @@
+$ python3 on PATH -> Python 3.9.6 (no tomllib); config already says false
+[session]
+resume_agents_on_restore = false
+HERDR_RESUME: unverified: could not check /tmp/fmresume.jcyX/herdr/config.toml because python3 with tomllib (3.11+) is unavailable; confirm it contains: [session] resume_agents_on_restore = false
+
+$ HERDR_CONFIG_PATH honored (no override), pointing at unsafe file
+HERDR_RESUME: unsafe: /tmp/fmresume.jcyX/unsafe.toml does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to /tmp/fmresume.jcyX/unsafe.toml: [session] resume_agents_on_restore = false
+
+$ default path resolution (no override, no HERDR_CONFIG_PATH) -> captain's real ~/.config/herdr/config.toml (read-only; it already sets false)
+(no HERDR_RESUME line above = silent)
+
+$ backend=tmux home, unsafe config -> must be silent about HERDR_RESUME
+0

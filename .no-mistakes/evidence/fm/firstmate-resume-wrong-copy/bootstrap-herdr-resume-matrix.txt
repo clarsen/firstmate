@@ -1,0 +1,38 @@
+$ [no config file] FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/tmp/fmresume.jcyX/herdr/config.toml bin/fm-bootstrap.sh
+HERDR_RESUME: unsafe: /tmp/fmresume.jcyX/herdr/config.toml does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to /tmp/fmresume.jcyX/herdr/config.toml: [session] resume_agents_on_restore = false
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+(exit 0)
+
+lsd: /tmp/fmresume.jcyX/herdr: No such file or directory (os error 2).
+
+$ [explicit true] FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/tmp/fmresume.jcyX/herdr/config.toml bin/fm-bootstrap.sh
+HERDR_RESUME: unsafe: /tmp/fmresume.jcyX/herdr/config.toml does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to /tmp/fmresume.jcyX/herdr/config.toml: [session] resume_agents_on_restore = false
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+(exit 0)
+
+$ [no session table] FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/tmp/fmresume.jcyX/herdr/config.toml bin/fm-bootstrap.sh
+HERDR_RESUME: unsafe: /tmp/fmresume.jcyX/herdr/config.toml does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to /tmp/fmresume.jcyX/herdr/config.toml: [session] resume_agents_on_restore = false
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+(exit 0)
+
+$ [malformed TOML] FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/tmp/fmresume.jcyX/herdr/config.toml bin/fm-bootstrap.sh
+HERDR_RESUME: unsafe: /tmp/fmresume.jcyX/herdr/config.toml does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to /tmp/fmresume.jcyX/herdr/config.toml: [session] resume_agents_on_restore = false
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+(exit 0)
+
+$ [string "false" (not a bool)] FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/tmp/fmresume.jcyX/herdr/config.toml bin/fm-bootstrap.sh
+HERDR_RESUME: unsafe: /tmp/fmresume.jcyX/herdr/config.toml does not set [session] resume_agents_on_restore = false, so a Herdr restart can relaunch workers in their project clone instead of their task worktree; the captain must add to /tmp/fmresume.jcyX/herdr/config.toml: [session] resume_agents_on_restore = false
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+(exit 0)
+
+$ [explicit false] FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/tmp/fmresume.jcyX/herdr/config.toml bin/fm-bootstrap.sh
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+(exit 0)
+
+3907155581 43 /tmp/fmresume.jcyX/herdr/config.toml

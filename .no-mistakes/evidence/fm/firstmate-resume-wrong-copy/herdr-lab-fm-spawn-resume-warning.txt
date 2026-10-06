@@ -1,0 +1,30 @@
+lab session: fm-lab-spawnwarn-42361-4447
+----- unsafe: Herdr config.toml absent (Herdr default resume=true)
+$ FM_HOME=<secondmate-home> FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/private/tmp/fmsw.r8Ec/herdr-unset/config.toml bin/fm-spawn.sh rw1 <secondmate-home>/projects/p-rw1 ... --backend herdr
+exit=0
+stderr tail:
+    warning: /private/tmp/fmsw.r8Ec/sm-home/data/rw1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+    warning: herdr's native agent auto-resume (resume_agents_on_restore) is not explicitly disabled in /private/tmp/fmsw.r8Ec/herdr-unset/config.toml; a Herdr server restart can relaunch a worker's agent into the directory its pane was created in (often a project clone, not its task worktree) instead of going through firstmate's own verified relaunch path.
+    add this to /private/tmp/fmsw.r8Ec/herdr-unset/config.toml to disable it:
+      [session]
+      resume_agents_on_restore = false
+stderr resume lines:
+2:warning: herdr's native agent auto-resume (resume_agents_on_restore) is not explicitly disabled in /private/tmp/fmsw.r8Ec/herdr-unset/config.toml; a Herdr server restart can relaunch a worker's agent into the directory its pane was created in (often a project clone, not its task worktree) instead of going through firstmate's own verified relaunch path.
+3-add this to /private/tmp/fmsw.r8Ec/herdr-unset/config.toml to disable it:
+4-  [session]
+5:  resume_agents_on_restore = false
+meta: worktree=/Users/clarsen/.treehouse/home-pools/smx-3254bdcd1a38/.treehouse/p-rw1-a39929/1/p-rw1 herdr_pane_id=w1:p2
+pane output: rw1-launched
+config file exists after spawn? no
+----- safe: resume_agents_on_restore = false
+$ FM_HOME=<secondmate-home> FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE=/private/tmp/fmsw.r8Ec/herdr-safe/config.toml bin/fm-spawn.sh rw2 <secondmate-home>/projects/p-rw2 ... --backend herdr
+exit=0
+stderr tail:
+    warning: /private/tmp/fmsw.r8Ec/sm-home/data/rw2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+stderr resume lines:
+  (none)
+meta: worktree=/Users/clarsen/.treehouse/home-pools/smx-3254bdcd1a38/.treehouse/p-rw2-ae5dcf/1/p-rw2 herdr_pane_id=w1:p3
+pane output: rw2-launched
+config file exists after spawn? yes
+safe config unchanged by spawn: yes
+teardown fm-lab-spawnwarn-42361-4447 rc=0
