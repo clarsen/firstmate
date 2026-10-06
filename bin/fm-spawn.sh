@@ -3708,6 +3708,14 @@ if [ -e "$STATE/$ID.backlog-close" ] || [ -L "$STATE/$ID.backlog-close" ]; then
 fi
 
 W="fm-$ID"
+if [ "$BACKEND" = herdr ]; then
+  # Detect-only: warn, never write. The captain owns config.toml directly (it
+  # may be dotfiles-managed), so this never edits it and never blocks the
+  # spawn. docs/herdr-backend.md's "Native resume safety" section owns the
+  # full rationale; bin/backends/herdr.sh's
+  # fm_backend_herdr_warn_unsafe_resume_config owns the check itself.
+  fm_backend_herdr_warn_unsafe_resume_config || true
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
