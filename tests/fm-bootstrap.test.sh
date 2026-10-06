@@ -563,8 +563,9 @@ make_fake_toolchain_no_tmux() {  # <case-dir> <extra-cli...>
 # host has none, since the Herdr resume check cannot be proven safe without it.
 link_tomllib_python3() {  # <fakebin>
   local py
-  py=$(command -v python3) && "$py" -c 'import tomllib' >/dev/null 2>&1 \
-    || fail "these cases need a python3 with tomllib (3.11+) on PATH"
+  if ! py=$(command -v python3) || ! "$py" -c 'import tomllib' >/dev/null 2>&1; then
+    fail "these cases need a python3 with tomllib (3.11+) on PATH"
+  fi
   ln -s "$py" "$1/python3"
 }
 
