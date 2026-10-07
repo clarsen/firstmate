@@ -4166,7 +4166,9 @@ test_gitlab_retention_and_pending_answer() {
   run_captain "$home" hold "$id" --reason "captain must choose" >/dev/null \
     || fail "could not hold GitLab retention fixture"
   (
+    # shellcheck source=/dev/null
     . "$ROOT/bin/fm-tasks-axi-lib.sh"
+    # shellcheck source=/dev/null
     . "$ROOT/bin/fm-backlog-transition-lib.sh"
     export FM_HOME="$home" TMPDIR="$home"
     fm_backlog_retain "$home/data" "$id" --pr "$mr" || exit 1
