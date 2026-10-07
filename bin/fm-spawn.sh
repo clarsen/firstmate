@@ -677,6 +677,31 @@ if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
       ;;
   esac
 fi
+# config/lavish-axi-port is the primary-owned per-machine Lavish server port,
+# propagated the same way as config/lavish-axi-host above so a host whose
+# default port 4387 is occupied - for example by another host's forwarded
+# port - can give its own worker launches a distinct one instead of lavish-axi
+# refusing to start its local server.
+if ! LAVISH_AXI_PORT_CONFIG_PRESENT=$(fm_config_source_present "$CONFIG/lavish-axi-port"); then
+  exit 1
+fi
+if [ "$LAVISH_AXI_PORT_CONFIG_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/lavish-axi-port" ] || [ ! -r "$CONFIG/lavish-axi-port" ]; then
+    echo "error: config/lavish-axi-port must be a readable regular file" >&2
+    exit 1
+  fi
+  LAVISH_AXI_PORT=$(cat "$CONFIG/lavish-axi-port") || exit 1
+  case "$LAVISH_AXI_PORT" in
+    ''|0|*[!0-9]*|0*)
+      echo "error: config/lavish-axi-port must contain one decimal port number with no leading zero" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$LAVISH_AXI_PORT" -gt 65535 ]; then
+    echo "error: config/lavish-axi-port must be between 1 and 65535" >&2
+    exit 1
+  fi
+fi
 if ! KEEP_AI_TRAILERS=$(fm_config_source_present "$CONFIG/keep-ai-trailers"); then
   exit 1
 fi
@@ -5877,6 +5902,12 @@ fi
 if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   LAUNCH="export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST"); $LAUNCH"
 fi
+# config/lavish-axi-port rides the same export-statement mechanism as
+# config/lavish-axi-host immediately above, for the same reason: it must
+# survive a compound raw launch and the launch-env-allowlist `env -i` wrapper.
+if [ "$LAVISH_AXI_PORT_CONFIG_PRESENT" = 1 ]; then
+  LAUNCH="export LAVISH_AXI_PORT=$(shell_quote "$LAVISH_AXI_PORT"); $LAUNCH"
+fi
 # Every launch also exports the absolute path of this task's steering inbox, so
 # the constant doorbell line (bin/fm-task-inbox-lib.sh) can name
 # "$FM_TASK_INBOX" instead of a path that grows with the home's depth. Like the
@@ -5956,6 +5987,9 @@ spawn_send_text_line "$T" "export COMPACT_ADVISER_DISABLE=1"
 if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   spawn_send_text_line "$T" "export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST")"
 fi
+if [ "$LAVISH_AXI_PORT_CONFIG_PRESENT" = 1 ]; then
+  spawn_send_text_line "$T" "export LAVISH_AXI_PORT=$(shell_quote "$LAVISH_AXI_PORT")"
+fi
 # Mark the pane as a task worker so bin/fm-test-run.sh can refuse to run the
 # suite in the repository's primary checkout. Ship and scout workers are the
 # ones assigned an isolated worktree; a secondmate runs its own home instead.
@@ -5999,7 +6033,7 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     TMPDIR TMP TEMP GOTMPDIR TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH \
     HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
     CMUX_SOCKET_PATH ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION \
-    FM_TASK_ID COMPACT_ADVISER_DISABLE LAVISH_AXI_HOST $SPAWN_MEMBER_ENV_NAMES \
+    FM_TASK_ID COMPACT_ADVISER_DISABLE LAVISH_AXI_HOST LAVISH_AXI_PORT $SPAWN_MEMBER_ENV_NAMES \
     $LAUNCH_ENV_NAMES; do
     # Only validated names enter shell syntax. Values expand once, quoted, in
     # the pane shell and never become source text or spawn-process snapshots.
