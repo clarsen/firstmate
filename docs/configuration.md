@@ -943,6 +943,20 @@ When the file is absent, worker launches do not add a board address and retain t
 Malformed or unreadable values refuse the launch before the worker starts.
 The address selects the existing shared server; it does not authorize starting or stopping the server, and the Lavish startup crash remains a vendor-tool concern.
 
+## Lavish server port (config/lavish-axi-port)
+
+The optional local, gitignored `config/lavish-axi-port` contains one decimal port number (1-65535, no leading zero) for the per-machine Lavish server.
+`lavish-axi` itself reads the server port from the `LAVISH_AXI_PORT` environment variable, falling back to its own default (4387) when unset; this file gives firstmate a value to export rather than adding a parallel port mechanism.
+`fm-spawn.sh` exports it into every new worker and relaunch, mirroring `config/lavish-axi-host` above, and the file is inherited into secondmate homes through the same primary-authoritative configuration contract.
+
+Set this when the machine's default Lavish port collides with another address - for example three VS Code Remote-SSH windows auto-forwarding a remote host's Lavish port onto this machine, so `lavish-axi` refuses to start its own local server on that port.
+Give each colliding machine a distinct value so a port forwarded from another host never collides with the local server.
+
+When the file is absent, worker launches do not add a port override and retain the existing ambient-environment behavior (today's shared default port).
+Malformed or unreadable values refuse the launch before the worker starts.
+This selects which port the per-machine server listens on; it does not authorize starting or stopping the server.
+The process-event adapter's own polling address (`bin/fm-procevent-lavish.sh`) is unaffected: once a board exists, polling derives its host and port from that board's saved Lavish session instead of this file.
+
 ## Home brief include (config/brief-include.md)
 
 The optional local, gitignored `config/brief-include.md` adds standing worker instructions to every ship and scout brief.
