@@ -322,7 +322,10 @@ case "${1:-}" in
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
         /exit|/quit) printf 'zsh' > "$D/command" ;;
-        *'encode launch-brief'*) printf 'claude' > "$D/command" ;;
+        # Claude's own launch pre-renders its doorbell literally instead of a
+        # deferred "encode launch-brief" substitution (bin/fm-spawn.sh), so
+        # its payload is matched on that text instead.
+        *'encode launch-brief'* | *'Firstmate operational input waiting: read'*) printf 'claude' > "$D/command" ;;
       esac
     else
       printf '%s\n' "$payload" >> "$D/keys"
@@ -400,7 +403,7 @@ test_claude_relaunch_falls_over_after_exhaustion() {
   status=$?
   expect_code 0 "$status" "relaunch after exhaustion should succeed: $out"
 
-  launch=$(grep 'encode launch-brief' "$fakestate/literal" | tail -1)
+  launch=$(grep -E 'encode launch-brief|Firstmate operational input waiting: read' "$fakestate/literal" | tail -1)
   [ -n "$launch" ] || fail "relaunch sent no replacement launch command"
   install_token_probe "$fakebin" claude
   preamble=$(grep '^export ' "$fakestate/keys")

@@ -123,6 +123,15 @@ case " $* " in
   *" api repos/"*"/commits/"*"/statuses?per_page=100 "*)
     printf '%s\n' '[[]]'
     ;;
+  # fm-pr-merge.sh's required-check read (bin/fm-pr-merge.sh
+  # github_read_required_contexts): an unprotected branch with no rules, so
+  # every merge in this file proceeds with nothing outstanding to rule out.
+  *" api --paginate repos/"*"/rules/branches/"*)
+    printf '%s\n' '[]'
+    ;;
+  *" api repos/"*"/branches/"*)
+    printf '%s\n' '{"protected":false}'
+    ;;
   *" api repos/"*"/pulls/"*)
     printf '%s\n' "{\"state\":\"open\",\"user\":{\"login\":\"author\"},\"head\":{\"sha\":\"$head\"},\"draft\":false,\"mergeable\":true,\"merged_at\":null}"
     ;;
