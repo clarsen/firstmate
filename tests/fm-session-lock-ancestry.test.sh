@@ -1024,7 +1024,10 @@ write_live_registry() {  # <config-dir> <front-pid> <worker-pid> [<front-edit>]
 }
 
 # The move proved: arm, no foreign diagnostic, lock accepted, and the lock now
-# names the model loop beside the moved conversation's id.
+# names the model loop beside the moved conversation's id. Like
+# expect_phase_owned, an owned actionable close records two arm invocations -
+# the foreground arm plus the handling successor - so the cumulative
+# <expected-arms> grows by two for every owned phase.
 expect_phase_moved() {  # <dir> <n> <expected-arms> <worker-pid> <label>
   local dir=$1 n=$2 arms=$3 worker=$4 label=$5
   expect_code 2 "$(phase_value "$dir" "$n" hook.rc)" "$label: the Stop auto-arm did not rewake: $(cat "$dir/state/phase-$n/hook.out")"
@@ -1096,14 +1099,14 @@ test_e2e_moved_conversation_takes_its_lock_only_on_registry_proof() {
     || fail "session start did not record the model loop: $(cat "$dir/state/phase-5/lock-first.out")"
   grep -qx "lock moved: the conversation pid $frontend held now runs in this background session" "$dir/state/phase-5/lock-first.out" \
     || fail "session start did not report where the lock came from: $(cat "$dir/state/phase-5/lock-first.out")"
-  expect_phase_moved "$dir" 5 1 "$worker" "session start after the move"
+  expect_phase_moved "$dir" 5 2 "$worker" "session start after the move"
   kill -0 "$frontend" 2>/dev/null || fail "the front-end died, so the live-owner move was not exercised"
 
   # Phase 6: the same move reaching a Stop first, with no session start at all.
   printf '%s\n' "$frontend" > "$dir/state/.lock"
   cp "$dir/sidecar-initial" "$dir/state/.lock-session"
   fire_phase "$dir" 6 'export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$$'
-  expect_phase_moved "$dir" 6 2 "$worker" "Stop after the move"
+  expect_phase_moved "$dir" 6 4 "$worker" "Stop after the move"
   kill -0 "$frontend" 2>/dev/null || fail "the front-end died, so the live-owner move was not exercised"
 
   # Afterwards the old conversation's id in any other process is a fork of the

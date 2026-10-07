@@ -1716,8 +1716,14 @@ SH
 # permission flag, and any other token refuses before endpoint or metadata.
 claude_settings_json_arg() {  # <launch>
   local command=$1
-  while [[ "$command" == export\ *\;* ]]; do
-    command=${command#*; }
+  while true; do
+    case "$command" in
+      export\ *\;*) command=${command#*; } ;;
+      # The claude-account-injected-token unset wraps the launch in a bare
+      # "if ...; then ...; fi;" prefix (bin/fm-spawn.sh), not an export.
+      if\ *\;\ then\ *\;\ fi\;*) command=${command#*fi; } ;;
+      *) break ;;
+    esac
   done
   eval "set -- $command"
   while [ "$#" -gt 0 ]; do
@@ -1733,11 +1739,17 @@ claude_settings_json_arg() {  # <launch>
 
 claude_launch_brief_arg() {  # <launch>
   local command=$1
-  while [[ "$command" == export\ *\;* ]]; do
-    command=${command#*; }
+  while true; do
+    case "$command" in
+      export\ *\;*) command=${command#*; } ;;
+      # The claude-account-injected-token unset wraps the launch in a bare
+      # "if ...; then ...; fi;" prefix (bin/fm-spawn.sh), not an export.
+      if\ *\;\ then\ *\;\ fi\;*) command=${command#*fi; } ;;
+      *) break ;;
+    esac
   done
   (
-    eval "set -- ${command#*; }"
+    eval "set -- $command"
     eval "printf '%s' \"\${$#}\""
   )
 }

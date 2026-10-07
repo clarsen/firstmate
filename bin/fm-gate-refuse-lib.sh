@@ -36,10 +36,15 @@
 # lifecycle against an FM_HOME that carries the FM_GATE_LAB_MARKER file, because
 # bin/fm-lab-home.sh stamps it only on an empty directory
 # (fm_gate_lab_mark refuses a populated dir, so the helper cannot mark a real home).
-# The allowance additionally requires every FM_*_OVERRIDE to be empty or unset,
-# so the lab call uses the marked home's stock layout and no override can split
-# part of the "lab" back onto the real fleet. The threat model stays a CONFUSED
-# agent: a hostile agent that would hand-forge the marker file is the
+# The allowance additionally requires every FM_HOME-layout override
+# (FM_ROOT_OVERRIDE, FM_STATE_OVERRIDE, FM_DATA_OVERRIDE, FM_PROJECTS_OVERRIDE,
+# FM_CONFIG_OVERRIDE) to be empty or unset, so the lab call uses the marked
+# home's stock layout and no override can split part of the "lab" back onto
+# the real fleet. The list is this fixed set, not a generic FM_*_OVERRIDE
+# glob: other FM_..._OVERRIDE-named variables exist for unrelated test-only
+# escape hatches (for example FM_BACKEND_HERDR_CONFIG_PATH_OVERRIDE) and must
+# not make an otherwise-permitted lab home spuriously refused.
+# The threat model stays a CONFUSED agent: a hostile agent that would hand-forge the marker file is the
 # adversarial case no-mistakes' neutral-execution-context and the
 # HEAD-continuity guard already own, so the check is a plain token file, not a
 # bound record. This is an allowance on the CAPABILITY side only:
@@ -106,10 +111,9 @@ fm_gate_lab_mark() {
 fm_gate_lab_permitted() {
   local v
   fm_gate_lab_home "${FM_HOME:-}" || return 1
-  for v in "${!FM_@}"; do
-    case "$v" in
-      *_OVERRIDE) [ -z "${!v}" ] || return 1 ;;
-    esac
+  for v in FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_DATA_OVERRIDE \
+           FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE; do
+    [ -z "${!v:-}" ] || return 1
   done
   return 0
 }

@@ -629,8 +629,14 @@ test_refused_spawn_leaves_no_task_state() {
 # pane sees after the leading export statements.
 claude_launch_doorbell() {  # <launch command>
   local command=$1
-  while [[ "$command" == export\ *\;* ]]; do
-    command=${command#*; }
+  while true; do
+    case "$command" in
+      export\ *\;*) command=${command#*; } ;;
+      # The claude-account-injected-token unset wraps the launch in a bare
+      # "if ...; then ...; fi;" prefix (bin/fm-spawn.sh), not an export.
+      if\ *\;\ then\ *\;\ fi\;*) command=${command#*fi; } ;;
+      *) break ;;
+    esac
   done
   (
     eval "set -- $command"

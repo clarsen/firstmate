@@ -350,8 +350,15 @@ test_relaunch_shows_the_recorded_members_again() {
   grep -Fxq "export FM_MEMBER_API='$api'" "$dir/fake/keys" \
     || fail "the relaunch did not export the member path into the pane"$'\n'"$(cat "$dir/fake/keys")"
   ! grep -Fq FM_MEMBER_OLD_NOTES "$dir/fake/keys" || fail "the relaunch exported a member whose copy is gone"
-  launch=$(grep 'encode launch-brief' "$dir/fake/literal" | tail -1)
-  assert_contains "$launch" "claude --dangerously-skip-permissions --add-dir '$api' --settings" \
+  # Claude's own launch pre-renders its doorbell literally instead of a
+  # deferred "encode launch-brief" substitution (bin/fm-spawn.sh), so its
+  # launch command is matched on that text too.
+  launch=$(grep -E 'encode launch-brief|Firstmate operational input waiting: read' "$dir/fake/literal" | tail -1)
+  # The member's --add-dir is granted alongside, not necessarily immediately
+  # after, --dangerously-skip-permissions: this task's own channel grants
+  # (operational inbox, task inbox, data dir, skills dir) precede the
+  # per-member dirs in the same --add-dir block, right before --settings.
+  assert_contains "$launch" "--add-dir '$api' --settings" \
     "the relaunched Claude agent was not granted the member directory"
   assert_not_contains "$launch" "gone-copy" "the relaunched Claude agent was granted a member whose copy is gone"
   [ "$(meta_value "$home/state/$id.meta" member.api.worktree)" = "$api" ] \
@@ -365,7 +372,7 @@ test_relaunch_shows_the_recorded_members_again() {
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1)
   expect_code 0 "$?" "the relaunch under an allowlist should succeed"$'\n'"$out"
-  launch=$(grep 'encode launch-brief' "$dir/fake/literal" | tail -1)
+  launch=$(grep -E 'encode launch-brief|Firstmate operational input waiting: read' "$dir/fake/literal" | tail -1)
   # shellcheck disable=SC2016 # The literal floor entry the launch carries.
   assert_contains "$launch" '${FM_MEMBER_API+"FM_MEMBER_API=$FM_MEMBER_API"}' \
     "a launch environment allowlist dropped the member path from the relaunched agent"
