@@ -4075,7 +4075,12 @@ lapse_board() {  # <home> <name>: create and open a board, print its physical pa
 lapse_lavish() {  # <home> <adapter command...>
   local home=$1
   shift
-  PATH="$LAPSE_BIN:$PATH" FM_HOME="$home" "$ROOT/bin/fm-procevent-lavish.sh" "$@"
+  # Arming starts the listener itself, so its owner guard must get the same
+  # shortened lease as every later reconcile in this case.
+  PATH="$LAPSE_BIN:$PATH" \
+    FM_PROCEVENT_OWNER_LEASE_SECONDS="$PROOF_LEASE_SECONDS" \
+    FM_PROCEVENT_OWNER_CHECK_SECONDS="$PROOF_CHECK_SECONDS" \
+    FM_HOME="$home" "$ROOT/bin/fm-procevent-lavish.sh" "$@"
 }
 lapse_pe() {  # <home> <command...>
   PATH="$LAPSE_BIN:$PATH" orphan_pe "$@"
