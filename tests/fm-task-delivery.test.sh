@@ -530,6 +530,13 @@ EOF
 
   out=$(FM_HOME="$home" "$PROJECT_MODE" controlproj 2>/dev/null)
   [ "$out" = "direct-PR off" ] || fail "a single-word control name regressed (got '$out')"
+
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --list)
+  [ "$out" = "$(printf '%s\n' "048. Blast- Lease summary drafter" "foo bar" foo controlproj)" ] \
+    || fail "--list did not print every whole registered name in registry order (got '$out')"
+  out=$(FM_HOME="$TMP_ROOT/project-mode-multiword/no-registry" "$PROJECT_MODE" --list 2>&1) \
+    || fail "--list refused an absent registry"
+  [ -z "$out" ] || fail "--list printed output for an absent registry: $out"
   pass "fm-project-mode: the registry lookup matches a whole multi-word name, not just its first token"
 }
 

@@ -146,6 +146,30 @@ __FM_DECISION_CARD_CSS__
 .bb-dispatch__count { flex: 1 1 auto; font-size: var(--fs-xs); font-weight: 800; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.07em; }
 
+/* ---- Projects drilldown: one collapsible card per project ---- */
+.bb-projects { display: flex; flex-direction: column; gap: 10px; }
+.bb-proj { padding: 0; }
+.bb-proj__head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px;
+  cursor: pointer; list-style: none;
+}
+.bb-proj__head::-webkit-details-marker { display: none; }
+.bb-proj__head::before {
+  content: "\25B8"; font-size: var(--fs-xs); color: var(--text-muted); width: 12px; flex: none;
+}
+.bb-proj[open] > .bb-proj__head::before { content: "\25BE"; }
+.bb-proj__head:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.bb-proj__name { font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 700; color: var(--text-strong);
+  margin-right: auto; overflow-wrap: anywhere; }
+.bb-proj__body { border-top: 1px solid var(--border-soft); }
+.bb-proj__label {
+  padding: 10px 18px 2px; font-family: var(--font-mono); font-size: var(--fs-2xs);
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted);
+}
+.bb-row__rank { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); width: 22px; flex: none; text-align: right; }
+.bb-proj-quiet { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; overflow-wrap: break-word; }
+.bb-proj-dispatch { border: 1.5px solid var(--border-default); border-radius: var(--radius-md); }
+
 .bb-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 14px; }
 
 @media (max-width: 900px) {
@@ -218,6 +242,27 @@ __FM_DECISION_CARD_CSS__
     </div>
   </section>
   </div>
+
+  <!-- Shown only when the payload carries the per-project drilldown
+       (/bearings projects lavish); otherwise the board renders as before. -->
+  <section class="bb-section" id="bb-projects-section" hidden>
+    <div class="bb-section__head">
+      <span class="fm-sign fm-sign--eyebrow">
+        <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+        Projects
+      </span>
+      <span class="fm-sign fm-sign--muted" id="bb-projects-sub"></span>
+    </div>
+    <div class="bb-projects" id="bb-projects"></div>
+    <div class="bb-dispatch bb-proj-dispatch" id="bb-proj-dispatch" hidden>
+      <span class="bb-dispatch__count" id="bb-proj-dispatch-count">nothing picked</span>
+      <span class="bb-queued">
+        <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        queued
+      </span>
+      <button type="button" class="fm-btn fm-btn--sm fm-btn--gold" id="bb-proj-dispatch-btn">Queue dispatch order</button>
+    </div>
+  </section>
 
   <div class="bb-cols">
     <section class="bb-section">
@@ -346,6 +391,12 @@ __FM_DECISION_CARD_JS__
     { n: data.landed.length, l: "landed recently" },
     { n: chartedQueued(data.charted).length + chartedMoreQueued, l: "charted next" }
   ];
+  var projects = Array.isArray(data.projects) ? data.projects : null;
+  if (projects) {
+    stats.push({ n: projects.filter(function (p) {
+      return (p.next || []).some(function (t) { return t.status === "startable"; });
+    }).length, l: "projects ready" });
+  }
   var strip = document.getElementById("bb-stats");
   stats.forEach(function (s) {
     var t = el("div", "bb-stat" + (s.call ? " bb-stat--call" : ""));
@@ -466,20 +517,91 @@ __FM_DECISION_CARD_JS__
     ld.appendChild(row);
   });
 
-  /* Charted Next + dispatch picker */
+  /* Charted Next + dispatch picker. The Projects drilldown shares this one
+     dispatch.charted selection: picks are deduplicated by id across both
+     sections, a pick of an id checks it everywhere it appears, and either
+     section's button queues the whole selection. */
   var ch = document.getElementById("bb-charted");
-  var bar = document.getElementById("bb-dispatch");
-  var barCount = document.getElementById("bb-dispatch-count");
-  var barBtn = document.getElementById("bb-dispatch-btn");
-  var anyPickable = false;
+  var projWrap = document.getElementById("bb-projects");
+  var pickContainers = [ch, projWrap];
+  var bars = [
+    { wrap: document.getElementById("bb-dispatch"), count: document.getElementById("bb-dispatch-count"),
+      btn: document.getElementById("bb-dispatch-btn"), any: false },
+    { wrap: document.getElementById("bb-proj-dispatch"), count: document.getElementById("bb-proj-dispatch-count"),
+      btn: document.getElementById("bb-proj-dispatch-btn"), any: false }
+  ];
 
   function pickedIds() {
-    return Array.prototype.map.call(ch.querySelectorAll(".bb-pick:checked"), function (c) { return c.value; });
+    var ids = [];
+    pickContainers.forEach(function (c) {
+      Array.prototype.forEach.call(c.querySelectorAll(".bb-pick:checked"), function (p) {
+        if (ids.indexOf(p.value) === -1) ids.push(p.value);
+      });
+    });
+    return ids;
+  }
+  function setPicked(id, checked) {
+    pickContainers.forEach(function (c) {
+      Array.prototype.forEach.call(c.querySelectorAll(".bb-pick"), function (p) {
+        if (p.value === id) p.checked = checked;
+      });
+    });
   }
   function refreshBar(limitMessage) {
     var n = pickedIds().length;
-    barCount.textContent = limitMessage || (n ? n + " picked for dispatch" : "pick queued work to dispatch");
-    barBtn.disabled = !n;
+    bars.forEach(function (b) {
+      b.count.textContent = limitMessage || (n ? n + " picked for dispatch" : "pick queued work to dispatch");
+      b.btn.disabled = !n;
+    });
+  }
+  function makePick(id, bar) {
+    bar.any = true;
+    var pick = document.createElement("input");
+    pick.type = "checkbox"; pick.className = "bb-pick"; pick.value = id;
+    pick.setAttribute("aria-label", "Pick " + id + " for dispatch");
+    pick.addEventListener("change", function () {
+      setPicked(id, pick.checked);
+      if (pick.checked && utf8ByteLength(pickedIds().join(",")) > 512) {
+        setPicked(id, false);
+        refreshBar("Selection limit reached (512 bytes maximum). ");
+        return;
+      }
+      refreshBar();
+    });
+    return pick;
+  }
+  /* The detail panel is an anchored sibling in this same page - never a
+     separate Lavish session - and renders only when the row actually carries
+     one, so a row with no detail looks exactly as it did before. Adds the
+     toggle to <row> and returns the panel for the caller to place after it. */
+  function detailPanel(t, row) {
+    var hasDetail = t.detail && typeof t.detail === "object" &&
+      (t.detail.body || (Array.isArray(t.detail.links) && t.detail.links.length));
+    if (!hasDetail) return null;
+    var panel = el("div", "bb-detail");
+    panel.hidden = true;
+    if (t.detail.body) panel.appendChild(el("p", "bb-detail__body", t.detail.body));
+    if (Array.isArray(t.detail.links) && t.detail.links.length) {
+      var linkWrap = el("div", "bb-detail__links");
+      t.detail.links.forEach(function (lk) {
+        var a = el("a", "bb-detail__link", lk.label);
+        a.href = lk.url; a.target = "_blank"; a.rel = "noopener";
+        linkWrap.appendChild(a);
+      });
+      panel.appendChild(linkWrap);
+    }
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "bb-row__details";
+    toggle.textContent = "details";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.addEventListener("click", function () {
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
+      toggle.textContent = panel.hidden ? "details" : "hide";
+    });
+    row.appendChild(toggle);
+    return panel;
   }
 
   if (!chartedQueued(data.charted).length && !chartedMoreQueued) {
@@ -488,19 +610,7 @@ __FM_DECISION_CARD_JS__
   chartedOrder(data.charted).forEach(function (t) {
     var row = el("div", "bb-row");
     if (t.dispatchable && !isWarning(t)) {
-      anyPickable = true;
-      var pick = document.createElement("input");
-      pick.type = "checkbox"; pick.className = "bb-pick"; pick.value = t.id;
-      pick.setAttribute("aria-label", "Pick " + t.id + " for dispatch");
-      pick.addEventListener("change", function () {
-        if (pick.checked && utf8ByteLength(pickedIds().join(",")) > 512) {
-          pick.checked = false;
-          refreshBar("Selection limit reached (512 bytes maximum). ");
-          return;
-        }
-        refreshBar();
-      });
-      row.appendChild(pick);
+      row.appendChild(makePick(t.id, bars[0]));
     } else {
       row.appendChild(el("span", "bb-pick-spacer"));
     }
@@ -512,37 +622,7 @@ __FM_DECISION_CARD_JS__
     row.appendChild(main);
     if (isWarning(t)) row.appendChild(badge("danger", "needs repair"));
     else if (t.reason) row.appendChild(badge("warn", "waiting"));
-    /* the detail panel is an anchored sibling in this same page - never a
-       separate Lavish session - and renders only when the row actually
-       carries one, so a row with no detail looks exactly as it did before. */
-    var hasDetail = t.detail && typeof t.detail === "object" &&
-      (t.detail.body || (Array.isArray(t.detail.links) && t.detail.links.length));
-    var panel = null;
-    if (hasDetail) {
-      panel = el("div", "bb-detail");
-      panel.hidden = true;
-      if (t.detail.body) panel.appendChild(el("p", "bb-detail__body", t.detail.body));
-      if (Array.isArray(t.detail.links) && t.detail.links.length) {
-        var linkWrap = el("div", "bb-detail__links");
-        t.detail.links.forEach(function (lk) {
-          var a = el("a", "bb-detail__link", lk.label);
-          a.href = lk.url; a.target = "_blank"; a.rel = "noopener";
-          linkWrap.appendChild(a);
-        });
-        panel.appendChild(linkWrap);
-      }
-      var toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "bb-row__details";
-      toggle.textContent = "details";
-      toggle.setAttribute("aria-expanded", "false");
-      toggle.addEventListener("click", function () {
-        panel.hidden = !panel.hidden;
-        toggle.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
-        toggle.textContent = panel.hidden ? "details" : "hide";
-      });
-      row.appendChild(toggle);
-    }
+    var panel = detailPanel(t, row);
     ch.appendChild(row);
     if (panel) ch.appendChild(panel);
   });
@@ -557,10 +637,89 @@ __FM_DECISION_CARD_JS__
     ch.appendChild(el("span", "bb-morechip", "+" + chartedMoreWarnings + " more repair warning" + (chartedMoreWarnings === 1 ? "" : "s") + " - ask firstmate for the full chart"));
   }
 
-  if (anyPickable) {
-    bar.hidden = false;
-    refreshBar();
-    barBtn.addEventListener("click", function () {
+  /* Projects drilldown: one collapsible card per project with charted work,
+     in payload order; ranked next actions render in payload order too, since
+     the snapshot already ranked them. Projects with nothing charted share one
+     compact line so the captain still sees the whole fleet. */
+  document.getElementById("bb-projects-section").hidden = !projects;
+  if (projects) {
+    var STATUS_BADGE = { startable: ["online", "ready"], blocked: ["warn", "blocked"],
+      dated: ["warn", "dated"], held: ["warn", "held"] };
+    var quiet = [];
+    var shownProjects = 0;
+    projects.forEach(function (p) {
+      if (!p.decisions.length && !p.underway.length && !p.next.length) { quiet.push(p.name); return; }
+      shownProjects++;
+      var ready = p.next.filter(function (t) { return t.status === "startable"; }).length;
+      var waiting = p.next.length - ready;
+      var card = el("details", "fm-card bb-proj");
+      card.open = p.decisions.length > 0 || ready > 0;
+      var head = el("summary", "bb-proj__head");
+      head.appendChild(el("span", "bb-proj__name", p.name));
+      if (!p.registered) head.appendChild(badge("neutral", "unregistered"));
+      if (p.decisions.length) head.appendChild(badge("danger", p.decisions.length + " need" + (p.decisions.length === 1 ? "s" : "") + " you"));
+      if (ready) head.appendChild(badge("online", ready + " ready"));
+      if (p.underway.length) head.appendChild(badge("info", p.underway.length + " underway"));
+      if (waiting) head.appendChild(badge("warn", waiting + " waiting"));
+      card.appendChild(head);
+      var body = el("div", "bb-proj__body");
+      function group(label, fill) {
+        body.appendChild(el("div", "bb-proj__label", label));
+        var rows = el("div", "bb-rows");
+        fill(rows);
+        body.appendChild(rows);
+      }
+      if (p.decisions.length) group("Needs you", function (rows) {
+        p.decisions.forEach(function (d) {
+          var row = el("div", "bb-row");
+          row.appendChild(badge("solid", "decision"));
+          var main = el("div", "bb-row__main");
+          main.appendChild(el("div", "bb-row__title", d.title));
+          main.appendChild(el("div", "bb-row__sub", "answer it on its Captain's Call card"));
+          row.appendChild(main);
+          rows.appendChild(row);
+        });
+      });
+      if (p.underway.length) group("Underway", function (rows) {
+        p.underway.forEach(function (u) {
+          var row = el("div", "bb-row");
+          row.appendChild(badge(u.state === "working" ? "online" : "info", u.state));
+          var main = el("div", "bb-row__main");
+          main.appendChild(el("div", "bb-row__title", u.name));
+          row.appendChild(main);
+          rows.appendChild(row);
+        });
+      });
+      if (p.next.length) group("Next up", function (rows) {
+        p.next.forEach(function (t, i) {
+          var row = el("div", "bb-row");
+          row.appendChild(el("span", "bb-row__rank", String(i + 1)));
+          row.appendChild(t.dispatchable ? makePick(t.id, bars[1]) : el("span", "bb-pick-spacer"));
+          var main = el("div", "bb-row__main");
+          main.appendChild(el("div", "bb-row__title", t.title));
+          main.appendChild(el("div", "bb-row__sub", t.reason || "ready to start"));
+          row.appendChild(main);
+          var tone = STATUS_BADGE[t.status] || ["warn", t.status];
+          row.appendChild(badge(tone[0], tone[1]));
+          var panel = detailPanel(t, row);
+          rows.appendChild(row);
+          if (panel) rows.appendChild(panel);
+        });
+        if (p.more) rows.appendChild(el("span", "bb-morechip", "+" + p.more + " more ranked - ask firstmate for the full list"));
+      });
+      card.appendChild(body);
+      projWrap.appendChild(card);
+    });
+    if (quiet.length) projWrap.appendChild(el("div", "bb-proj-quiet", "Nothing charted: " + quiet.join(", ")));
+    if (!projects.length) projWrap.appendChild(el("div", "bb-empty", "No projects are registered or charted."));
+    document.getElementById("bb-projects-sub").textContent =
+      shownProjects + " with charted work" + (quiet.length ? " · " + quiet.length + " quiet" : "");
+  }
+
+  bars.forEach(function (b) {
+    b.wrap.hidden = !b.any;
+    if (!b.any) return;
+    b.btn.addEventListener("click", function () {
       var ids = pickedIds();
       var dispatchAnswer = ids.join(",");
       if (!ids.length) return;
@@ -571,14 +730,15 @@ __FM_DECISION_CARD_JS__
       if (window.lavish && window.lavish.queuePrompt) {
         window.lavish.queuePrompt(
           "Dispatch order - start this queued work now: " + ids.join(", "),
-          { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
+          { tag: "choice", text: "Dispatch: " + ids.join(", "), element: b.wrap,
             queueKey: "dispatch.charted",
             data: { question: "dispatch.charted", answer: dispatchAnswer } }
         );
       }
-      bar.classList.add("is-queued");
+      bars.forEach(function (o) { o.wrap.classList.add("is-queued"); });
     });
-  }
+  });
+  refreshBar();
   } catch (e) {
     renderBoardError("The board data could not be rendered");
   }

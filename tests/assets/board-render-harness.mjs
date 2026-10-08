@@ -5,9 +5,12 @@
 // Usage: node board-render-harness.mjs <built-board.html>
 // Prints one JSON document:
 //   { stats:[{n,label}], underway:[{title,sub,badges,detail}],
-//     charted:[{title,sub,badges,pickable,detail}], empty, more, error }
+//     charted:[{title,sub,badges,pickable,pick,rank,detail}], empty, more,
+//     projects:{shown, cards:[{name,open,badges,groups:[{label,rows}],more}],
+//               quiet, sub, empty}, dispatch:[{id,hidden,count}], error }
 // `detail` is null for a row with no expandable panel, or
-// {body, links:[{label,url}]} for a row that carries one.
+// {body, links:[{label,url}]} for a row that carries one. `pick` is the row's
+// dispatch id when it carries a picker, and `rank` its rank label when shown.
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -126,11 +129,14 @@ const rowsOf = (container) => {
     const main = row.children.find((c) => c.className.includes("bb-row__main"));
     const next = kids[i + 1];
     const hasDetailPanel = !!next && next.className.split(/\s+/).includes("bb-detail");
+    const pick = row.children.find((c) => c.className.split(/\s+/).includes("bb-pick"));
     out.push({
       title: main?.children.find((c) => c.className.includes("bb-row__title"))?.textContent ?? "",
       sub: main?.children.find((c) => c.className.includes("bb-row__sub"))?.textContent ?? "",
       badges: badgesOf(row),
-      pickable: row.children.some((c) => c.className.includes("bb-pick") && !c.className.includes("spacer")),
+      pickable: !!pick,
+      pick: pick ? pick.value : null,
+      rank: row.children.find((c) => c.className.includes("bb-row__rank"))?.textContent ?? null,
       detail: hasDetailPanel ? detailOf(next) : null,
     });
   }
@@ -151,5 +157,46 @@ const errorText = [...byId.entries()]
 const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c) => c.textContent);
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
 
+// The Projects drilldown: one card per project with charted work, each holding
+// labelled groups of rows, plus the one-line list of projects with nothing charted.
+const projSection = byId.get("bb-projects-section");
+const pw = byId.get("bb-projects") || new Node("div");
+const has = (n, c) => n.className.split(/\s+/).includes(c);
+const cards = pw.children.filter((c) => has(c, "bb-proj")).map((card) => {
+  const head = card.children.find((c) => has(c, "bb-proj__head"));
+  const body = card.children.find((c) => has(c, "bb-proj__body"));
+  const groups = [];
+  let moreChip = null;
+  if (body) {
+    for (let i = 0; i < body.children.length; i++) {
+      const c = body.children[i];
+      if (!has(c, "bb-proj__label")) continue;
+      const rows = body.children[i + 1];
+      groups.push({ label: c.textContent, rows: rows ? rowsOf(rows) : [] });
+      const chip = rows?.children.find((r) => has(r, "bb-morechip"));
+      if (chip) moreChip = chip.textContent;
+    }
+  }
+  return {
+    name: head?.children.find((c) => has(c, "bb-proj__name"))?.textContent ?? "",
+    open: !!card.open,
+    badges: head ? badgesOf(head) : [],
+    groups,
+    more: moreChip,
+  };
+});
+const projects = {
+  shown: projSection ? !projSection.hidden : false,
+  cards,
+  quiet: pw.children.filter((c) => has(c, "bb-proj-quiet")).map((c) => c.textContent),
+  empty: pw.children.filter((c) => has(c, "bb-empty")).map((c) => c.textContent),
+  sub: byId.get("bb-projects-sub")?.textContent ?? "",
+};
+const dispatch = ["bb-dispatch", "bb-proj-dispatch"].map((id) => ({
+  id,
+  hidden: byId.has(id) ? byId.get(id).hidden : true,
+  count: byId.get(id + "-count")?.textContent ?? "",
+}));
+
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, projects, dispatch, error: errorText }) + "\n");

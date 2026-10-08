@@ -2616,6 +2616,124 @@ EOF
   pass "gate rows carry backlog body/repo/kind and recorded artifact links"
 }
 
+# The per-project drilldown covers every queued item in the main home and every
+# registered secondmate home, groups it by project, ranks it deterministically,
+# and lists registered projects with nothing charted, while the default
+# four-section projection stays exactly as it was.
+write_projects_fixture() {  # <home> <mate-home>
+  local home=$1 mate=$2
+  make_valid_secondmate_home solo-mate "$mate"
+  printf -- '- solo-mate - fixture domain (home: %s; scope: beta work; projects: beta; added 2026-07-13)\n' \
+    "$mate" > "$home/data/secondmates.md"
+  cat > "$home/data/projects.md" <<'EOF'
+- alpha [no-mistakes] - Alpha app (added 2026-07-01)
+- beta - Beta service (added 2026-07-01)
+- coffee-atlas [no-mistakes] - Coffee atlas (added 2026-07-01)
+- quiet-one [direct-PR] - Nothing charted here (added 2026-07-01)
+EOF
+  mkdir -p "$home/projects/alpha-wt"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] alpha-ship - Alpha underway work (repo: alpha) (kind: ship) (since 2026-07-02)
+
+## Queued
+- [ ] alpha-old - Alpha oldest startable (repo: alpha) (kind: ship) (since 2026-07-01)
+- [ ] alpha-new - Alpha newer startable (repo: alpha) (kind: ship) (since 2026-07-05)
+- [ ] alpha-p1 - Alpha prioritized (repo: alpha) (kind: ship) (priority: 1) (since 2026-07-09)
+- [ ] alpha-blocked - Alpha blocked work blocked-by: alpha-ship (repo: alpha) (kind: ship) (since 2026-06-01)
+- [ ] alpha-dated - Alpha dated work (repo: alpha) (kind: ship) (since 2026-06-02) (hold: wait for the vendor) (hold-kind: external) (hold-until: 2026-08-01)
+- [ ] alpha-call - Alpha color choice (repo: alpha) (kind: captain) (since 2026-07-03) (hold: pick a color) (hold-kind: captain)
+- [ ] coffee-title - Coffee Atlas: fix the smoke runner (kind: ship) (since 2026-07-04)
+- [ ] tool-x - Tooling fix (repo: firstmate) (kind: ship) (since 2026-07-04)
+- [ ] orphan-x - Something with no project (kind: ship) (since 2026-07-04)
+
+## Done
+EOF
+  fm_write_meta "$home/state/alpha-ship.meta" \
+    "window=firstmate:fm-alpha-ship" "worktree=$home/projects/alpha-wt" "project=alpha" \
+    "harness=claude" "kind=ship" "mode=no-mistakes"
+  record_claude_state "$home/state" alpha-ship busy
+  printf 'working: building alpha\n' > "$home/state/alpha-ship.status"
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] beta-a - Beta work without a repo field (kind: ship) (since 2026-07-01)
+- [ ] beta-b - Beta urgent work (repo: beta) (kind: ship) (priority: 0) (since 2026-07-08)
+
+## Done
+EOF
+}
+
+test_projects_drilldown_ranks_every_project() {
+  local home mate fakebin json default toon
+  home=$(make_home projects-drilldown)
+  mate="$TMP_ROOT/projects-drilldown-mate"
+  write_projects_fixture "$home" "$mate"
+  fakebin=$(make_fakebin "$home")
+  json=$(FM_BEARINGS_GATES=2 run "$home" "$fakebin" --json --projects)
+  printf '%s' "$json" | jq -e '
+    [.projects.summary[] | .project] == ["alpha", "beta", "coffee-atlas", "firstmate", "(unassigned)", "quiet-one"]
+  ' >/dev/null || fail "projects are not ordered startable-or-decision first, quiet last: $json"
+  printf '%s' "$json" | jq -e '
+    (.projects.summary[] | select(.project == "alpha"))
+      == {project:"alpha", registered:true, owners:"(main)", decisions:1, underway:1, startable:3, waiting:2}
+    and (.projects.summary[] | select(.project == "quiet-one"))
+      == {project:"quiet-one", registered:true, owners:"(main)", decisions:0, underway:0, startable:0, waiting:0}
+    and (.projects.summary[] | select(.project == "beta") | .owners == "(main),solo-mate")
+    and (.projects.summary[] | select(.project == "firstmate") | .registered == false)
+  ' >/dev/null || fail "project summary counts are wrong: $json"
+  printf '%s' "$json" | jq -e '
+    [.projects.next[] | select(.project == "alpha") | [.rank, .id, .status, .why]]
+      == [[1, "alpha-p1", "startable", "-"],
+          [2, "alpha-old", "startable", "-"],
+          [3, "alpha-new", "startable", "-"],
+          [4, "alpha-blocked", "blocked", "blocked-by alpha-ship"],
+          [5, "alpha-dated", "dated", "until 2026-08-01"]]
+  ' >/dev/null || fail "alpha next actions are not ranked startable, priority, oldest filed: $json"
+  printf '%s' "$json" | jq -e '
+    [.projects.next[] | select(.project == "beta") | [.id, .owner, .project_from, .priority]]
+      == [["beta-b", "solo-mate", "repo", 0], ["beta-a", "solo-mate", "home", null]]
+    and (.projects.next | any(.id == "coffee-title" and .project == "coffee-atlas" and .project_from == "title"))
+    and (.projects.next | any(.id == "orphan-x" and .project == "(unassigned)" and .project_from == null))
+    and (.projects.decisions | any(.id == "alpha-call" and .project == "alpha"))
+    and (.projects.next | any(.id == "alpha-call") | not)
+    and (.projects.underway | any(.id == "alpha-ship" and .project == "alpha" and .owner == "(main)"))
+  ' >/dev/null || fail "drilldown project attribution, decisions, or underway rows are wrong: $json"
+  printf '%s' "$json" | jq -e '
+    (.gates | length) == 2
+      and (.omitted | any(.surface | startswith("gates showing 2 of")))
+      and (.projects.next | length) == 10
+  ' >/dev/null || fail "the drilldown must stay uncapped while the default gates stay bounded: $json"
+
+  default=$(FM_BEARINGS_GATES=2 run "$home" "$fakebin" --json)
+  printf '%s' "$default" | jq -e '
+    (has("projects") | not)
+      and ([.gates[], .in_flight[], .decisions_open[] | keys[] | select(startswith("_"))] | length) == 0
+  ' >/dev/null || fail "the default projection must not change shape or leak internal fields: $default"
+
+  toon=$(run "$home" "$fakebin" --projects)
+  assert_contains "$toon" "projects: " "TOON must carry the projects object"
+  assert_contains "$toon" "  summary[6]{project,registered,owners,decisions,underway,startable,waiting}:" \
+    "TOON must render the project summary as a table"
+  assert_contains "$toon" "  next[10]{" "TOON must render every ranked next action"
+  pass "the project drilldown ranks every queued item per project and lists quiet projects"
+}
+
+test_projects_drilldown_discloses_secondmate_queued_bound() {
+  local home mate fakebin json
+  home=$(make_home projects-bound)
+  mate="$TMP_ROOT/projects-bound-mate"
+  write_projects_fixture "$home" "$mate"
+  fakebin=$(make_fakebin "$home")
+  json=$(FM_SNAPSHOT_SECONDMATE_QUEUED=1 run "$home" "$fakebin" --json --projects)
+  printf '%s' "$json" | jq -e '
+    .omitted | any(.surface == "secondmate solo-mate queued omitted by its home summary bound: 1"
+                   and .reveal == "raise FM_SNAPSHOT_SECONDMATE_QUEUED in that home")
+  ' >/dev/null || fail "a secondmate home summary bound must be disclosed in the drilldown: $json"
+  pass "the project drilldown discloses a secondmate home's own queued bound"
+}
+
 test_underway_landed_and_gate_rows_carry_untruncated_full_titles() {
   local home fakebin long_title json
   home=$(make_home full-titles)
@@ -3464,6 +3582,8 @@ test_newest_filed_gates_are_selected_before_snapshot_bounds
 test_underway_and_gate_rows_carry_the_durable_name_and_filed_date
 test_gate_rows_carry_backlog_detail_and_artifact_links
 test_underway_landed_and_gate_rows_carry_untruncated_full_titles
+test_projects_drilldown_ranks_every_project
+test_projects_drilldown_discloses_secondmate_queued_bound
 test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection
 test_completed_scout_report_not_pending

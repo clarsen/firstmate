@@ -304,6 +304,92 @@ test_a_charted_row_without_detail_renders_unchanged() {
   pass "a Charted Next row with no detail renders exactly as it did before the feature existed"
 }
 
+# Build the board with a per-project drilldown alongside <charted-json>.
+render_projects() {  # <home> <charted-json> <projects-json>
+  local home=$1 data="$1/payload.json"
+  jq -n --argjson charted "$2" --argjson projects "$3" '{
+    schema:"fm-bearings-board.v1", home:"render-home", generated:"2026-08-26T00:00Z",
+    prs_live:false, captains_call:[], underway:[], landed:[], charted:$charted,
+    projects:$projects}' > "$data"
+  PATH="$home/fakebin:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
+    LAVISH_AXI_STATE_DIR="$home/lavish-state" \
+    "$BOARD" build "$data" >/dev/null || fail "the board did not build"
+  require_listener_reached_poll "$home"
+  node "$HARNESS" "$home/.lavish/bearings-board.html" \
+    || fail "the built board could not be rendered"
+}
+
+test_the_project_drilldown_renders_ranked_cards_and_quiet_projects() {
+  local home out
+  home=$(make_home projects-drilldown)
+  out=$(render_projects "$home" '[
+    {"id":"alpha-p1","repo":"alpha","title":"Alpha prioritized","reason":"","dispatchable":true}
+  ]' '[
+    {"name":"alpha","registered":true,"owners":"(main)",
+     "decisions":[{"key":"alpha-call","title":"Alpha color choice"}],
+     "underway":[{"id":"alpha-ship","name":"Alpha underway work","state":"working"}],
+     "next":[
+       {"id":"alpha-p1","title":"Alpha prioritized","status":"startable","reason":"","dispatchable":true,"filed":"2026-07-09"},
+       {"id":"alpha-old","title":"Alpha oldest startable","status":"startable","reason":"","dispatchable":true,"filed":"2026-07-01"},
+       {"id":"alpha-blocked","title":"Alpha blocked work","status":"blocked","reason":"blocked-by alpha-ship","dispatchable":false,
+        "detail":{"body":"Waits on the underway ship."}}]},
+    {"name":"firstmate","registered":false,"decisions":[],"underway":[],
+     "next":[{"id":"tool-x","title":"Tooling fix","status":"dated","reason":"until 2026-08-01","dispatchable":false}],
+     "more":2},
+    {"name":"quiet-one","registered":true,"decisions":[],"underway":[],"next":[]},
+    {"name":"quiet-two","registered":true,"decisions":[],"underway":[],"next":[]}
+  ]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null \
+    || fail "the board rendered its fail-closed error instead of the drilldown: $out"
+  printf '%s' "$out" | jq -e '
+    .projects.shown == true
+      and ([.projects.cards[] | .name] == ["alpha", "firstmate"])
+      and .projects.quiet == ["Nothing charted: quiet-one, quiet-two"]
+      and .projects.sub == "2 with charted work · 2 quiet"
+      and (.stats | any(.label == "projects ready" and .n == 1))
+  ' >/dev/null || fail "the drilldown did not render cards in order with the quiet line: $out"
+  printf '%s' "$out" | jq -e '
+    (.projects.cards[0]
+      | .open == true
+        and ([.badges[] | .text] == ["1 needs you", "2 ready", "1 underway", "1 waiting"])
+        and ([.groups[] | .label] == ["Needs you", "Underway", "Next up"])
+        and (.groups[0].rows[0].title == "Alpha color choice")
+        and (.groups[1].rows[0] | .title == "Alpha underway work" and [.badges[] | .text] == ["working"])
+        and ([.groups[2].rows[] | [.rank, .title, .pick, ([.badges[] | .text] | join(","))]]
+             == [["1", "Alpha prioritized", "alpha-p1", "ready"],
+                 ["2", "Alpha oldest startable", "alpha-old", "ready"],
+                 ["3", "Alpha blocked work", null, "blocked"]])
+        and (.groups[2].rows[0].sub == "ready to start")
+        and (.groups[2].rows[2] | .sub == "blocked-by alpha-ship"
+             and .detail.body == "Waits on the underway ship."))
+  ' >/dev/null || fail "a project card did not render its ranked groups and pickers: $out"
+  printf '%s' "$out" | jq -e '
+    (.projects.cards[1]
+      | .open == false
+        and ([.badges[] | .text] == ["unregistered", "1 waiting"])
+        and .more == "+2 more ranked - ask firstmate for the full list")
+      and (.charted[0].pick == "alpha-p1")
+      and ([.dispatch[] | .hidden] == [false, false])
+  ' >/dev/null || fail "a waiting-only project, shared picker ids, or dispatch bars rendered wrong: $out"
+  pass "the project drilldown renders ranked project cards, a shared picker, and quiet projects"
+}
+
+test_a_board_without_projects_keeps_the_drilldown_hidden() {
+  local home out
+  home=$(make_home projects-absent)
+  out=$(render "$home" '[
+    {"id":"queued-one","repo":"sample","title":"One","reason":"","dispatchable":true}
+  ]')
+  printf '%s' "$out" | jq -e '
+    .projects.shown == false and .projects.cards == [] and .projects.quiet == []
+      and (.stats | any(.label == "projects ready") | not)
+      and ([.dispatch[] | .hidden] == [false, true])
+  ' >/dev/null || fail "a board without projects changed its rendering: $out"
+  pass "a board without projects renders exactly as before, with the drilldown hidden"
+}
+
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first
@@ -315,3 +401,5 @@ test_omitted_warnings_never_count_as_more_queued
 test_an_omitted_kind_keeps_the_existing_queued_rendering
 test_a_charted_row_with_detail_renders_its_panel_and_links
 test_a_charted_row_without_detail_renders_unchanged
+test_the_project_drilldown_renders_ranked_cards_and_quiet_projects
+test_a_board_without_projects_keeps_the_drilldown_hidden

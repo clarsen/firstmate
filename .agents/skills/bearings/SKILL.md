@@ -3,7 +3,7 @@ name: bearings
 description: >-
   Generate a "pick up where I left off" fleet digest from firstmate's live fleet state.
   Use when the captain invokes /bearings or asks for a bearings report, morning brief, status report, catch-up, "where did I leave off", or "what's in the works".
-  Plain /bearings is chat-only by default, /bearings file explicitly writes the dated data/status-report-<YYYY-MM-DD>.md artifact, and /bearings lavish additionally builds and arms the interactive fleet board; live PR enrichment remains opt-in and composes with the other modes.
+  Plain /bearings is chat-only by default, /bearings file explicitly writes the dated data/status-report-<YYYY-MM-DD>.md artifact, /bearings lavish additionally builds and arms the interactive fleet board, and /bearings projects renders Charted Next as a per-project drilldown of ranked next actions; live PR enrichment remains opt-in and composes with the other modes.
   Also use on a contributions check wake or when filing work linked to an upstream issue.
   Also load this skill's board-wake handling when a procevent lavish wake's source id matches the canonical source id of the stable bearings board path.
 user-invocable: true
@@ -26,8 +26,10 @@ Board answers are acted on later under the normal authority rules; this skill's 
 - Plain `/bearings` gathers a fresh bounded snapshot and renders the four-section chat digest without creating, deleting, reading, or replacing `data/status-report-<YYYY-MM-DD>.md`.
 - `/bearings file` gathers a fresh bounded snapshot, replaces today's `data/status-report-<YYYY-MM-DD>.md` from scratch, and renders the four-section chat digest with a link or path to that report.
 - `/bearings lavish` gathers a fresh bounded snapshot, rebuilds and arms the interactive fleet board (the "Lavish board mode" section below), and renders the four-section chat digest with the board's URL inside it.
-- Treat `file` and `lavish` only as explicit invocation options in the slash command.
-- Do not treat natural-language requests such as "write a report", "save this", "persist it", "make a file", or "make a board" as file or lavish mode unless the invocation explicitly includes the standalone option.
+- `/bearings projects` gathers the snapshot with its `--projects` drilldown and renders Charted Next as the per-project drilldown (the "Project drilldown" section below); the other three sections are unchanged.
+- `projects` composes with the other options: `/bearings file projects` writes the drilldown into the report's Charted Next, and `/bearings projects lavish` adds the board's Projects section.
+- Treat `file`, `lavish`, and `projects` only as explicit invocation options in the slash command.
+- Do not treat natural-language requests such as "write a report", "save this", "persist it", "make a file", "make a board", or "show every project" as file, lavish, or projects mode unless the invocation explicitly includes the standalone option.
 - When the captain asks to include PRs, pass the snapshot command's live-PR opt-in.
 - `/bearings include PRs` remains chat-only and makes the live-PR opt-in.
 - `/bearings file include PRs` and `/bearings lavish include PRs` compose the same way.
@@ -43,6 +45,7 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    The command's header and `--help` output own its exact fields, bounds, opt-ins, and output contract.
    The default performs bounded concurrent remote-ledger reads for registered remote homes under one shared snapshot budget and may refresh the parent-side cache.
    Only pass `--include-prs` when the captain asks for repository-wide live GitHub PR enrichment.
+   In projects mode also pass `--projects`.
    Registered owned contributions use the cached `contributions` projection independently of that opt-in; no invocation-time forge discovery is needed to read it.
    For registered secondmates, use the snapshot's structured-home classification and provenance.
    A parent event or bounded terminal contradiction is fallback evidence, never authority over readable structured home state.
@@ -91,6 +94,22 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    After writing the file, return the concise four-section chat digest and include the report path or link without adding a fifth section.
    For a richer review surface, offer `/bearings lavish` when the report has enough structure to deserve one, but only after the required digest is ready.
 
+## Project drilldown
+
+`/bearings projects` answers "what is next in each project" for a fleet with more projects than the bounded Charted Next can show.
+The snapshot's `projects` object owns the grouping, project attribution, ranking, and project order; its `--help` and header state the rules.
+Render it as given: never re-rank a project's next actions, reorder projects, or move an item to another project by judgment.
+Charted Next in projects mode renders:
+
+- Every action-free fleet-integrity warning row from `gates` first, exactly as in the default Charted Next.
+- One block per project with charted work, in `projects.summary` order, led by the project name and its counts.
+- Inside each block, its open captain calls and underway work named briefly as pointers to their own sections, then its ranked next actions with each waiting row's reason.
+- One closing line naming every project with nothing charted.
+
+A project's open captain calls still render in full in Captain's Call and its underway work in Underway, so the drilldown never becomes a second place to answer a call.
+Disclose any `omitted` row the drilldown added, such as a secondmate home whose own summary bound or unavailable ledger hides queued work.
+Keep each next action to one scannable line; `(unassigned)` collects items no structured field or title ties to a project.
+
 ## Lavish board mode
 
 `/bearings lavish` adds one deliverable beside the unchanged chat digest: the interactive fleet board, a myfirstmate-styled Lavish page where the captain answers Captain's Call items directly instead of replying in chat.
@@ -115,6 +134,10 @@ Compose the payload from the same snapshot with the same ranking judgment as the
   Omit it or pass null for a row with no durable filed date - the main-inventory or return-catchup warning, an unavailable secondmate home, or a queued row filed before dates were recorded - and the board keeps those rows in payload order after every dated row.
 - Every Captain's Call item and every Underway, Recently Landed, and Charted Next row carries an explicit `repo` field. Fill it from the snapshot and task records wherever known; use null or an empty string only as the deliberate genuinely-no-repo marker, in which case the template may show the internal id. Ids otherwise stay in the payload only as the routing channel, and composed reasons name blockers in plain words.
 - When a Charted Next gate's snapshot row carries a `body`, `pr_url`, `report_path`, or other `links`, fold them into that row's optional `detail` object (`bin/fm-bearings-board.sh`'s payload contract owns its exact shape) so the captain can expand the row for more context than the compact title/reason line: `detail.body` is the gate's own bounded body text (why it exists, its decided delivery posture, the evidence behind it). `detail.links` carries every backlog-recorded `https://` artifact URL as a `{label, url}` pair - the gate's `pr_url` labeled "PR" and any other recorded URL (typically a Lavish board or page) labeled from its own context; `report_path` is a local filesystem path, not a URL, so fold it into `detail.body` as plain text instead of a link. Omit `detail` entirely for a row with none of this; it renders exactly as it always has.
+
+- In projects mode, add the payload's `projects` array from the snapshot's `projects` object, one entry per `projects.summary` row in that order, each with its `decisions`, `underway`, and ranked `next` rows copied in rank order (`bin/fm-bearings-board.sh`'s payload contract owns the exact shape).
+  A next row copies `title_full` into `title`, its status, its `why` into `reason` (empty for a startable row), and `filed`; set `dispatchable` true exactly for startable rows, and fold a matching gate row's body and links into `detail` the same way as Charted Next.
+  Include every project, quiet ones too, so the board's nothing-charted line names the whole fleet; the Projects picker shares the `dispatch.charted` key with Charted Next.
 
 Run `build` once after composing the payload.
 Its serve-first sequence publishes the board, establishes and verifies its Lavish session with `lavish-axi`, reopens an ended session when necessary, and only then binds the answer source and proves a live polling listener; use the session URL it prints in the chat digest.
@@ -160,6 +183,7 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
 3. **Underway** - live work progressing on its own, one line of current state per direct report.
    Empty-state: "Nothing is underway."
 4. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
+   In projects mode this section renders the per-project drilldown instead, under the same heading (the "Project drilldown" section above).
    Empty-state: "Nothing is queued."
 
 Rules that keep the contract unambiguous:
