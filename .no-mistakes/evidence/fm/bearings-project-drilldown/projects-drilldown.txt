@@ -1,0 +1,22 @@
+ok - the project drilldown ranks every queued item per project and lists quiet projects
+ok - the project drilldown discloses a secondmate home's own queued bound
+ok - the project drilldown renders ranked project cards, a shared picker, and quiet projects
+ok - a board without projects renders exactly as before, with the drilldown hidden
+ok - path prints the stable home-scoped board location
+ok - build refuses malformed payloads before touching the board
+ok - charted kind is optional and accepts queued and warning
+ok - build injects the payload, binds any-origin, then arms the source
+ok - registration can consume answers only after any-origin binding exists
+ok - build establishes the Lavish session before binding and arming
+ok - rebuild refreshes the board in place without double-arming
+ok - build refuses a template without exactly one data slot
+ok - a board build reopens a session the captain ended instead of arming a dead one
+ok - build reopens a session that ends between establish and listing
+ok - build refuses to arm a poll on a session that stays ended
+ok - a rebuild starts a listener when an already-armed board has none
+ok - build drops decision cards whose subject already landed and keeps open ones
+ok - build keeps remote decisions absent from the main backlog
+ok - build fails when reconcile cannot prove a live listener
+ok - every decision card carries exactly one reconcile choice
+ok - build refuses a payload that occupies the reserved reconcile value
+ok - build reserves reconcile across non-decision cards
