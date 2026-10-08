@@ -204,6 +204,27 @@
 # this field existed: no details toggle appears. The detail panel expands
 # inline on the board itself - never a separate Lavish session per row.
 #
+# The payload MAY carry `projects`, the per-project drilldown /bearings projects
+# lavish adds, as an array in the order the board shows it, each:
+#   name         non-empty string: the project (its repo)
+#   registered   boolean: whether the project is in a project registry
+#   owners       optional string: the homes that register or chart it
+#   decisions    array of { title: non-empty string, key: optional string } -
+#                open captain calls for the project, shown as pointers only;
+#                they are answered on their Captain's Call card
+#   underway     array of { id, name, state }: non-empty strings
+#   next         array in rank order (the template never re-sorts it), each
+#                { id: slug, title: non-empty string, status: one of
+#                startable|blocked|dated|held, reason: string, dispatchable:
+#                boolean, filed and detail as on a Charted Next row };
+#                dispatchable requires status startable
+#   more         optional non-negative integer: ranked rows left out
+# A project with empty decisions, underway, and next renders only in the
+# board's one-line "nothing charted" list. Every dispatchable row joins the same
+# `dispatch.charted` picker as Charted Next: one selection, deduplicated by id
+# across both sections, queued by either dispatch button. A payload without
+# `projects` renders exactly as it did before the field existed.
+#
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
 # re-invocation rebuilds the same file in place, which keeps the same Lavish
 # session URL and the same canonical process-event source id. A page path is
@@ -338,11 +359,34 @@ validate_payload() {  # <data.json>
       and optional_filed
       and optional_detail
       and (if .kind == "warning" then .dispatchable == false else true end);
+    def nonneg_int: type == "number" and . >= 0 and (floor == .);
+    def project_decision:
+      type == "object" and (.title | nonempty_string) and optional_string("key");
+    def project_underway:
+      type == "object" and (.id | nonempty_string) and (.name | nonempty_string)
+      and (.state | nonempty_string);
+    def project_next:
+      type == "object" and (.id | slug(128)) and (.title | nonempty_string)
+      and (.status == "startable" or .status == "blocked" or .status == "dated" or .status == "held")
+      and (.reason | type == "string")
+      and (.dispatchable | type == "boolean")
+      and (if .dispatchable then .status == "startable" else true end)
+      and optional_filed
+      and optional_detail;
+    def project_item:
+      type == "object" and (.name | nonempty_string) and (.registered | type == "boolean")
+      and optional_string("owners")
+      and (.decisions | type == "array") and ([.decisions[] | project_decision] | all)
+      and (.underway | type == "array") and ([.underway[] | project_underway] | all)
+      and (.next | type == "array") and ([.next[] | project_next] | all)
+      and ((has("more") | not) or (.more | nonneg_int));
     type == "object"
     and (.schema == $schema)
     and (.home | nonempty_string)
     and (.generated | nonempty_string)
     and (.prs_live | type == "boolean")
+    and ((has("projects") | not)
+      or ((.projects | type == "array") and ([.projects[] | project_item] | all)))
     and (.captains_call | type == "array")
     and (.underway | type == "array")
     and (.landed | type == "array")

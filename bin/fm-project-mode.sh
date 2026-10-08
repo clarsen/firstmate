@@ -93,7 +93,13 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
+# --list takes no project name and prints every registered project name, one
+# per line in registry order, using the same name rule as the lookup (a name
+# ends at the literal " [" or " - " that follows it). An absent registry prints
+# nothing and exits 0: no registry means no registered projects. The consumer is
+# bin/fm-bearings-snapshot.sh --projects, which lists every registered project.
 # Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>
+#        fm-project-mode.sh --list
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,6 +110,21 @@ REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
+if [ "${1:-}" = --list ]; then
+  [ $# -eq 1 ] || { echo "usage: fm-project-mode.sh --list" >&2; exit 2; }
+  [ -f "$REG" ] || exit 0
+  awk '
+    substr($0, 1, 2) != "- " { next }
+    {
+      rest = substr($0, 3); cut = length(rest) + 1
+      i = index(rest, " ["); if (i > 0 && i < cut) cut = i
+      i = index(rest, " - "); if (i > 0 && i < cut) cut = i
+      name = substr(rest, 1, cut - 1)
+      if (name != "") print name
+    }
+  ' "$REG"
+  exit 0
+fi
 case "${1:-}" in
   --raw) RAW=1; shift ;;
   --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;

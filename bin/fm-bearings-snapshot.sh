@@ -63,6 +63,22 @@
 # suppresses the digest; an ACTIVE away window still refuses, because the right
 # answer there is to run the return first. bin/fm-afk-return.sh owns the gate.
 #
+# --projects adds a per-project drilldown (the projects object) built from the
+# same uncapped rows the default surfaces bound: every Charted Next gate from the
+# main home and every structured secondmate home, every open captain hold that
+# Captain's Call would show, and every Underway row. Each row is attributed to one
+# project by its structured repo (matched to a registered name when one fits),
+# else the owning secondmate's sole registered project, else a registered project
+# name leading its title at a word boundary, else "(unassigned)"; project_from
+# names which rule applied. Next actions rank startable first (no unresolved
+# blocker, no future hold-until, no hold), then by priority (0 most urgent, absent
+# last), then oldest filed first (undated last), then id; blocked, dated, and held
+# rows follow in the same order with their reason. Projects order those with open
+# decisions or startable work first, then those with only underway or waiting
+# work, then every registered project with nothing charted. Registered projects
+# come from fm-project-mode.sh --list plus each registered secondmate's projects
+# list. The default surfaces, their bounds, and their fields are unchanged.
+#
 # The landed section merges this home's Done with the canonical snapshot's
 # secondmate_landed roll-up (fm-fleet-snapshot.sh), so merges a secondmate managed -
 # recorded in ITS OWN backlog, never the main one - are visible. It stays bounded by
@@ -87,6 +103,7 @@
 #   --all-recorded-prs include every locally recorded PR
 #   --all-unhealthy  include every unhealthy endpoint
 #   --all-pr-repos   query every discovered repository under --include-prs
+#   --projects       ALSO emit the per-project drilldown of ranked next actions
 #   -h,--help        usage
 #
 # Output contract: `fm-bearings.v1`. No locks or reports; the underlying snapshot's
@@ -138,7 +155,7 @@ usage: fm-bearings-snapshot.sh [--json] [--include-prs] [--fields <list>]
                                [--all-secondmates] [--all-landed]
                                [--all-reports] [--all-queued]
                                [--all-recorded-prs] [--all-unhealthy]
-                               [--all-pr-repos]
+                               [--all-pr-repos] [--projects]
 
 Compact bearings projection over fm-fleet-snapshot.sh. TOON by default.
 Default collection performs bounded concurrent remote-ledger reads for registered
@@ -178,6 +195,13 @@ Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
   --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
 Raise FM_BEARINGS_PR_LIMIT to expand per-repository open-PR results.
+--projects adds projects{summary,decisions,underway,next}, uncapped within the
+  bounded snapshot: summary{project,registered,owners,decisions,underway,startable,
+  waiting} lists every registered or charted project, decisions-or-startable first
+  and nothing-charted last; next ranks each project's queued work startable first,
+  then priority (0 most urgent), then oldest filed, each row naming its status
+  (startable|blocked|dated|held), why, and project_from (repo|home|title|null).
+  A secondmate home's own queued bound or unavailable ledger is disclosed in omitted[].
 EOF
 }
 
@@ -192,6 +216,7 @@ ALL_LANDED=0
 ALL_RECORDED_PRS=0
 ALL_UNHEALTHY=0
 ALL_PR_REPOS=0
+PROJECTS=0
 FIELDS=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -206,6 +231,7 @@ while [ $# -gt 0 ]; do
     --all-recorded-prs) ALL_RECORDED_PRS=1 ;;
     --all-unhealthy) ALL_UNHEALTHY=1 ;;
     --all-pr-repos) ALL_PR_REPOS=1 ;;
+    --projects) PROJECTS=1 ;;
     --fields) shift; FIELDS=${1:-} ;;
     --fields=*) FIELDS=${1#--fields=} ;;
     -h|--help) usage; exit 0 ;;
@@ -252,6 +278,14 @@ else
 fi
 HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
+
+# The project drilldown lists every project registered in this home; the
+# registry line format belongs to fm-project-mode.sh, so its --list is the reader.
+REGISTERED_PROJECTS='[]'
+if [ "$PROJECTS" = 1 ]; then
+  REGISTERED_PROJECTS=$("$SCRIPT_DIR/fm-project-mode.sh" --list | jq -R . | jq -s .) \
+    || { echo "fm-bearings-snapshot: cannot list registered projects" >&2; exit 1; }
+fi
 
 # --- optional live GitHub PR enrichment -------------------------------------
 PR_STATUS='not_requested (run: /bearings include PRs)'
@@ -390,6 +424,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
   --argjson return_catchup "$RETURN_CATCHUP" \
+  --argjson want_projects "$PROJECTS" \
+  --argjson registered_projects "$REGISTERED_PROJECTS" \
   --argjson candidate_prs "$CANDIDATE_PRS" "$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
@@ -452,7 +488,12 @@ MODEL=$(printf '%s' "$SNAP" | jq \
      pr_url:((.pr_url // null) | bounded_ref(500)),
      report_path:((.report_path // null) | bounded_ref(500)),
      links:(((.links // []) | map(select(type == "string" and length <= 300)))
-            - [(.pr_url // null)] | unique | .[0:5])};
+            - [(.pr_url // null)] | unique | .[0:5]),
+     _src:{title:(.title // null), repo:(.repo // null), kind:(.kind // null),
+           priority:(.priority // null), since:(.since // null),
+           unresolved_blocker_ids:(.unresolved_blocker_ids // []),
+           hold_reason:(.hold_reason // null), hold_until:(.hold_until // null),
+           hold_bucket:(.hold_bucket // null), hold_age_days:(.hold_age_days // null)}};
   def round_robin_landed($n):
     . as $groups
     | [range(0; (($groups | map(length) | max) // 0)) as $i
@@ -533,7 +574,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         name:($full_name | trunc(70)),
         name_full:$full_name,
         doing: ((.current_state.detail // "") as $d
-                | (if $d != "" then $d else (.hints.last_event_text // "") end) | trunc(90))
+                | (if $d != "" then $d else (.hints.last_event_text // "") end) | trunc(90)),
+        _owner:"(main)"
       } ]
      + [ $secondmate_views[] as $m
          | $m.active_children[]?
@@ -547,20 +589,25 @@ MODEL=$(printf '%s' "$SNAP" | jq \
             repo:(.repo // null),
             name:($full_name | trunc(70)),
             name_full:$full_name,
-            doing:((.doing // .state) | trunc(90))} ]) as $in_flight_all
+            doing:((.doing // .state) | trunc(90)),
+            _owner:$m.id} ]) as $in_flight_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and .hold_bucket != null)
          | select(($all_decisions == 1) or live_captain_call)
          | {id,key:.id,verb:"captain-hold",
-            summary:hold_summary(.title; .hold_reason),owner:"(main)"} ]
+            summary:hold_summary(.title; .hold_reason),owner:"(main)",
+            _repo:(.repo // null),_title:(.title // null)} ]
      + [ (.secondmate_current.records // [])[] as $m
          | ([ $m.decisions_open[]?
               | select(.source == "backlog" and .verb == "captain-hold")
               | select(($all_decisions == 1) or live_captain_call)
+              | .id as $did
+              | ([$m.queued[]? | select(.id == $did)][0] // {}) as $q
               | {id:($m.id + "/" + .id),key,verb,
                  summary:hold_summary((.summary // .id);
-                                      (.reason // "captain decision pending")),owner:$m.id} ]
+                                      (.reason // "captain decision pending")),owner:$m.id,
+                 _repo:($q.repo // null),_title:($q.title // .summary // null)} ]
             + [ $m.queued[]?
                 | select($all_decisions == 1 and .hold_kind == "captain")
                 | select(.id as $id
@@ -570,7 +617,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                          | index($id) | not)
                 | {id:($m.id + "/" + .id),key:.id,verb:"captain-hold",
                    summary:hold_summary((.title // .id);
-                                        (.hold_reason // "captain decision pending")),owner:$m.id} ])[] ]) as $decisions_all
+                                        (.hold_reason // "captain decision pending")),owner:$m.id,
+                   _repo:(.repo // null),_title:(.title // null)} ])[] ]) as $decisions_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and projected_deferred_hold) ]
@@ -665,17 +713,18 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            missing_verdicts:([$measured[].missing_verdicts] | add // 0),
            captain_omitted:([$measured[].captain_omitted] | add // 0),
            captain:[$measured[] as $h | $h.captain[]? | . + {owner:$h.owner}]}),
-      in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end),
+      in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end | map(del(._owner))),
       secondmates: (if $all_secondmates == 1 then $secondmates_all else $secondmates_all[:$secondmates_n] end),
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
         | {id, spawn_gen:(.spawn_gen // null), host:(.host // null), kind:(.reconcile_inventory.kind // null), ids:((.reconcile_inventory.ids // []) | map(select(type == "string")) | sort)} ],
-      decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
+      decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end | map(del(._repo, ._title))),
       landed: ($done | map({id, what:(.title | trunc(70)), what_full:(.title | tostring | gsub("\\s+"; " ")),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
       gates: ($return_catchup_gate
               + ($gates_all | newest_filed_first
-                 | if $all_queued == 1 then . else .[:$gates_n] end)),
+                 | if $all_queued == 1 then . else .[:$gates_n] end)
+              | map(del(._src))),
       reports: (if $all_reports == 1 then $reports_all else $reports_all[:$reports_n] end),
       recorded_prs: (if $all_recorded_prs == 1 then $recorded_prs_all else $recorded_prs_all[:$recorded_prs_n] end)
     }
@@ -683,6 +732,96 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            {unhealthy_endpoints:(if $all_unhealthy == 1 then $unhealthy_all else $unhealthy_all[:$unhealthy_n] end)}
          else {} end)
   | . + (if $include_prs == 1 then {candidate_prs:$candidate_prs} else {} end)
+  | . + (if $want_projects != 1 then {} else
+      def norm_name: tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "") | gsub("[\\s_]+"; "-");
+      def priority_num:
+        if type == "number" then .
+        elif type == "string" and test("^[0-9]+$") then tonumber
+        else null end;
+      ([ ($registered_projects[] | {name:., owner:"(main)"}),
+         (($snap.secondmate_current.registry.records // [])[] as $r
+          | ($r.projects // [])[] | {name:., owner:$r.id}) ]
+       | map(select((.name | type) == "string" and (.name | test("[^[:space:]]"))))
+       | group_by(.name | norm_name)
+       | map({name:.[0].name, key:(.[0].name | norm_name), owners:(map(.owner) | unique)})) as $reg
+      | (reduce (($snap.secondmate_current.registry.records // [])[]) as $r
+           ({}; .[$r.id] = ($r.projects // []))) as $home_projects
+      | def registered_match($candidate):
+          ($candidate | norm_name) as $k | [$reg[] | select(.key == $k) | .name][0];
+        def title_match($title):
+          if ($title | type) != "string" then null
+          else ($title | norm_name) as $t
+            | [$reg[] | .key as $k | ($k | length) as $n
+               | select(($t | startswith($k)) and ($t[$n:($n + 1)] | test("^[a-z0-9]") | not))]
+            | sort_by(-(.key | length)) | .[0].name
+          end;
+        def resolve_project($repo; $title; $owner):
+          if ($repo | type) == "string" and ($repo | test("[^[:space:]]")) then
+            {project:(registered_match($repo)
+                      // registered_match($repo | split("/") | .[-1])
+                      // ($repo | gsub("^\\s+|\\s+$"; ""))),
+             from:"repo"}
+          elif $owner != "(main)" and (($home_projects[$owner] // []) | length) == 1 then
+            {project:$home_projects[$owner][0], from:"home"}
+          elif title_match($title) != null then
+            {project:title_match($title), from:"title"}
+          else {project:"(unassigned)", from:null} end;
+        def next_status:
+          if (.unresolved_blocker_ids | length) > 0 then
+            {status:"blocked", why:bounded_blocker_note(70)}
+          elif .hold_until != null and .hold_until > $today then
+            {status:"dated", why:("until " + .hold_until)}
+          elif .hold_reason != null then
+            {status:"held",
+             why:((if .hold_bucket == "aged" and .hold_age_days != null
+                   then "captain hold, held \(.hold_age_days)d: " else "held: " end
+                   + .hold_reason) | trunc(80))}
+          else {status:"startable", why:"-"} end;
+        def next_order_key:
+          [(if .status == "startable" then 0 else 1 end),
+           (if .priority == null then 1 else 0 end), (.priority // 0),
+           (filed_epoch as $e | if $e == null then [1, 0] else [0, $e] end),
+           .id];
+      ([ $gates_all[] | select(._src != null)
+         | . as $g | ._src as $s
+         | resolve_project($s.repo; $s.title; $g.owner) as $p
+         | ($s | next_status) as $st
+         | {project:$p.project, rank:0, id:$g.id, title:$g.title, title_full:$g.title_full,
+            status:$st.status, why:$st.why, priority:($s.priority | priority_num),
+            filed:$g.filed, kind:$g.kind, owner:$g.owner, project_from:$p.from} ]) as $next_all
+      | ([ $decisions_all[]
+           | resolve_project(._repo; ._title; .owner) as $p
+           | {project:$p.project, id, summary, owner, project_from:$p.from} ]) as $pdecisions
+      | ([ $in_flight_all[]
+           | resolve_project(.repo; .name_full; ._owner) as $p
+           | {project:$p.project, id, name, name_full, state, owner:._owner, project_from:$p.from} ]) as $punderway
+      | ([ $next_all | group_by(.project)[]
+           | sort_by(next_order_key)
+           | to_entries | map(.value + {rank:(.key + 1)})[] ]) as $next_ranked
+      | ([ $reg[].name ] + [ ($next_ranked + $pdecisions + $punderway)[] | .project ] | unique) as $names
+      | ([ $names[] as $n
+           | ([$reg[] | select(.name == $n)][0]) as $r
+           | ([$next_ranked[] | select(.project == $n)]) as $pn
+           | ([$pdecisions[] | select(.project == $n)] | length) as $nd
+           | ([$punderway[] | select(.project == $n)] | length) as $nu
+           | ([$pn[] | select(.status == "startable")] | length) as $ns
+           | (($pn | length) - $ns) as $nw
+           | {project:$n, registered:($r != null),
+              owners:((($r.owners // []) + [($pn + [$pdecisions[], $punderway[]] | map(select(.project == $n)))[] | .owner]
+                       | unique | join(",")) | if . == "" then "-" else . end),
+              decisions:$nd, underway:$nu, startable:$ns, waiting:$nw,
+              _order:[(if $nd > 0 or $ns > 0 then 0 elif $nu > 0 or $nw > 0 then 1 else 2 end),
+                      -$nd, -$ns, -$nu, -$nw, (if $n == "(unassigned)" then 1 else 0 end),
+                      ($n | ascii_downcase)]} ]
+         | sort_by(._order) | map(del(._order))) as $summary
+      | ($summary | map(.project)) as $order
+      | def by_project_order: sort_by(.project as $p | ($order | index($p)));
+      {projects:{
+         summary:$summary,
+         decisions:($pdecisions | by_project_order),
+         underway:($punderway | by_project_order),
+         next:($next_ranked | by_project_order)}}
+    end)
   | . + (if $f_bodies then {bodies:[ $snap.backlog.records[] | select(.structured and (.state == "queued" or .state == "done")) | {id, body:((.body_excerpt // .raw // "-") | trunc(200))} ]} else {} end)
   | . + (if $f_paths then {paths:[ $snap.tasks[] | {id, worktree:(.paths.worktree.path // "-"), home:(.paths.home.path // "-"), status:.paths.status_log.path, report:.paths.report.path} ]} else {} end)
   | . + (if $f_actions then {actions:[ $snap.tasks[] | {id, watch:(.actions.watch // .actions.send // "-"), steer:(.actions.steer // .actions.send // "-")} ]} else {} end)
@@ -723,6 +862,15 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $all_unhealthy == 0 and ($unhealthy_all | length) > $unhealthy_n then {surface:("unhealthy_endpoints showing \($unhealthy_n) of \($unhealthy_all | length)"), reveal:"--all-unhealthy"} else empty end),
         (if $include_prs == 1 and $pr_repos_total > $pr_repos_shown then {surface:("PR repositories showing \($pr_repos_shown) of \($pr_repos_total)"), reveal:"--all-pr-repos"} else empty end),
         (if $include_prs == 1 and $pr_rows_capped > 0 then {surface:("candidate_prs showing \($candidate_prs | length) of at least \($pr_rows_min_total); capped in \($pr_rows_capped) repo(s)"), reveal:"raise FM_BEARINGS_PR_LIMIT"} else empty end),
+        (if $want_projects == 1 then
+           (($snap.secondmate_current.records // [])[] as $m
+            | if $m.provenance.selected != "structured-home" then
+                {surface:("secondmate " + $m.id + " queued work unavailable to the project drilldown"), reveal:"inspect the home ledger publication"}
+              else
+                ([($m.omitted // [])[] | select(.surface == "queued") | .count] | add // 0) as $n
+                | if $n > 0 then {surface:("secondmate " + $m.id + " queued omitted by its home summary bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_QUEUED in that home"} else empty end
+              end)
+         else empty end),
         (if $include_prs == 1 then empty else {surface:"live PR discovery + checks", reveal:"--include-prs"} end) ]) }
 ') || { echo "fm-bearings-snapshot: projection failed" >&2; exit 1; }
 

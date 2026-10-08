@@ -306,6 +306,27 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
   set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
   [ "$rc" -ne 0 ] || fail "a non-HTTPS Landed PR URL was accepted"
 
+  write_valid_payload "$data"
+  jq '.projects = [{"name":"sample","registered":true,"decisions":[],"underway":[],
+    "next":[{"id":"sample-blocked","title":"Blocked work","status":"blocked",
+      "reason":"blocked-by sample-prep","dispatchable":true}]}]' "$data" > "$data.tmp" \
+    && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a dispatchable project row that is not startable was accepted"
+
+  write_valid_payload "$data"
+  jq '.projects = [{"name":"sample","registered":true,"decisions":[],"underway":[],
+    "next":[{"id":"sample-next","title":"Next work","status":"soon",
+      "reason":"","dispatchable":false}]}]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a project row with an unknown status was accepted"
+
+  write_valid_payload "$data"
+  jq '.projects = [{"name":"sample","registered":true,"decisions":[],"next":[]}]' \
+    "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a project without its underway list was accepted"
+
   assert_absent "$board" "a refused payload still produced a board"
   pass "build refuses malformed payloads before touching the board"
 }
