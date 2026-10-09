@@ -94,6 +94,21 @@ tier_timeout() {  # <tier> <job>...
   printf '%s\n' "$first"
 }
 
+# Print "<variable><TAB><fallback runner>" for a job's runs-on expression, or
+# fail when it is anything but the one allowed shape: fromJSON over a
+# repository variable with a JSON-string hosted fallback. A literal runner
+# label would silently ignore the override variable.
+job_runner() {
+  ruby -ryaml -rjson -e '
+runs_on = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("runs-on")
+match = runs_on.to_s.match(/\A\$\{\{ fromJSON\(vars\.(FIRSTMATE_CI_[A-Z_]+) \|\| \x27(.+)\x27\) \}\}\z/)
+raise "not an overridable runs-on: #{runs_on.inspect}" unless match
+fallback = JSON.parse(match[2])
+raise "fallback must be one hosted runner label" unless fallback.is_a?(String)
+puts [match[1], fallback].join("\t")
+' "$CI_WORKFLOW" "$1"
+}
+
 # Print every job id in the workflow, one per line.
 workflow_jobs() {
   ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch("jobs").keys' "$CI_WORKFLOW"
@@ -249,7 +264,60 @@ RUBY
   pass "CI matrices cover every executable serial lane and canonical lint root exactly once"
 }
 
+# Runner contract: docs/fm-test-portable-shards.md "Runner override" owns it.
+# Unset variables keep every job on the GitHub-hosted runner it always used, so
+# forks that never set a variable are unaffected. Only the jobs not yet proven
+# on macOS (serial shards and real Herdr) sit behind the separate Linux variable.
+test_every_job_runner_is_overridable_with_hosted_defaults() {
+  local job got
+  for job in $(workflow_jobs); do
+    got=$(job_runner "$job") || fail "$job runs-on: could not resolve the runner"
+    case "$job" in
+      tests-portable-serial|tests-herdr)
+        [ "$got" = "$(printf 'FIRSTMATE_CI_LINUX_RUNNER\tubuntu-latest')" ] \
+          || fail "$job must use FIRSTMATE_CI_LINUX_RUNNER with an ubuntu-latest fallback, got $got" ;;
+      macos-stock-bash)
+        [ "$got" = "$(printf 'FIRSTMATE_CI_RUNNER\tmacos-latest')" ] \
+          || fail "$job must use FIRSTMATE_CI_RUNNER with a macos-latest fallback, got $got" ;;
+      *)
+        [ "$got" = "$(printf 'FIRSTMATE_CI_RUNNER\tubuntu-latest')" ] \
+          || fail "$job must use FIRSTMATE_CI_RUNNER with an ubuntu-latest fallback, got $got" ;;
+    esac
+  done
+  pass "every ci.yml job runner is a repository-variable override with its hosted default"
+}
+
+# The documented laptop value must parse as the label array runs-on expects.
+test_documented_laptop_override_is_a_label_array() {
+  ruby -rjson -e '
+value = JSON.parse(%q(["self-hosted","macOS","ARM64","mac-laptop-arm64"]))
+raise "not a label array" unless value.is_a?(Array) && value.all?(String)
+' || fail "the documented FIRSTMATE_CI_RUNNER value is not a JSON label array"
+  grep -qF '["self-hosted","macOS","ARM64","mac-laptop-arm64"]' "$ROOT/docs/fm-test-portable-shards.md" \
+    || fail "docs/fm-test-portable-shards.md must document the laptop FIRSTMATE_CI_RUNNER value"
+  pass "the documented laptop runner override is a valid JSON label array"
+}
+
+# Self-hosted hygiene: no job installs into the runner user's global npm prefix.
+test_npm_global_installs_use_a_job_scoped_prefix() {
+  local reported
+  reported=$(ruby -ryaml -e '
+YAML.load_file(ARGV[0]).fetch("jobs").each do |name, job|
+  steps = job.fetch("steps")
+  installs = steps.each_index.select { |i| steps[i]["run"].to_s.include?("npm install -g") }
+  next if installs.empty?
+  isolate = steps.index { |s| s["run"].to_s.include?("NPM_CONFIG_PREFIX=") }
+  puts name if isolate.nil? || isolate > installs.min
+end
+' "$CI_WORKFLOW") || fail "could not read ci.yml steps"
+  [ -z "$reported" ] || fail "these jobs run npm install -g before isolating the npm prefix:"$'\n'"$reported"
+  pass "every npm global install runs under a job-scoped prefix"
+}
+
 test_ci_matrices_match_executable_partitions
+test_every_job_runner_is_overridable_with_hosted_defaults
+test_documented_laptop_override_is_a_label_array
+test_npm_global_installs_use_a_job_scoped_prefix
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled
