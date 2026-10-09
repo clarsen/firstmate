@@ -1,0 +1,23 @@
+## step script
+set -eu
+# Keep "npm install -g" out of the runner user's own global prefix so
+# a self-hosted runner holds no state between jobs and concurrent
+# runner instances never share one.
+mkdir -p "$RUNNER_TEMP/npm"
+echo "NPM_CONFIG_PREFIX=$RUNNER_TEMP/npm" >> "$GITHUB_ENV"
+echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
+step rc=0
+## GITHUB_ENV
+NPM_CONFIG_PREFIX=$W/runner_temp/npm
+## GITHUB_PATH
+$W/runner_temp/npm/bin
+## user global prefix before: /opt/homebrew
+## npm prefix -g under step env: $W/runner_temp/npm
+
+added 1 package in 162ms
+## installed into:
+lrwxr-xr-x clarsen staff 44 B Fri Oct  9 08:21:43 2026 fm-prefix-probe ⇒ ../lib/node_modules/fm-prefix-probe/bin/p.sh
+## which: $W/runner_temp/npm/bin/fm-prefix-probe
+probe-ok
+└── (empty)
+

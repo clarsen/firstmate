@@ -1,0 +1,17 @@
+diff --git a/Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M4GKNZ98B1NNRZJCPVG01X4Q/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 3204903..7d009f1 100644
+--- a/Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M4GKNZ98B1NNRZJCPVG01X4Q/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -34,7 +34,7 @@ concurrency:
+ jobs:
+   lint:
+     name: Lint ${{ matrix.partition }}
+-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
++    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+     # Normal tier (see the timeout policy above).
+     timeout-minutes: 30
+     strategy:
+ok - CI matrices cover every executable serial lane and canonical lint root exactly once
+ok - every ci.yml job runner is a repository-variable override with its hosted default
+not ok - lint must run fork PRs on ubuntu-latest, got ["self-hosted","macOS","ARM64","mac-laptop-arm64"]
+rc=1

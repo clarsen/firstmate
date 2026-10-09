@@ -1,0 +1,12 @@
+$ sed -i "s/^harness=claude$/harness=pi/" m1   # old spelling, BSD sed
+sed: 1: "m1
+": invalid command code m
+rc=1 content=harness=claude
+$ sed -i.bak "s/^harness=claude$/harness=pi/" m2   # new spelling
+rc=0 content=harness=pi
+$ setsid sleep 1   # old
+(eval):4: command not found: setsid
+rc=127
+$ perl -MPOSIX=setsid -e "defined(setsid()) or exit 1; exec @ARGV" ps -o pid=,sid=,command= -p $$-ish   # new
+pid=33865 sid=     0 pgid=33865
+parent pgid=33856 rc=0
