@@ -22,6 +22,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Runner policy: every job's runs-on reads a repository variable as JSON and
+# falls back to the GitHub-hosted runner when it is unset. Fork pull requests
+# always get the hosted runner. docs/fm-test-portable-shards.md "Runner
+# override" owns the two variables, the fork rule, and the self-hosted hygiene rules.
+
 # Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the three
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
 # Each job comment identifies the tier implemented by its executable value.
@@ -29,7 +34,7 @@ concurrency:
 jobs:
   lint:
     name: Lint ${{ matrix.partition }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     strategy:
@@ -78,7 +83,7 @@ jobs:
   # and that the portable serial CI shards partition that serial lane exactly.
   test-coverage:
     name: Test coverage guard
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Fast tier: the coverage guard is a seconds-long local computation.
     timeout-minutes: 5
     steps:
@@ -90,7 +95,7 @@ jobs:
   # set only. Composition owner: bin/fm-test-run.sh (docs/fm-test-portable-shards.md).
   tests-portable-parallel-1:
     name: Behavior portable parallel 1
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -107,6 +112,15 @@ jobs:
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Isolate the npm global prefix
+        run: |
+          set -eu
+          # Keep "npm install -g" out of the runner user's own global prefix so
+          # a self-hosted runner holds no state between jobs and concurrent
+          # runner instances never share one.
+          mkdir -p "$RUNNER_TEMP/npm"
+          echo "NPM_CONFIG_PREFIX=$RUNNER_TEMP/npm" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi
         run: |
           set -eu
@@ -134,7 +148,7 @@ jobs:
 
   tests-portable-parallel-2:
     name: Behavior portable parallel 2
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -151,6 +165,15 @@ jobs:
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Isolate the npm global prefix
+        run: |
+          set -eu
+          # Keep "npm install -g" out of the runner user's own global prefix so
+          # a self-hosted runner holds no state between jobs and concurrent
+          # runner instances never share one.
+          mkdir -p "$RUNNER_TEMP/npm"
+          echo "NPM_CONFIG_PREFIX=$RUNNER_TEMP/npm" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi
         run: |
           set -eu
@@ -178,7 +201,7 @@ jobs:
   # whose "ofN" disagrees with it (docs/fm-test-portable-shards.md).
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     strategy:
@@ -208,6 +231,15 @@ jobs:
             exit 1
           }
           tmux -V
+      - name: Isolate the npm global prefix
+        run: |
+          set -eu
+          # Keep "npm install -g" out of the runner user's own global prefix so
+          # a self-hosted runner holds no state between jobs and concurrent
+          # runner instances never share one.
+          mkdir -p "$RUNNER_TEMP/npm"
+          echo "NPM_CONFIG_PREFIX=$RUNNER_TEMP/npm" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi for backlog-handoff delegation
         run: |
           set -eu
@@ -250,7 +282,7 @@ jobs:
   # the failure evidence and move the job to macOS rather than skip assertions.
   tests-herdr:
     name: Behavior tests (Herdr)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Heavy tier (see the timeout policy above): the last-resort job backstop.
     # The family-run step below owns the hang tripwire, so a wedged suite fails
     # there with the always() cleanup and timing upload still running.
@@ -371,7 +403,7 @@ jobs:
   # Aggregate per-lane timing into one summary artifact for critical-path review.
   tests-timing-aggregate:
     name: Behavior timing aggregate
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Fast tier: aggregation is seconds of work over lane artifacts.
     timeout-minutes: 5
     needs:
@@ -411,11 +443,20 @@ jobs:
 
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
-    runs-on: macos-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"macos-latest"') || 'macos-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Isolate the npm global prefix
+        run: |
+          set -eu
+          # Keep "npm install -g" out of the runner user's own global prefix so
+          # a self-hosted runner holds no state between jobs and concurrent
+          # runner instances never share one.
+          mkdir -p "$RUNNER_TEMP/npm"
+          echo "NPM_CONFIG_PREFIX=$RUNNER_TEMP/npm" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
       - name: Run snapshot consumers with stock Bash
         shell: /bin/bash {0}
         env:
@@ -505,7 +546,7 @@ jobs:
 
   invariants:
     name: Repo invariants
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Fast tier: the invariant checks are seconds-long file comparisons.
     timeout-minutes: 5
     steps:

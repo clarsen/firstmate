@@ -3514,7 +3514,7 @@ FM_HOME="$2" perl -MPOSIX=setsid -e '
   my @command = @ARGV;
   defined(my $pid = fork) or exit 1;
   exit 0 if $pid;
-  setsid() >= 0 or exit 1;
+  defined(setsid()) or exit 1;
   open STDIN, "<", "/dev/null" or exit 1;
   open STDOUT, ">", "/dev/null" or exit 1;
   open STDERR, ">", "/dev/null" or exit 1;
@@ -3756,7 +3756,7 @@ DETACHED_TRIGGER="$TMP_ROOT/detached-attached.trigger"
 pe_register "$HDETACHED" lavish detached-attached-src -- \
   "$BLOCKER" "$DETACHED_TRIGGER" "detached attached payload"
 FM_PROCEVENT_OWNER_LEASE_SECONDS=1 FM_PROCEVENT_OWNER_CHECK_SECONDS=1 FM_HOME="$HDETACHED" \
-  perl -MPOSIX=setsid -e 'setsid() >= 0 or exit 1; exec @ARGV' \
+  perl -MPOSIX=setsid -e 'defined(setsid()) or exit 1; exec @ARGV' \
     "$ROOT/bin/fm-procevent.sh" start detached-attached-src \
     > "$TMP_ROOT/detached-attached.out" 2>&1 &
 DETACHED_START_PID=$!
@@ -5170,7 +5170,8 @@ done
 [ ! -e "$drain_claim" ] || fail "the first generation of the draining fixture never exited"
 # Stand the first generation's claim back up on a live process so the re-arm
 # meets it still held, then release it partway through the confirm window.
-setsid sleep 60 &
+# Perl's setsid, not the util-linux binary, which macOS does not ship.
+perl -MPOSIX=setsid -e 'defined(setsid()) or exit 1; exec @ARGV' sleep 60 &
 drain_holder=$!
 # Read the identity only once the holder has exec'd sleep: mid-exec its cmdline
 # can read empty, and a pre-exec identity would never match the live holder.

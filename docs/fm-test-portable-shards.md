@@ -117,6 +117,45 @@ The layout uses fourteen long-lived Linux jobs (nine serial, two parallel, Herdr
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 
+## Runner override
+
+Every job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) reads its runner from a repository variable through `fromJSON`, and falls back to the GitHub-hosted runner it always used when the variable is unset.
+A fork or template user who sets nothing is unaffected.
+Set a variable under the repository's Actions variables, never in the workflow file.
+Pull requests from forks ignore both variables and always run on the hosted fallback, so code from outside the repository never reaches a self-hosted runner.
+Pushes to `main` and pull requests from branches of this repository follow the variables.
+
+| Variable | Jobs | Hosted fallback |
+|---|---|---|
+| `FIRSTMATE_CI_RUNNER` | lint, coverage guard, portable parallel 1 and 2, timing aggregate, repo invariants, stock macOS Bash | `ubuntu-latest`, and `macos-latest` for stock macOS Bash |
+| `FIRSTMATE_CI_LINUX_RUNNER` | portable serial shards, Herdr | `ubuntu-latest` |
+
+The value is a JSON runner label or label array.
+The captain's laptop (macOS arm64, three runner instances as the standard user `ghrunner`) uses `["self-hosted","macOS","ARM64","mac-laptop-arm64"]`.
+The runners are declared in the separate nix-config repository, not here.
+Stock macOS Bash follows `FIRSTMATE_CI_RUNNER`, so on the laptop it stops billing at the hosted macOS rate.
+
+The serial shards and Herdr have their own variable because they were not proven on macOS.
+Running the lanes on an Apple-silicon Mac on 2026-10-09 passed lint, the coverage guard, both parallel lanes, and serial shards 1, 2, 4, and 8.
+The remaining serial shards failed on this Mac for reasons that are not all macOS defects.
+Two were genuine Linux-only constructs in tests (GNU-only `sed -i` and the util-linux `setsid` binary), now fixed.
+Others depended on the runner's tools: a Node major that prints a typeless-module warning (the Pi extension tests assert silent output), a Git whose handling of an unknown `~user` hooks path differs from the hosted one, and live-harness guards that run wherever a real harness CLI is installed.
+A few watcher and listener scripts also timed out or failed on the laptop and have not been shown green there.
+Real Herdr was not run locally because its default-session tripwire would collide with a live fleet.
+Point `FIRSTMATE_CI_LINUX_RUNNER` at the laptop only after a trial run of those shards is green there, and keep the runner's Node, Git, and installed harnesses aligned with what the hosted image provides.
+Serial shards also assume no other stateful shard shares the machine, so give each runner instance its own home and temporary directory before running several at once.
+
+The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin` and `/opt/homebrew/bin`, so `npm` and `jq` must be installed in one of them on a self-hosted runner.
+
+Self-hosted hygiene:
+
+- Jobs keep their tools and caches under `RUNNER_TEMP`, which the runner empties for every job, and use a job-scoped npm global prefix there, so no job relies on or leaves runner-global state.
+- The runner user has no sudo and no access to the captain's keys, so a job can neither install system packages nor reach the captain's credentials.
+  Jobs must not need either.
+- A job that needs a tool the runner lacks fails with that missing requirement rather than falling back.
+
+Follow-ups outside this change: reduce the matrix itself, and skip CI for documentation-only changes.
+
 ## Local entry points
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns the local test policy and common entry points.
