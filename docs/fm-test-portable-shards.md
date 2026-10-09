@@ -122,6 +122,8 @@ The workflow retains per-PR supersession without cancelling main pushes or chang
 Every job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) reads its runner from a repository variable through `fromJSON`, and falls back to the GitHub-hosted runner it always used when the variable is unset.
 A fork or template user who sets nothing is unaffected.
 Set a variable under the repository's Actions variables, never in the workflow file.
+Pull requests from forks ignore both variables and always run on the hosted fallback, so code from outside the repository never reaches a self-hosted runner.
+Pushes to `main` and pull requests from branches of this repository follow the variables.
 
 | Variable | Jobs | Hosted fallback |
 |---|---|---|
@@ -147,7 +149,7 @@ The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin`
 
 Self-hosted hygiene:
 
-- Jobs keep their tools and caches under `RUNNER_TEMP`, including a job-scoped npm global prefix, and remove them in an `always()` step, so no job relies on or leaves runner-global state.
+- Jobs keep their tools and caches under `RUNNER_TEMP`, which the runner empties for every job, and use a job-scoped npm global prefix there, so no job relies on or leaves runner-global state.
 - The runner user has no sudo and no access to the captain's keys, so a job can neither install system packages nor reach the captain's credentials.
   Jobs must not need either.
 - A job that needs a tool the runner lacks fails with that missing requirement rather than falling back.

@@ -23,8 +23,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Runner policy: every job's runs-on reads a repository variable as JSON and
-# falls back to the GitHub-hosted runner when it is unset. docs/fm-test-portable-shards.md
-# "Runner override" owns the two variables and the self-hosted hygiene rules.
+# falls back to the GitHub-hosted runner when it is unset. Fork pull requests
+# always get the hosted runner. docs/fm-test-portable-shards.md "Runner
+# override" owns the two variables, the fork rule, and the self-hosted hygiene rules.
 
 # Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the three
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
@@ -33,7 +34,7 @@ concurrency:
 jobs:
   lint:
     name: Lint ${{ matrix.partition }}
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     strategy:
@@ -76,16 +77,13 @@ jobs:
             ${{ runner.temp }}/fm-lint/partition-${{ matrix.partition }}.tsv
             ${{ runner.temp }}/fm-lint/partition-${{ matrix.partition }}.roots.tsv
           if-no-files-found: warn
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/bin" "$RUNNER_TEMP/fm-lint"
 
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
   # and that the portable serial CI shards partition that serial lane exactly.
   test-coverage:
     name: Test coverage guard
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Fast tier: the coverage guard is a seconds-long local computation.
     timeout-minutes: 5
     steps:
@@ -97,7 +95,7 @@ jobs:
   # set only. Composition owner: bin/fm-test-run.sh (docs/fm-test-portable-shards.md).
   tests-portable-parallel-1:
     name: Behavior portable parallel 1
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -147,13 +145,10 @@ jobs:
           name: fm-test-timing-portable-parallel-1
           path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-parallel-1.json
           if-no-files-found: warn
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/bin" "$RUNNER_TEMP/npm" "$RUNNER_TEMP/fm-test"
 
   tests-portable-parallel-2:
     name: Behavior portable parallel 2
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -197,9 +192,6 @@ jobs:
           name: fm-test-timing-portable-parallel-2
           path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-parallel-2.json
           if-no-files-found: warn
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/bin" "$RUNNER_TEMP/npm" "$RUNNER_TEMP/fm-test"
 
   # Required portable serial remainder: watcher, lock, AFK, tmux, daemon,
   # ambiguous, and other stateful tests. Real Herdr stays in tests-herdr.
@@ -209,7 +201,7 @@ jobs:
   # whose "ofN" disagrees with it (docs/fm-test-portable-shards.md).
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     strategy:
@@ -283,9 +275,6 @@ jobs:
           name: fm-test-timing-portable-serial-${{ matrix.shard }}
           path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-serial-${{ matrix.shard }}.json
           if-no-files-found: warn
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/bin" "$RUNNER_TEMP/npm" "$RUNNER_TEMP/fm-test"
 
   # Required real-Herdr lane: pinned install, serial real-herdr-gated family,
   # hard-fail on "skip: herdr not found". Starts on Linux x86_64; if a genuine
@@ -293,7 +282,7 @@ jobs:
   # the failure evidence and move the job to macOS rather than skip assertions.
   tests-herdr:
     name: Behavior tests (Herdr)
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Heavy tier (see the timeout policy above): the last-resort job backstop.
     # The family-run step below owns the hang tripwire, so a wedged suite fails
     # there with the always() cleanup and timing upload still running.
@@ -410,14 +399,11 @@ jobs:
             ${{ runner.temp }}/fm-herdr/sessions-before.json
             ${{ runner.temp }}/fm-herdr/default-server.log
           if-no-files-found: warn
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/bin" "$RUNNER_TEMP/fm-herdr" "$RUNNER_TEMP/fm-test"
 
   # Aggregate per-lane timing into one summary artifact for critical-path review.
   tests-timing-aggregate:
     name: Behavior timing aggregate
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Fast tier: aggregation is seconds of work over lane artifacts.
     timeout-minutes: 5
     needs:
@@ -454,13 +440,10 @@ jobs:
           name: fm-test-timing-aggregate
           path: ${{ runner.temp }}/fm-test/fm-test-timing-aggregate.json
           if-no-files-found: warn
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/fm-test" "$RUNNER_TEMP/fm-test-aggregate"
 
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"macos-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"macos-latest"') || 'macos-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -560,13 +543,10 @@ jobs:
             echo "::error::expected 2 backend adapter-file bash 3.2 regressions, got $backend_count"
             exit 1
           }
-      - name: Remove job temp files
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/npm" "$RUNNER_TEMP/fm-shell-inventory"
 
   invariants:
     name: Repo invariants
-    runs-on: ${{ fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
     # Fast tier: the invariant checks are seconds-long file comparisons.
     timeout-minutes: 5
     steps:

@@ -94,19 +94,111 @@ tier_timeout() {  # <tier> <job>...
   printf '%s\n' "$first"
 }
 
-# Print "<variable><TAB><fallback runner>" for a job's runs-on expression, or
-# fail when it is anything but the one allowed shape: fromJSON over a
-# repository variable with a JSON-string hosted fallback. A literal runner
-# label would silently ignore the override variable.
+REPOSITORY=clarsen/firstmate
+# shellcheck disable=SC2089
+LAPTOP_RUNNER='["self-hosted","macOS","ARM64","mac-laptop-arm64"]'
+
+# Resolve a job's runs-on under one simulated event and print the runner as
+# JSON. Arguments after the head repository set repository variables as
+# NAME=VALUE. Only the expression constructs runs-on uses are resolved:
+# parentheses, ||, &&, ==, !=, string literals, context references, and
+# fromJSON, with GitHub's truthiness and short-circuit value semantics.
+resolve_runner() {  # <job> <event> <head-repo> [VAR=VALUE]...
+  ruby -ryaml -rjson - "$CI_WORKFLOW" "$REPOSITORY" "$@" <<'RUBY'
+workflow, repository, job, event, head_repo, *assignments = ARGV
+context = {
+  "github.event_name" => event,
+  "github.repository" => repository,
+  "github.event.pull_request.head.repo.full_name" => (event == "pull_request" ? head_repo : nil),
+}
+assignments.each do |a|
+  name, val = a.split("=", 2)
+  context["vars.#{name}"] = val
+end
+runs_on = YAML.load_file(workflow).fetch("jobs").fetch(job).fetch("runs-on")
+match = runs_on.is_a?(String) && runs_on.match(/\A\$\{\{(.+)\}\}\z/m)
+unless match
+  puts JSON.generate(runs_on)
+  exit
+end
+tokens = match[1].scan(/\s*(\x27(?:[^\x27]|\x27\x27)*\x27|\|\||&&|==|!=|[()]|[A-Za-z_][\w.-]*)/).flatten
+raise "unparsed runs-on: #{runs_on}" unless tokens.join.gsub(/\s/, "") == match[1].gsub(/\s/, "")
+truthy = ->(v) { !(v.nil? || v == false || v == "" || v == 0) }
+pos = 0
+peek = -> { tokens[pos] }
+take = ->(want = nil) do
+  t = tokens[pos]
+  raise "expected #{want}, got #{t.inspect}" if want && t != want
+  pos += 1
+  t
+end
+parse_or = nil
+primary = lambda do
+  t = take.call
+  if t == "("
+    v = parse_or.call
+    take.call(")")
+    v
+  elsif t.start_with?("\x27")
+    t[1..-2].gsub("\x27\x27", "\x27")
+  elsif peek.call == "("
+    raise "unsupported function #{t}" unless t == "fromJSON"
+    take.call("(")
+    arg = parse_or.call
+    take.call(")")
+    JSON.parse(arg.to_s)
+  else
+    raise "unresolvable context reference: #{t}" unless context.key?(t) || t.start_with?("vars.")
+    context[t]
+  end
+end
+comparison = lambda do
+  left = primary.call
+  while %w[== !=].include?(peek.call)
+    op = take.call
+    right = primary.call
+    left = (left == right) == (op == "==")
+  end
+  left
+end
+parse_and = lambda do
+  left = comparison.call
+  while peek.call == "&&"
+    take.call
+    right = comparison.call
+    left = truthy.call(left) ? right : left
+  end
+  left
+end
+parse_or = lambda do
+  left = parse_and.call
+  while peek.call == "||"
+    take.call
+    right = parse_and.call
+    left = truthy.call(left) ? left : right
+  end
+  left
+end
+result = parse_or.call
+raise "trailing tokens in runs-on: #{tokens[pos..].inspect}" unless pos == tokens.length
+puts JSON.generate(result)
+RUBY
+}
+
+# Print "<variable><TAB><hosted fallback>" for a job: the fallback is the
+# runner a main push gets with no variables set, and the variable is the one
+# repository variable that moves a main push onto the laptop runner.
 job_runner() {
-  ruby -ryaml -rjson -e '
-runs_on = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("runs-on")
-match = runs_on.to_s.match(/\A\$\{\{ fromJSON\(vars\.(FIRSTMATE_CI_[A-Z_]+) \|\| \x27(.+)\x27\) \}\}\z/)
-raise "not an overridable runs-on: #{runs_on.inspect}" unless match
-fallback = JSON.parse(match[2])
-raise "fallback must be one hosted runner label" unless fallback.is_a?(String)
-puts [match[1], fallback].join("\t")
-' "$CI_WORKFLOW" "$1"
+  local job=$1 fallback var found=
+  fallback=$(resolve_runner "$job" push "$REPOSITORY") || return 1
+  for var in FIRSTMATE_CI_RUNNER FIRSTMATE_CI_LINUX_RUNNER; do
+    if [ "$(resolve_runner "$job" push "$REPOSITORY" "$var=$LAPTOP_RUNNER")" = "$LAPTOP_RUNNER" ]; then
+      [ -z "$found" ] || { echo "$job follows both $found and $var" >&2; return 1; }
+      found=$var
+    fi
+  done
+  [ -n "$found" ] || { echo "$job ignores every runner variable" >&2; return 1; }
+  printf '%s\t%s\n' "$found" "$(printf '%s' "$fallback" | ruby -rjson -e 'v = JSON.parse(STDIN.read); raise "fallback must be one hosted runner label" unless v.is_a?(String); print v')"
 }
 
 # Print every job id in the workflow, one per line.
@@ -287,15 +379,24 @@ test_every_job_runner_is_overridable_with_hosted_defaults() {
   pass "every ci.yml job runner is a repository-variable override with its hosted default"
 }
 
-# The documented laptop value must parse as the label array runs-on expects.
-test_documented_laptop_override_is_a_label_array() {
-  ruby -rjson -e '
-value = JSON.parse(%q(["self-hosted","macOS","ARM64","mac-laptop-arm64"]))
-raise "not a label array" unless value.is_a?(Array) && value.all?(String)
-' || fail "the documented FIRSTMATE_CI_RUNNER value is not a JSON label array"
-  grep -qF '["self-hosted","macOS","ARM64","mac-laptop-arm64"]' "$ROOT/docs/fm-test-portable-shards.md" \
-    || fail "docs/fm-test-portable-shards.md must document the laptop FIRSTMATE_CI_RUNNER value"
-  pass "the documented laptop runner override is a valid JSON label array"
+# Fork rule: a fork pull request never reaches a self-hosted runner, even with
+# both variables set, while a same-repository pull request and a main push
+# follow the variable.
+test_fork_pull_requests_always_use_the_hosted_runner() {
+  local job runner var fallback got
+  for job in $(workflow_jobs); do
+    runner=$(job_runner "$job") || fail "$job runs-on: could not resolve the runner"
+    var=$(printf '%s\n' "$runner" | cut -f1)
+    fallback=$(printf '%s\n' "$runner" | cut -f2)
+    got=$(resolve_runner "$job" pull_request someone/firstmate \
+      "FIRSTMATE_CI_RUNNER=$LAPTOP_RUNNER" "FIRSTMATE_CI_LINUX_RUNNER=$LAPTOP_RUNNER") || fail "$job: could not resolve a fork PR runner"
+    [ "$got" = "\"$fallback\"" ] || fail "$job must run fork PRs on $fallback, got $got"
+    got=$(resolve_runner "$job" pull_request "$REPOSITORY" "$var=$LAPTOP_RUNNER") || fail "$job: could not resolve a same-repo PR runner"
+    [ "$got" = "$LAPTOP_RUNNER" ] || fail "$job must run same-repo PRs on $var, got $got"
+    got=$(resolve_runner "$job" push "$REPOSITORY" "$var=$LAPTOP_RUNNER") || fail "$job: could not resolve a push runner"
+    [ "$got" = "$LAPTOP_RUNNER" ] || fail "$job must run main pushes on $var, got $got"
+  done
+  pass "fork PRs stay hosted while same-repo PRs and main pushes follow the runner variable"
 }
 
 # Self-hosted hygiene: no job installs into the runner user's global npm prefix.
@@ -316,7 +417,7 @@ end
 
 test_ci_matrices_match_executable_partitions
 test_every_job_runner_is_overridable_with_hosted_defaults
-test_documented_laptop_override_is_a_label_array
+test_fork_pull_requests_always_use_the_hosted_runner
 test_npm_global_installs_use_a_job_scoped_prefix
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
