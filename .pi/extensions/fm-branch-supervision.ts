@@ -1681,10 +1681,17 @@ ${context.command}
     // getEntries() here loses the captain request that the next wake may answer.
     // Stage it verbatim and remember the future persisted index for turn_end's
     // duplicate suppression. Operational extension injections are not dialog.
-    // Custom-message runs carry no user prompt and are never captain dialog.
-    if (!("prompt" in event)) return;
+    // Custom-message runs are never captain dialog; an idle processing request
+    // opens its own run this way.
+    if (event.messageType === "custom") {
+      processingOpenedThisRun =
+        queuedProcessingContent !== null &&
+        isProcessingCustomMessage(event.message) &&
+        event.message.content === queuedProcessingContent;
+      return;
+    }
+    processingOpenedThisRun = false;
     const prompt = event.prompt;
-    processingOpenedThisRun = queuedProcessingContent !== null && prompt === queuedProcessingContent;
     const trimmed = prompt.trim();
     if (!trimmed || isOperationalUserText(trimmed)) return;
     const file = currentMainSession.getSessionFile() ?? "";
