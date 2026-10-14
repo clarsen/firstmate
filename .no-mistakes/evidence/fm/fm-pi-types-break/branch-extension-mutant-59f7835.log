@@ -1,0 +1,25 @@
+ok - fm_branch_outcomes and fm_branch_processed call headers match stock on Pi before and from 0.99
+ok - fm_branch_outcomes hides through ToolExecutionComponent while Calm-off and HTML export stay stock
+ok - the installed Pi still bounds the picker's list and ranks its search
+ok - branch owns accepted wakes with a stable prefix and deterministic verdict-driven delivery
+ok - a captain outcome reaches main's model as one typed, sequence-keyed processing request while routine notes stay plain
+ok - requested and unsolicited healthy outcomes keep distinct delivery and event ownership
+ok - captain outcomes are exact and exactly once across crash, reload, busy main, compaction, and an unrelated assistant response
+ok - a captain outcome opens one sequence-keyed processing turn, survives empty and unrelated answers, is re-presented at run end and session start, and closes only on its acknowledgement
+ok - Pi: an abbreviated processing request points to the full outcome and instructs main to read it first
+ok - Pi: a marker-less >1 MiB backlog is presented oldest first in bounded requests and continues after batch acknowledgement
+ok - an unprocessed captain row the store lists without its age is reported to main, never formatted undated, and stays unprocessed until the store is healthy
+ok - scopeForUnreadWake excludes every main-only class without vetoing eligible task-local rows, and writes the eligible snapshot
+ok - second-mate signal rows route by their new span while crewmate and stale routing stay unchanged
+ok - branch prompt_cache_key is stable per home across sessions and distinct between homes
+ok - branch default-on eligibility (task-scoped, heartbeat, legacy flag ignored) binds and a broken branch rejects to watcher fallback
+not ok - the away posture must park main and present after archive: file:///Users/clarsen/Tmp/fm-mut.NSUSB9/[eval1]:117
+if (!aborted) throw new Error("a dedicated processing turn with history was not aborted under the record");
+                    ^
+
+Error: a dedicated processing turn with history was not aborted under the record
+    at file:///Users/clarsen/Tmp/fm-mut.NSUSB9/[eval1]:117:21
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v26.10.0: expected exit 0, got 1
+exit=1

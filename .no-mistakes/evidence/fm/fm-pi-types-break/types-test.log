@@ -1,0 +1,9 @@
+=== target d0c1e32 ===
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 1.2.0
+exit=0
+=== base 6e72992 ===
+../../../../tmp/fm-pi-primary-types.LhLbxq/fm-branch-supervision.ts(1684,26): error TS2339: Property 'prompt' does not exist on type 'BeforeAgentStartEvent'.
+  Property 'prompt' does not exist on type 'BeforeAgentStartCustomEvent'.
+../../../../tmp/fm-pi-primary-types.LhLbxq/fm-primary-pi-watch.ts(1203,35): error TS2339: Property 'prompt' does not exist on type 'BeforeAgentStartEvent'.
+  Property 'prompt' does not exist on type 'BeforeAgentStartCustomEvent'.
+exit=1

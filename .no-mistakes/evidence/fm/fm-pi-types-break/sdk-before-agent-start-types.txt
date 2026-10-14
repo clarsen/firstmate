@@ -1,0 +1,40 @@
+720:interface BeforeAgentStartEventBase {
+721-    type: "before_agent_start";
+722-    /** The current system prompt, rendered from systemPromptOptions and earlier handler changes. */
+723-    readonly systemPrompt: string;
+724-    /** Mutable prompt sections. Later handlers observe mutations made by earlier handlers. */
+725-    systemPromptOptions: NormalizedBuildSystemPromptOptions;
+726-}
+727-/** A run started by a submitted prompt, RPC prompt, or `pi.sendUserMessage()`. */
+728:export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
+729-    messageType: "user";
+730-    /** The raw user prompt text (after expansion). */
+731-    prompt: string;
+732-    /** Images attached to the user prompt, if any. */
+733-    images?: ImageContent[];
+734-}
+735-/** A run started by `pi.sendMessage(..., { triggerTurn: true })` while idle. */
+736:export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
+737-    messageType: "custom";
+738-    /** The custom message that starts the run. */
+739-    message: CustomMessage;
+740-}
+741-/** Fired before a run starts from a user message or an idle custom message with `triggerTurn`. */
+742:export type BeforeAgentStartEvent = BeforeAgentStartUserEvent | BeforeAgentStartCustomEvent;
+743-/** Fired when an agent loop starts */
+744-export interface AgentStartEvent {
+745-    type: "agent_start";
+746-}
+747-/** Fired when an agent loop ends */
+748-export interface AgentEndEvent {
+749-    type: "agent_end";
+750-    messages: AgentMessage[];
+751-}
+752-export type AgentActivityOutcome = "completed" | "aborted" | "error";
+753-export interface CustomEntryDraft {
+754-    type: "custom";
+--
+1081:export type ExtensionEvent = ProjectTrustEvent | ResourcesDiscoverEvent | McpServersChangeEvent | SessionEvent | ContextEvent | ContextWithSystemEvent | CacheWarmingDecisionEvent | BeforeProviderRequestEvent | BeforeProviderHeadersEvent | AfterProviderResponseEvent | ProviderStreamEvent | BeforeAgentStartEvent | AgentStartEvent | AgentEndEvent | AgentBeforeSettleEvent | AgentSettledEvent | UIPromptStartEvent | UIPromptEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolExecutionEndEvent | ModelSelectEvent | ThinkingLevelSelectEvent | UserBashEvent | InputEvent | ToolCallEvent | ToolResultEvent;
+1082-export interface ContextEventResult {
+1083-    messages?: AgentMessage[];
+1084-}
