@@ -1,0 +1,20 @@
+== <head> of data/gate-tagged/decision-page.html (first lines)
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="lavish-project" content="ebookwatch" />
+<title>Captain's call</title>
+<style>
+lavish-project tag count: 1
+== <head> of data/gate-untagged/decision-page.html (first lines)
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Captain's call</title>
+<style>
+/* ============================================================
+lavish-project tag count: 0

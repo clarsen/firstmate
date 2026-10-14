@@ -1,0 +1,8 @@
+tagged page DOM:
+result: "{\"meta\":\"ebookwatch\",\"visibleTextHasEbookwatchTag\":false,\"radios\":2}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+untagged page DOM:
+result: "{\"meta\":null,\"radios\":2}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

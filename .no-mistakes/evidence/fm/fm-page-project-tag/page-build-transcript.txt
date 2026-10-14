@@ -1,0 +1,38 @@
+$ fm-bearings-board.sh page tagged.json --label gate-tagged
+page: /Users/clarsen/tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html
+session:
+  file: /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html
+  url: "http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/9f155225689ac66b"
+  status: opened
+next_step: "Do not respond to the user just yet. Now you must run `lavish-axi poll /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html`. This command long-polls until the user sends feedback, ends the session, or leaves every review window disconnected past the reconnect grace period, and it stays silent the whole time - that is normal, never kill it. Layout issues the browser detects do not return this poll; they wait in the user's Layout issues inbox until the user queues them, then arrive as an ordinary tag \"layout-warnings\" prompt. Do not pass --timeout-ms during normal agent use. Keep the poll in the foreground by default and let it return the feedback directly to the agent. A background poll is allowed only through a harness-native tracked background-job facility whose completion result is guaranteed to resume or notify the same agent. Never use `nohup`, shell `&`, `disown`, redirected fire-and-forget processes, or a detached terminal without an explicit verified callback merely to keep polling alive. If the harness has no completion-aware background facility, use the foreground poll or first wire a verified wake callback into the surrounding supervisor. Do not tell the user the artifact is being monitored until that wake path is live. If the poll gets killed or times out before feedback arrives, re-run it - feedback remains queued until delivery. Poll delivery consumes the response, so read it completely. If it returns browser_disconnected, the review window stayed disconnected past its reconnect grace period but the session remains resumable; ask the user whether to reopen or end it, and do neither uninvited. After applying feedback, run `lavish-axi poll /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html --agent-reply \"<message for the user>\"` without --timeout-ms to show a concise response in Lavish Editor and wait for more feedback. Keep the reply concise. Only when a longer reply is genuinely necessary, use Markdown structure - blank-line paragraphs, `- ` / `1. ` lists, `## ` headings - so it renders scannably instead of a wall of text, and pass that body with `--agent-reply-file <path>` (`-` reads stdin) so newlines survive quoting. The Conversation panel's Markdown subset is in `lavish-axi poll --help` and README. If the user ends the session, stop polling and do not reopen it by re-running `lavish-axi /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html` unless the user asks for further review or something genuinely important needs their visual attention - deliver routine updates directly in this conversation instead. When reopening is warranted, run `lavish-axi /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html --reopen`."
+session: live
+link: http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/9f155225689ac66b
+served: /Users/clarsen/tmp/fm-lab.YUB15y/data/gate-tagged/decision-page.html
+bound: lavish-9f155225689ac66b
+armed: lavish-9f155225689ac66b
+rc=0
+$ fm-bearings-board.sh page untagged.json --label gate-untagged
+page: /Users/clarsen/tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html
+session:
+  file: /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html
+  url: "http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/1077ae4e4c28d148"
+  status: opened
+next_step: "Do not respond to the user just yet. Now you must run `lavish-axi poll /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html`. This command long-polls until the user sends feedback, ends the session, or leaves every review window disconnected past the reconnect grace period, and it stays silent the whole time - that is normal, never kill it. Layout issues the browser detects do not return this poll; they wait in the user's Layout issues inbox until the user queues them, then arrive as an ordinary tag \"layout-warnings\" prompt. Do not pass --timeout-ms during normal agent use. Keep the poll in the foreground by default and let it return the feedback directly to the agent. A background poll is allowed only through a harness-native tracked background-job facility whose completion result is guaranteed to resume or notify the same agent. Never use `nohup`, shell `&`, `disown`, redirected fire-and-forget processes, or a detached terminal without an explicit verified callback merely to keep polling alive. If the harness has no completion-aware background facility, use the foreground poll or first wire a verified wake callback into the surrounding supervisor. Do not tell the user the artifact is being monitored until that wake path is live. If the poll gets killed or times out before feedback arrives, re-run it - feedback remains queued until delivery. Poll delivery consumes the response, so read it completely. If it returns browser_disconnected, the review window stayed disconnected past its reconnect grace period but the session remains resumable; ask the user whether to reopen or end it, and do neither uninvited. After applying feedback, run `lavish-axi poll /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html --agent-reply \"<message for the user>\"` without --timeout-ms to show a concise response in Lavish Editor and wait for more feedback. Keep the reply concise. Only when a longer reply is genuinely necessary, use Markdown structure - blank-line paragraphs, `- ` / `1. ` lists, `## ` headings - so it renders scannably instead of a wall of text, and pass that body with `--agent-reply-file <path>` (`-` reads stdin) so newlines survive quoting. The Conversation panel's Markdown subset is in `lavish-axi poll --help` and README. If the user ends the session, stop polling and do not reopen it by re-running `lavish-axi /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html` unless the user asks for further review or something genuinely important needs their visual attention - deliver routine updates directly in this conversation instead. When reopening is warranted, run `lavish-axi /Users/clarsen/Tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html --reopen`."
+session: live
+link: http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/1077ae4e4c28d148
+served: /Users/clarsen/tmp/fm-lab.YUB15y/data/gate-untagged/decision-page.html
+bound: lavish-1077ae4e4c28d148
+armed: lavish-1077ae4e4c28d148
+rc=0
+$ page with project="two words"
+fm-bearings-board: page data does not satisfy fm-decision-page.v1: /Users/clarsen/tmp/fm-lab.YUB15y/bad.json
+rc=1
+$ page with project="<x>\"y"
+fm-bearings-board: page data does not satisfy fm-decision-page.v1: /Users/clarsen/tmp/fm-lab.YUB15y/bad.json
+rc=1
+$ page with project=""
+fm-bearings-board: page data does not satisfy fm-decision-page.v1: /Users/clarsen/tmp/fm-lab.YUB15y/bad.json
+rc=1
+$ page with project=7
+fm-bearings-board: page data does not satisfy fm-decision-page.v1: /Users/clarsen/tmp/fm-lab.YUB15y/bad.json
+rc=1
