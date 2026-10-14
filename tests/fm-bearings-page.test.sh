@@ -159,6 +159,32 @@ write_test_mp4() {  # <path>
   printf '\x00\x00\x00\x14ftypisom\x00\x00\x00\x00isom' > "$1"
 }
 
+test_page_writes_the_project_meta_tag_only_when_given() {
+  local home data page rc out
+  home=$(make_home project-meta)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+
+  write_valid_payload "$data"
+  run_page "$home" "$data" --label "$LABEL" >/dev/null 2>&1 || fail "a payload without project was refused"
+  assert_not_contains "$(cat "$page")" 'lavish-project' "an untagged payload still wrote a project meta tag"
+  assert_not_contains "$(cat "$page")" '__FM_DECISION_PAGE_PROJECT_META__' "the project meta slot survived in the page"
+
+  jq '.project = "ebookwatch"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  run_page "$home" "$data" --label "$LABEL" >/dev/null 2>&1 || fail "a payload with project was refused"
+  assert_contains "$(sed -n '/<head>/,/<\/head>/p' "$page")" '<meta name="lavish-project" content="ebookwatch" />' \
+    "the project meta tag is missing from the page head"
+  [ "$(grep -c 'name="lavish-project"' "$page")" -eq 1 ] || fail "the project meta tag was written more than once"
+
+  for bad in '""' '"two words"' '"a\"b"' '"<x>"' '5'; do
+    jq --argjson v "$bad" '.project = $v' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+    set +e; out=$(run_page "$home" "$data" --label "$LABEL" 2>&1); rc=$?; set -e
+    [ "$rc" -ne 0 ] || fail "an invalid project $bad was accepted"
+    assert_contains "$out" "fm-decision-page.v1" "the project refusal did not name the contract: $out"
+  done
+  pass "page writes the project meta tag only when given and refuses an invalid project"
+}
+
 test_page_path_is_label_scoped() {
   local home
   home=$(make_home path)
@@ -630,6 +656,7 @@ test_page_refuses_an_oversized_video_file() {
 }
 
 test_page_path_is_label_scoped
+test_page_writes_the_project_meta_tag_only_when_given
 test_page_refuses_malformed_payloads_before_touching_the_page
 test_page_refuses_a_page_that_does_not_render_its_controls
 test_page_renders_the_right_radio_groups_and_answer_keys

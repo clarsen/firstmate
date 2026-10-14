@@ -85,6 +85,12 @@
 #   title       non-empty string: the page <title> and header
 #   eyebrow     optional string: the small label above the title
 #   lead        optional string: intro copy under the title
+#   project     optional slug, 1-128 chars of [A-Za-z0-9._-]: the project the
+#               page is about. When present the built page carries
+#               `<meta name="lavish-project" content="<project>">` in its
+#               <head> (HTML-escaped) so a page index can group the page by
+#               project; when absent no tag is written and the page groups by
+#               location. A page spanning several projects omits it.
 #   questions   non-empty array, each:
 #     key           slug, 1-128 chars of [A-Za-z0-9._-]: the answer's question id.
 #                   bin/fm-captain-hold.sh binds this source any-origin, so a
@@ -251,6 +257,7 @@ BOARD_SCHEMA=fm-bearings-board.v1
 
 PAGE_TEMPLATE="${FM_BEARINGS_PAGE_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/page-template.html}"
 PAGE_PLACEHOLDER='__FM_DECISION_PAGE_DATA__'
+PROJECT_META_PLACEHOLDER='__FM_DECISION_PAGE_PROJECT_META__'
 PAGE_SCHEMA=fm-decision-page.v1
 RENDER_HARNESS="${FM_BEARINGS_PAGE_RENDER_HARNESS:-$SCRIPT_DIR/fm-bearings-page-render.mjs}"
 
@@ -431,6 +438,7 @@ validate_page_payload() {  # <data.json>
     and (.title | nonempty_string)
     and (optional_string("eyebrow"))
     and (optional_string("lead"))
+    and ((has("project") | not) or (.project | slug(128)))
     and (.questions | type == "array" and length > 0)
     and ([.questions[] | question] | all)
     and (([.questions[].key] | unique | length) == (.questions | length))
@@ -939,7 +947,7 @@ command_build() {
 }
 
 command_page() {
-  local data=${1-} label='' page assets_dir stage_assets='' retired='' tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
+  local data=${1-} label='' project page assets_dir stage_assets='' retired='' tmp tmp2='' resolved='' sid extracted pre_reopen_owner link_url
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -960,6 +968,8 @@ command_page() {
   [ -f "$PAGE_TEMPLATE" ] && [ ! -L "$PAGE_TEMPLATE" ] || fail "page template is missing: $PAGE_TEMPLATE"
   [ "$(grep -cxF "$PAGE_PLACEHOLDER" "$PAGE_TEMPLATE")" -eq 1 ] \
     || fail "page template does not carry exactly one data slot: $PAGE_TEMPLATE"
+  [ "$(grep -cxF "$PROJECT_META_PLACEHOLDER" "$PAGE_TEMPLATE")" -eq 1 ] \
+    || fail "page template does not carry exactly one project meta slot: $PAGE_TEMPLATE"
 
   page=$(page_path "$label")
   (umask 077; mkdir -p "${page%/*}") || fail "cannot create ${page%/*}"
@@ -989,9 +999,14 @@ command_page() {
   # or argv, whose size limits an embedded photo would exceed. `<` never
   # appears in JSON syntax outside strings, so escaping every occurrence
   # keeps the payload valid JSON while making </script> inert.
-  if ! FM_PAGE_PLACEHOLDER="$PAGE_PLACEHOLDER" perl -pe '
-      BEGIN { my $f = shift @ARGV; open my $fh, "<", $f or die "$f: $!\n"; local $/; $json = <$fh>; chomp $json; $json =~ s/</\\u003c/g }
-      s/^\Q$ENV{FM_PAGE_PLACEHOLDER}\E$/$json/' "$data" "$PAGE_TEMPLATE" > "$tmp"; then
+  # The project meta slot becomes the tag for a payload `project`, or
+  # nothing, so an untagged page groups by location.
+  project=$(jq -r '.project // empty' "$data") || fail "cannot read the page project"
+  if ! FM_PAGE_PLACEHOLDER="$PAGE_PLACEHOLDER" FM_PROJECT_PLACEHOLDER="$PROJECT_META_PLACEHOLDER" FM_PAGE_PROJECT="$project" perl -ne '
+      BEGIN { my $f = shift @ARGV; open my $fh, "<", $f or die "$f: $!\n"; local $/; $json = <$fh>; chomp $json; $json =~ s/</\\u003c/g;
+              $meta = ""; if (length $ENV{FM_PAGE_PROJECT}) { my $p = $ENV{FM_PAGE_PROJECT}; $p =~ s/&/&amp;/g; $p =~ s/</&lt;/g; $p =~ s/>/&gt;/g; $p =~ s/"/&quot;/g; $meta = "<meta name=\"lavish-project\" content=\"$p\" />\n" } }
+      if ($_ eq "$ENV{FM_PROJECT_PLACEHOLDER}\n") { print $meta; next }
+      s/^\Q$ENV{FM_PAGE_PLACEHOLDER}\E$/$json/; print' "$data" "$PAGE_TEMPLATE" > "$tmp"; then
     fail "cannot inject the page data"
   fi
   if grep -qxF "$PAGE_PLACEHOLDER" "$tmp"; then
