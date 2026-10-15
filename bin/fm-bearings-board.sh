@@ -646,7 +646,7 @@ await_source_owner() {  # <source-id>
 finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
   local kind=$1 file=$2 sid=$3 pre_reopen_owner=$4 link_url=$5 owner version
   if [ "$LAVISH_SESSION_REOPENED" = 1 ]; then
-    "$SCRIPT_DIR/fm-procevent-lavish.sh" retire "$file" >/dev/null \
+    "$SCRIPT_DIR/fm-procevent-lavish.sh" retire "$file" --keep-session >/dev/null \
       || fail "cannot retire the pre-reopen source generation (observed owner: ${pre_reopen_owner:-none})"
   fi
   if [ -n "$link_url" ]; then

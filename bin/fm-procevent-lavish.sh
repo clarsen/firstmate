@@ -11,7 +11,7 @@
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh canonical-path <artifact.html>
-#   fm-procevent-lavish.sh retire <artifact.html>
+#   fm-procevent-lavish.sh retire <artifact.html> [--keep-session]
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
 #   fm-procevent-lavish.sh deliver-reply poll <artifact.html> --agent-reply-file <path>
 #
@@ -99,6 +99,18 @@
 # This is a routing lookup before the blocking call, not presence polling or a
 # second route record. Ambient/configured addresses must not retarget a reply.
 # An unreadable or missing session stops before the staged reply is consumed.
+#
+# retire     Retire the artifact's process-event source, then end its Lavish
+#            session as the agent (`lavish-axi end`) so a finished decision
+#            page reads as finished instead of lingering as a live session; a
+#            plain reopen still works later. The source retirement comes first
+#            and decides the exit status: ending the session is best effort, so
+#            an already-ended, unknown, or unreachable session (or a missing
+#            lavish-axi) is reported as `session-end-skipped:` and never an
+#            error, while success prints `session-ended:`. `--keep-session`
+#            retires only the source and leaves the session open; the board
+#            reopen path in fm-bearings-board.sh uses it so a reopened board is
+#            never ended by the retirement of its previous generation.
 #
 # `answers` is this adapter's half of the generic keyed-answer contract in
 # bin/fm-procevent.sh. It reports what the captain actually chose, as
@@ -315,10 +327,31 @@ cmd_deliver_reply() {
 }
 
 cmd_retire() {
-  local artifact=${1-} id
+  local artifact='' keep_session=0 id real
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --keep-session) keep_session=1; shift ;;
+      --*) usage ;;
+      *) [ -z "$artifact" ] || usage; artifact=$1; shift ;;
+    esac
+  done
   [ -n "$artifact" ] || usage
   id=$(cmd_source_id "$artifact") || exit 1
-  "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
+  "$SCRIPT_DIR/fm-procevent.sh" retire "$id" || exit $?
+  [ "$keep_session" = 0 ] || return 0
+  # The source is retired; now end the Lavish session as the agent so the page
+  # reads as finished instead of lingering as a live session. Best effort: an
+  # already-ended, unknown, or unreachable session never fails the retirement.
+  if ! command -v lavish-axi >/dev/null 2>&1; then
+    printf 'session-end-skipped: lavish-axi is not installed\n'
+    return 0
+  fi
+  real=$(lavish_canonical_path "$artifact") || real=$artifact
+  if (apply_session_host "$real" && lavish-axi end "$real") >/dev/null 2>&1; then
+    printf 'session-ended: %s\n' "$real"
+  else
+    printf 'session-end-skipped: no open Lavish session ended for %s\n' "$real"
+  fi
 }
 
 # The bounded quiet retry described in the header. The bound is a constant
