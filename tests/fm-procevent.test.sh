@@ -1514,7 +1514,6 @@ cat > "$LAVISH_SCRIPTED_BIN/lavish-axi" <<'SH'
 # word repeats forever. `interrupt` is the exact transient response the server
 # returns while the board's marks stay available.
 [ "${1-}" != --version ] || { printf '0.1.79\n'; exit 0; }
-[ "${1-}" != end ] || exit 0
 n=$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s\n' "$n" > "$LAVISH_COUNT"
@@ -4944,7 +4943,7 @@ set -e
   || fail "re-arm over a live earlier listener failed ($live_rc): $(cat "$LIVE/arm2.err")"
 assert_contains "$(cat "$LIVE/arm2.out")" "still-listening: $live_id" \
   "re-arm did not say the earlier listener is still serving the board"
-assert_contains "$(cat "$LIVE/arm2.out")" "retired and armed again" \
+assert_contains "$(cat "$LIVE/arm2.out")" "retire <artifact> --keep-session and a fresh arm" \
   "re-arm did not say how the new registration takes effect"
 assert_not_contains "$(cat "$LIVE/arm2.out")" "armed: $live_id" \
   "re-arm reported ready for a registration whose own listener is not running"

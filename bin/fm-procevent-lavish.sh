@@ -302,7 +302,7 @@ cmd_arm() {
     printf 'still-listening: %s\n' "$id"
     printf 'artifact: %s\n' "$real"
     [ -z "$task" ] || printf 'owner-task: %s\n' "$task"
-    printf 'note: an earlier listener is still live and serving this board; this registration takes effect only after the source is retired and armed again\n'
+    printf 'note: an earlier listener is still live and serving this board; this registration takes effect only after fm-procevent-lavish.sh retire <artifact> --keep-session and a fresh arm\n'
     exit 0
   fi
   if [ "$listening" -ne 0 ]; then
