@@ -681,7 +681,17 @@ cat > "$LAVISH_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
 # Stand-in for `lavish-axi poll <file>` around a human `Send & End`: the final
 # feedback is delivered exactly once carrying session_ended, and every later
-# poll returns an empty ended session immediately.
+# poll returns an empty ended session immediately. `end` records the call and
+# answers per LAVISH_END_MODE (ok, already-ended, or fail).
+if [ "${1-}" = end ]; then
+  printf '%s\n' "$2" >> "$LAVISH_END_LOG"
+  case "${LAVISH_END_MODE:-ok}" in
+    ok) printf 'session:\n  status: ended\n  ended_by: agent\n' ;;
+    already-ended) printf 'session:\n  status: ended\n  ended_by: user\n' ;;
+    *) printf 'error: boom\n' >&2; exit 1 ;;
+  esac
+  exit 0
+fi
 n=$(cat "$LAVISH_POLL_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s\n' "$n" > "$LAVISH_POLL_COUNT"
@@ -717,6 +727,38 @@ out=$(PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh"
 assert_contains "$out" "retired: $lavish_id" "explicit adapter retirement stays supported after automatic retirement"
 pass "one Send & End yields exactly one captured result, automatic retirement, and no recurring poll"
 
+# --- retire also ends the Lavish session as the agent -------------------------
+# The defect: retire only retired the process-event source, so the decision page's
+# Lavish session stayed open and kept showing as live. Retire now ends the
+# session too, tolerating an already-ended session and a failing lavish-axi.
+LAVISH_END_LOG="$TMP_ROOT/lavish-end-log"
+export LAVISH_END_LOG
+END_ART="$TMP_ROOT/end-review.html"
+printf '<h1>end</h1>\n' > "$END_ART"
+lavish_session "$END_ART"
+END_REAL=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$END_ART")
+end_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$END_ART")
+for mode in ok already-ended fail; do
+  : > "$LAVISH_END_LOG"
+  PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$END_ART" >/dev/null
+  out=$(LAVISH_END_MODE=$mode PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh" retire "$END_ART") \
+    || fail "retire exited nonzero with lavish-axi end mode $mode"
+  assert_contains "$out" "retired: $end_id" "retire still retires the source with end mode $mode"
+  assert_absent "$HLT/state/procevent/$end_id.source" "the source is retired with end mode $mode"
+  [ "$(cat "$LAVISH_END_LOG")" = "$END_REAL" ] \
+    || fail "retire did not end the session once with end mode $mode: $(cat "$LAVISH_END_LOG")"
+  case "$mode" in
+    fail) assert_contains "$out" "session-end-skipped:" "a failing lavish-axi end is reported, not fatal" ;;
+    *) assert_contains "$out" "session-ended: $END_REAL" "retire reports the ended session with end mode $mode" ;;
+  esac
+done
+: > "$LAVISH_END_LOG"
+PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$END_ART" >/dev/null
+out=$(PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh" retire "$END_ART" --keep-session)
+assert_contains "$out" "retired: $end_id" "--keep-session still retires the source"
+[ ! -s "$LAVISH_END_LOG" ] || fail "--keep-session ended the session: $(cat "$LAVISH_END_LOG")"
+pass "retire ends the Lavish session, tolerates an ended session and a failing lavish-axi, and --keep-session leaves it open"
+
 # --- end-user-aligned regression: a board reached through another letter case --
 # The defect: on a case-insensitive volume a board opened through a path whose
 # letter case differs from the on-disk name (TMPDIR=/Users/x/tmp for an on-disk
@@ -738,6 +780,7 @@ else
   CASE_BIN=$(fm_fakebin "$TMP_ROOT/lavish-case-stub")
   cat > "$CASE_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 printf 'session:\n  status: feedback\nfeedback[1]{text}:\n  polled %s\n' "$*"
 SH
   chmod +x "$CASE_BIN/lavish-axi"
@@ -771,6 +814,7 @@ HEMPTY="$TMP_ROOT/hempty"; new_home "$HEMPTY"
 EMPTY_BIN=$(fm_fakebin "$TMP_ROOT/lavish-empty-stub")
 cat > "$EMPTY_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 # Stand-in for `lavish-axi poll <file>` when the captain closes a board he said
 # nothing on: an ended session carrying no queued content at all.
 printf 'session:\n  file: /quiet.html\n  status: ended\n  ended_by: user\n'
@@ -822,6 +866,7 @@ mkdir -p "$MULTI_ROOT"
 export MULTI_ROOT
 cat > "$MULTI_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 set -eu
 [ "${1-}" != --version ] || { printf '0.1.79\n'; exit 0; }
 n=$(cat "$MULTI_ROOT/count" 2>/dev/null || echo 0)
@@ -1022,6 +1067,7 @@ ORPHAN_TRIGGER="$TMP_ROOT/lavish-orphan-hold"
 export ORPHAN_TRIGGER
 cat > "$ORPHAN_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 while [ ! -e "$ORPHAN_TRIGGER" ]; do sleep 0.02; done
 printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","after the crash","","message",""\n'
 SH
@@ -1059,6 +1105,7 @@ HADOPT="$TMP_ROOT/hadopt"; new_home "$HADOPT"
 ADOPT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-adopt-stub")
 cat > "$ADOPT_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","for firstmate","","message",""\n'
 SH
 chmod +x "$ADOPT_BIN/lavish-axi"
@@ -1207,6 +1254,7 @@ HCONC="$TMP_ROOT/hconclude"; new_home "$HCONC"
 CONC_BIN=$(fm_fakebin "$TMP_ROOT/lavish-conclude-stub")
 cat > "$CONC_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 printf 'session:\n  status: ended\n  session_ended: true\n'
 SH
 chmod +x "$CONC_BIN/lavish-axi"
@@ -1260,6 +1308,7 @@ INTR_ROOT="$TMP_ROOT/lavish-interrupted-root"; mkdir -p "$INTR_ROOT"; export INT
 INTR_BIN=$(fm_fakebin "$TMP_ROOT/lavish-interrupted-stub")
 cat > "$INTR_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 n=$(cat "$INTR_ROOT/count" 2>/dev/null || echo 0)
 printf '%s\n' "$((n + 1))" > "$INTR_ROOT/count"
 printf 'session:\n  status: ended\n  session_ended: true\n'
@@ -1304,6 +1353,7 @@ ROLL_ROOT="$TMP_ROOT/lavish-rollback-root"; mkdir -p "$ROLL_ROOT"; export ROLL_R
 ROLL_BIN=$(fm_fakebin "$TMP_ROOT/lavish-rollback-stub")
 cat > "$ROLL_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 set -eu
 [ "${1-}" != --version ] || { printf '0.1.79\n'; exit 0; }
 [ "${3-}" != --agent-reply ] || printf '%s\n' "$4" >> "$ROLL_ROOT/replies"
@@ -1362,6 +1412,7 @@ REARM_ROOT="$TMP_ROOT/lavish-rearm-root"; mkdir -p "$REARM_ROOT"; export REARM_R
 REARM_BIN=$(fm_fakebin "$TMP_ROOT/lavish-rearm-stub")
 cat > "$REARM_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 set -eu
 [ "${1-}" != --version ] || { printf '0.1.79\n'; exit 0; }
 [ "${3-}" != --agent-reply ] || printf '%s\n' "$4" >> "$REARM_ROOT/replies"
@@ -1423,6 +1474,7 @@ HANSWER="$TMP_ROOT/hanswer"; new_home "$HANSWER"
 ANSWER_BIN=$(fm_fakebin "$TMP_ROOT/lavish-answer-stub")
 cat > "$ANSWER_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 # Stand-in for `lavish-axi poll <file>` on a real `Send & End`: the captain's
 # own choice, delivered with session_ended.
 printf 'session:\n  file: /answered.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nprompts[1]{tag,text,prompt}:\n  "choice","Option B","Context data: {\\"question\\":\\"noop-check-routing\\",\\"answer\\":\\"b\\"}"\n'
@@ -1456,6 +1508,7 @@ pass "a board close carrying the captain's real answer is still announced"
 LAVISH_SCRIPTED_BIN=$(fm_fakebin "$TMP_ROOT/lavish-scripted-stub")
 cat > "$LAVISH_SCRIPTED_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 # Stand-in for `lavish-axi poll <file>`, scripted per scenario: LAVISH_SCRIPT
 # names the response for each successive poll, one word per poll, and its last
 # word repeats forever. `interrupt` is the exact transient response the server
@@ -3020,6 +3073,7 @@ HOST_SEEN="$TMP_ROOT/session-route-seen"
 HOST_BIN=$(fm_fakebin "$TMP_ROOT/session-route-bin")
 cat > "$HOST_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 [ "${1-}" = poll ] || exit 2
 printf '%s:%s\n' "${LAVISH_AXI_HOST-unset}" "${LAVISH_AXI_PORT-unset}" >> "$HOST_SEEN"
 if [ -n "${HOST_RETRY-}" ] && [ "$(wc -l < "$HOST_SEEN" | tr -d ' ')" = 1 ]; then
@@ -4021,6 +4075,7 @@ pass "retiring a source reaps its reparented listener and every descendant under
 LAPSE_BIN=$(fm_fakebin "$TMP_ROOT/lapse-lavish")
 cat > "$LAPSE_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
 # Stand-in for the published `lavish-axi poll <file>`. It blocks until the
 # captain's Send & End lands on that board, then delivers the final feedback
 # exactly once marked session_ended - Lavish keeps it queued on the ended session
@@ -4888,7 +4943,7 @@ set -e
   || fail "re-arm over a live earlier listener failed ($live_rc): $(cat "$LIVE/arm2.err")"
 assert_contains "$(cat "$LIVE/arm2.out")" "still-listening: $live_id" \
   "re-arm did not say the earlier listener is still serving the board"
-assert_contains "$(cat "$LIVE/arm2.out")" "retired and armed again" \
+assert_contains "$(cat "$LIVE/arm2.out")" "retire <artifact> --keep-session and a fresh arm" \
   "re-arm did not say how the new registration takes effect"
 assert_not_contains "$(cat "$LIVE/arm2.out")" "armed: $live_id" \
   "re-arm reported ready for a registration whose own listener is not running"
