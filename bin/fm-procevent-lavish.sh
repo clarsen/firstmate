@@ -105,9 +105,9 @@
 #            page reads as finished instead of lingering as a live session; a
 #            plain reopen still works later. The source retirement comes first
 #            and decides the exit status: ending the session is best effort, so
-#            an already-ended, unknown, or unreachable session (or a missing
-#            lavish-axi) is reported as `session-end-skipped:` and never an
-#            error, while success prints `session-ended:`. `--keep-session`
+#            a missing or failing lavish-axi, or an unresolvable session host,
+#            is reported as `session-end-skipped:` and never an error, while a
+#            successful `lavish-axi end` prints `session-ended:`. `--keep-session`
 #            retires only the source and leaves the session open; the board
 #            reopen path in fm-bearings-board.sh uses it so a reopened board is
 #            never ended by the retirement of its previous generation.
@@ -340,8 +340,8 @@ cmd_retire() {
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id" || exit $?
   [ "$keep_session" = 0 ] || return 0
   # The source is retired; now end the Lavish session as the agent so the page
-  # reads as finished instead of lingering as a live session. Best effort: an
-  # already-ended, unknown, or unreachable session never fails the retirement.
+  # reads as finished instead of lingering as a live session. Best effort: a
+  # missing or failing lavish-axi never fails the retirement.
   if ! command -v lavish-axi >/dev/null 2>&1; then
     printf 'session-end-skipped: lavish-axi is not installed\n'
     return 0
