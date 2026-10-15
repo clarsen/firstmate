@@ -1,0 +1,12 @@
+== head, TMPDIR=/Users/clarsen/tmp (caller case) ==
+# lavish-axi 0.1.78
+ok - lavish-axi 0.1.78 reports a captain-ended session without reopening it and without failing
+not ok - the board build reported success while the session was still not live
+== head, TMPDIR=/Users/clarsen/Tmp (on-disk case) ==
+# lavish-axi 0.1.78
+ok - lavish-axi 0.1.78 reports a captain-ended session without reopening it and without failing
+ok - the board build reopens a captain-ended session against real lavish-axi instead of arming a dead one
+== base 82d7918, TMPDIR=/Users/clarsen/tmp ==
+# lavish-axi 0.1.78
+ok - lavish-axi 0.1.78 reports a captain-ended session without reopening it and without failing
+not ok - the board build reported success while the session was still not live

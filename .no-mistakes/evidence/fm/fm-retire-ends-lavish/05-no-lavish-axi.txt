@@ -1,0 +1,8 @@
+== retire with lavish-axi absent from PATH (page-c, armed) ==
+$ command -v lavish-axi under test PATH: <none>
+$ retire page-c.html
+retired: lavish-f58d081f7f9aa525
+session-end-skipped: lavish-axi is not installed
+exit=0
+$ lavish-axi list (page-c session left open, listener gone)
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-c.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/f58d081f7f9aa525",0,none

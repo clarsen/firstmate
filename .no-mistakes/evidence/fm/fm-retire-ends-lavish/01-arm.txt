@@ -1,0 +1,16 @@
+$ lavish-axi (session list, before)
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-a.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/0beb740476e15308",0,none
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/a34d21111052ac28",0,none
+$ fm-procevent-lavish.sh arm page-a.html
+registered: lavish-0beb740476e15308 (lavish)
+armed: lavish-0beb740476e15308
+artifact: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-a.html
+exit=0
+$ fm-procevent-lavish.sh arm page-b.html
+registered: lavish-a34d21111052ac28 (lavish)
+armed: lavish-a34d21111052ac28
+artifact: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html
+exit=0
+$ lavish-axi (after arm)
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-a.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/0beb740476e15308",0,none
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/a34d21111052ac28",0,none

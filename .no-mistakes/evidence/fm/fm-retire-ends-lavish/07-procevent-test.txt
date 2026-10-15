@@ -1,0 +1,2 @@
+ok - retire ends the Lavish session, tolerates an ended session and a failing lavish-axi, and --keep-session leaves it open
+all procevent tests passed

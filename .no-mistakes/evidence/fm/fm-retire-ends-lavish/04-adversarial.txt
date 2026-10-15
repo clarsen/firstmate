@@ -1,0 +1,46 @@
+== still-listening note, then follow it ==
+$ arm page-b.html
+registered: lavish-a34d21111052ac28 (lavish)
+armed: lavish-a34d21111052ac28
+artifact: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html
+exit=0
+$ arm page-b.html (again, while listener live)
+registered: lavish-a34d21111052ac28 (lavish)
+still-listening: lavish-a34d21111052ac28
+artifact: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html
+note: an earlier listener is still live and serving this board; this registration takes effect only after fm-procevent-lavish.sh retire <artifact> --keep-session and a fresh arm
+exit=0
+$ retire page-b.html --keep-session
+retired: lavish-a34d21111052ac28
+exit=0
+$ arm page-b.html (fresh)
+registered: lavish-a34d21111052ac28 (lavish)
+armed: lavish-a34d21111052ac28
+artifact: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html
+exit=0
+$ lavish-axi list
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/a34d21111052ac28",0,agent-listener
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-c.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/f58d081f7f9aa525",0,none
+== retire with lavish-axi absent from PATH (page-c) ==
+registered: lavish-f58d081f7f9aa525 (lavish)
+armed: lavish-f58d081f7f9aa525
+artifact: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-c.html
+arm exit=0
+$ PATH=<no lavish-axi> retire page-c.html
+Terminated: 15             "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
+exit=143
+$ lavish-axi list (page-c still open)
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/a34d21111052ac28",0,agent-listener
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-c.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/f58d081f7f9aa525",0,agent-listener
+== retire a page with no Lavish session and no source (page-d) ==
+retired: lavish-8f03d53d5a52b542
+session-end-skipped: no open Lavish session ended for /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-d.html
+exit=0
+== bad args ==
+exit=2
+exit=2
+== agent-ended page-a reopens plainly ==
+session:
+  file: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-a.html
+  url: "http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/0beb740476e15308"
+  status: opened

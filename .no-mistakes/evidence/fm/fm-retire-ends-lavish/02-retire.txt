@@ -1,0 +1,14 @@
+$ lavish-axi (before retire)
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-a.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/0beb740476e15308",0,agent-listener
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/a34d21111052ac28",0,agent-listener
+$ fm-procevent-lavish.sh retire page-a.html
+retired: lavish-0beb740476e15308
+session-ended: /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-a.html
+exit=0
+$ fm-procevent-lavish.sh retire page-b.html --keep-session
+retired: lavish-a34d21111052ac28
+exit=0
+$ lavish-axi (after retire)
+  /Users/clarsen/Tmp/fm-retire-pg.OQuuGv/page-b.html,open,"http://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/a34d21111052ac28",0,none
+$ fm-procevent.sh status
+error: unknown command: status
