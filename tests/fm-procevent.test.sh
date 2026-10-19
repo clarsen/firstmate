@@ -1252,10 +1252,11 @@ pass "an acknowledged note is never resurrected and stops ringing across repeate
 # reach past it and retire whatever board the artifact carries by then.
 HCONC="$TMP_ROOT/hconclude"; new_home "$HCONC"
 CONC_BIN=$(fm_fakebin "$TMP_ROOT/lavish-conclude-stub")
-cat > "$CONC_BIN/lavish-axi" <<'SH'
+CONC_END_LOG="$TMP_ROOT/conclude-end-log"
+cat > "$CONC_BIN/lavish-axi" <<SH
 #!/usr/bin/env bash
-[ "${1-}" != end ] || exit 0
-printf 'session:\n  status: ended\n  session_ended: true\n'
+if [ "\${1-}" = end ]; then printf '%s\\n' "\$2" >> "$CONC_END_LOG"; exit 0; fi
+printf 'session:\\n  status: ended\\n  session_ended: true\\n'
 SH
 chmod +x "$CONC_BIN/lavish-axi"
 CONC_ART="$TMP_ROOT/conclude-board.html"
@@ -1287,6 +1288,9 @@ assert_contains "$conclude_out" "retired: $conc_id" \
   "acknowledging the terminal round did not report the board retired"
 [ ! -e "$HCONC/state/procevent/$conc_id.source" ] \
   || fail "acknowledging the terminal round did not retire the worker-owned board"
+CONC_REAL=$("$ROOT/bin/fm-procevent-lavish.sh" canonical-path "$CONC_ART")
+[ "$(cat "$CONC_END_LOG" 2>/dev/null)" = "$CONC_REAL" ] \
+  || fail "concluding the worker-owned board did not end its Lavish session once: $(cat "$CONC_END_LOG" 2>/dev/null)"
 PATH="$CONC_BIN:$PATH" FM_HOME="$HCONC" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$CONC_ART" --for worker-7 >/dev/null
 repeat_out=$(PATH="$CONC_BIN:$PATH" pe "$HCONC" handled "$conc_id" 1)
@@ -1297,7 +1301,9 @@ case "$repeat_out" in
 esac
 [ -e "$HCONC/state/procevent/$conc_id.source" ] \
   || fail "repeating a closed acknowledgement retired the board armed after it"
-pass "acknowledging a terminal round concludes that round only"
+[ "$(cat "$CONC_END_LOG" 2>/dev/null)" = "$CONC_REAL" ] \
+  || fail "repeating a closed acknowledgement ended the re-armed board's session: $(cat "$CONC_END_LOG" 2>/dev/null)"
+pass "acknowledging a terminal round concludes that round only and ends its Lavish session"
 
 # --- end-user-aligned regression: an interrupted conclude ends the board -----
 # The conclude drops the registration and then records the acknowledgement. An
@@ -5412,9 +5418,14 @@ pass "fm_procevent_lock_backoff_wait paces retries with bounded churn instead of
 HSHOT="$TMP_ROOT/hshot"; new_home "$HSHOT"
 SHOT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-oneshot-stub")
 SHOT_COUNT="$TMP_ROOT/oneshot-poll-count"
+SHOT_END_LOG="$TMP_ROOT/oneshot-end-log"
 cat > "$SHOT_BIN/lavish-axi" <<SH
 #!/usr/bin/env bash
-[ "\${1-}" != end ] || exit 0
+if [ "\${1-}" = end ]; then
+  printf '%s\\n' "\$2" >> "$SHOT_END_LOG"
+  [ "\${SHOT_END_MODE:-ok}" = ok ] || { printf 'error: boom\\n' >&2; exit 1; }
+  exit 0
+fi
 n=\$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)
 printf '%s\n' "\$((n + 1))" > "$SHOT_COUNT"
 printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\"schema\\":\\"fm-bearings-answer.v1\\",\\"question\\":\\"noop-check-oneshot\\",\\"selection\\":\\"a\\",\\"note\\":\\"\\"}"\n'
@@ -5438,11 +5449,53 @@ assert_contains "$handled_out" "retired: $shot_id" \
   "acknowledging a one-shot source's answered-but-not-ended round did not report it retired"
 [ ! -e "$HSHOT/state/procevent/$shot_id.source" ] \
   || fail "acknowledging a one-shot source's answer did not retire its registration"
+SHOT_REAL=$("$ROOT/bin/fm-procevent-lavish.sh" canonical-path "$SHOT_ART")
+[ "$(cat "$SHOT_END_LOG" 2>/dev/null)" = "$SHOT_REAL" ] \
+  || fail "retiring an answered one-shot page did not end its Lavish session once: $(cat "$SHOT_END_LOG" 2>/dev/null)"
 PATH="$SHOT_BIN:$PATH" pe "$HSHOT" reconcile >/dev/null 2>&1 || true
 sleep 0.3
 [ "$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)" = 1 ] \
   || fail "reconcile relaunched a one-shot source after its answer was acknowledged and retired"
 pass "a one-shot source retires once its answered-but-not-ended round is acknowledged, and reconcile never relaunches it"
+
+# --- ending the session is best effort: a failing or missing lavish-axi never -
+# --- fails the acknowledgement that retires a one-shot page ---------------------
+for shot_mode in fail missing; do
+  HSHOTF="$TMP_ROOT/hshot-$shot_mode"; new_home "$HSHOTF"
+  rm -f "$SHOT_COUNT" "$SHOT_END_LOG"
+  SHOTF_ART="$TMP_ROOT/oneshot-$shot_mode.html"
+  printf '<h1>oneshot %s</h1>\n' "$shot_mode" > "$SHOTF_ART"
+  lavish_session "$SHOTF_ART"
+  shotf_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SHOTF_ART")
+  fm_test_track_procevent_home "$HSHOTF"
+  PATH="$SHOT_BIN:$PATH" FM_HOME="$HSHOTF" \
+    "$ROOT/bin/fm-procevent-lavish.sh" arm "$SHOTF_ART" --one-shot >/dev/null
+  wait_capture "$HSHOTF" "$shotf_id" \
+    || fail "the one-shot source's answer was never captured with end mode $shot_mode"
+  if [ "$shot_mode" = fail ]; then
+    shotf_path="$SHOT_BIN:$PATH"
+  else
+    shotf_path=$(printf '%s' "$PATH" | tr ':' '\n' \
+      | while IFS= read -r dir; do [ -x "$dir/lavish-axi" ] || printf '%s:' "$dir"; done)
+    shotf_path=${shotf_path%:}
+  fi
+  shotf_status=0
+  shotf_out=$(SHOT_END_MODE=$shot_mode PATH="$shotf_path" pe "$HSHOTF" handled "$shotf_id" 1) \
+    || shotf_status=$?
+  [ "$shotf_status" -eq 0 ] \
+    || fail "a $shot_mode lavish-axi failed the one-shot acknowledgement (exit $shotf_status)"
+  assert_contains "$shotf_out" "retired: $shotf_id" \
+    "a $shot_mode lavish-axi stopped the one-shot page from retiring"
+  [ ! -e "$HSHOTF/state/procevent/$shotf_id.source" ] \
+    || fail "a $shot_mode lavish-axi left the one-shot registration behind"
+  [ -f "$HSHOTF/state/procevent-inbox/$shotf_id.1.handled" ] \
+    || fail "a $shot_mode lavish-axi lost the one-shot acknowledgement"
+  case "$shot_mode" in
+    fail) [ -s "$SHOT_END_LOG" ] || fail "the failing lavish-axi end was never attempted" ;;
+    missing) [ ! -s "$SHOT_END_LOG" ] || fail "a lavish-axi absent from PATH was still invoked" ;;
+  esac
+done
+pass "a failing or missing lavish-axi never fails the acknowledgement that retires a one-shot page"
 
 # --- the same answered-but-not-ended round leaves an ordinary source armed --
 # A source registered without --one-shot (every board bin/fm-bearings-board.sh

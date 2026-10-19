@@ -25,9 +25,11 @@
 #            executed directly, so there is no shell surface and no argument
 #            splitting. Built-in adapters register sources; nothing here parses
 #            user text. `--one-shot` marks the registration so `handled`
-#            retires it automatically on its first terminal or answer-bearing
-#            round (see `handled` below); omit it for a source meant to stay
-#            armed across many separate rounds.
+#            retires it automatically when it acknowledges an answer-bearing
+#            round whose session has not ended (see `handled` below); a
+#            terminal round still self-retires in `start` exactly as for any
+#            ordinary source. Omit it for a source meant to stay armed across
+#            many separate rounds.
 # register-task
 #            Record a worker-owned built-in source. Its one source record
 #            persists across rounds, and re-registration by the same task
@@ -67,10 +69,11 @@
 #            a conversational turn. After publishing, it asks the source's own
 #            adapter whether the captured result ends the source and normally
 #            retires the registration when it says so, so a source that has
-#            ended stops being restarted. A task-owned source, or one
-#            registered `--one-shot`, instead keeps its round open and
-#            registered until it is concluded with `handled` (see `register`
-#            and `handled` above).
+#            ended stops being restarted. Only a task-owned source instead
+#            keeps its terminal round open and registered until it is
+#            concluded with `handled`. A source registered `--one-shot` is not
+#            exempt: its terminal round self-retires here like any other, and
+#            only its answered-but-not-ended round waits for `handled`.
 # reconcile  Idempotent liveness entry the watcher calls on its ordinary cycle:
 #            republish every durably captured result with no handled
 #            acknowledgement yet - regardless of any earlier publication - and
@@ -110,11 +113,18 @@
 #            bounded re-announcement on every reconcile. Marking a result
 #            handled does not retire its source registration or claim, with two
 #            exceptions: acknowledging the terminal round of a task-owned
-#            source is that board's conclude step, and acknowledging a terminal
-#            or answer-bearing round of a source registered `register
-#            --one-shot` has the same effect, because such a source has
-#            nothing further to collect once its one round is answered. Either
-#            exception drops the registration and reports `retired:` too.
+#            source is that board's conclude step, and acknowledging an
+#            answer-bearing round of a still-registered source registered
+#            `register --one-shot` (one whose session has not ended, since a
+#            terminal one-shot round already self-retired in `start`) has the
+#            same effect, because such a source has nothing further to collect
+#            once its one round is answered. Either exception drops the
+#            registration, reports `retired:` too, and then runs
+#            `bin/fm-procevent-<adapter>.sh retired <source-id> -- <argv>...`
+#            with the dropped registration's stored argv, so the adapter can
+#            release what it alone knows the source held open (Lavish ends the
+#            page's session). That seam is best effort: a missing adapter or
+#            command, or any failure, never fails the acknowledgement.
 # retire     Drop a registration, stop a runner this home owns, release the claim.
 #            Idempotent, and still the supported explicit path after a source has
 #            already retired itself on its adapter's terminal verdict. Existing
@@ -435,6 +445,19 @@ adapter_result_is_answer_bearing() {  # <adapter> <result-file>
   script=$(adapter_script "$1")
   [ -f "$script" ] && [ ! -L "$script" ] || return 1
   "$script" answer-bearing "$2" >/dev/null 2>&1
+}
+
+# Tell the source's own adapter that `handled` just concluded the source and
+# dropped its registration, passing that registration's stored argv so the
+# adapter can release whatever it alone knows the source held open. Best effort
+# exactly like autohandle: a missing adapter or one without the command is a
+# quiet no-op, and no outcome ever fails the acknowledgement already recorded.
+adapter_retired() {  # <adapter> <source-id> <argv>...
+  local adapter=$1 id=$2 script
+  shift 2
+  script=$(adapter_script "$adapter")
+  [ -f "$script" ] && [ ! -L "$script" ] || return 0
+  "$script" retired "$id" -- "$@" >/dev/null 2>&1 || true
 }
 
 source_file()  { printf '%s/%s.source\n' "$REG" "$1"; }
@@ -2146,7 +2169,8 @@ cmd_classify() {
 
 cmd_handled() {
   local id=${1-} seq=${2-} status result='' result_adapter='' conclude=0 registration='' retained=''
-  local kind='' lifecycle='' conclude_reason=''
+  local kind='' lifecycle='' conclude_reason='' retired_adapter=''
+  local -a ARGV=()
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
   owner_lease_refresh
@@ -2178,6 +2202,8 @@ cmd_handled() {
       fm_procevent_source_lock_release "$id"
       die "cannot read the registration this conclusion retires: $id"
     fi
+    retired_adapter=$(read_adapter "$id") || retired_adapter=''
+    read_argv "$id" || ARGV=()
     if ! rm -f -- "$registration" 2>/dev/null || [ -e "$registration" ] || [ -L "$registration" ]; then
       rm -f -- "$retained"
       fm_procevent_source_lock_release "$id"
@@ -2203,6 +2229,7 @@ cmd_handled() {
   esac
   if [ "$conclude" -eq 1 ]; then
     printf 'retired: %s (owner acknowledged its %s)\n' "$id" "$conclude_reason"
+    [ -z "$retired_adapter" ] || adapter_retired "$retired_adapter" "$id" ${ARGV[@]+"${ARGV[@]}"}
   fi
 }
 

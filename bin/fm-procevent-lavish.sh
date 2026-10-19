@@ -13,6 +13,7 @@
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh canonical-path <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html> [--keep-session]
+#   fm-procevent-lavish.sh retired <source-id> -- <argv>...
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
 #   fm-procevent-lavish.sh deliver-reply poll <artifact.html> --agent-reply-file <path>
 #
@@ -122,6 +123,16 @@
 #            retires only the source and leaves the session open; the board
 #            reopen path in fm-bearings-board.sh uses it so a reopened board is
 #            never ended by the retirement of its previous generation.
+# retired    The generic post-retirement seam bin/fm-procevent.sh's `handled`
+#            calls after it concludes a source by dropping its registration (a
+#            task-owned board's terminal round, or a `--one-shot` source's
+#            terminal or answered round), with that registration's stored argv.
+#            The artifact is the argument following the literal `poll` in that
+#            argv, and its session is ended exactly as `retire` ends it, with
+#            the same best-effort `session-ended:`/`session-end-skipped:`
+#            report, so a source `handled` concludes reads as finished in
+#            Lavish just like one retired explicitly. An argv with no poll
+#            artifact exits nonzero; the runner ignores this seam's status.
 #
 # `answers` is this adapter's half of the generic keyed-answer contract in
 # bin/fm-procevent.sh. It reports what the captain actually chose, as
@@ -348,7 +359,7 @@ cmd_deliver_reply() {
 }
 
 cmd_retire() {
-  local artifact='' keep_session=0 id real
+  local artifact='' keep_session=0 id
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --keep-session) keep_session=1; shift ;;
@@ -360,9 +371,29 @@ cmd_retire() {
   id=$(cmd_source_id "$artifact") || exit 1
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id" || exit $?
   [ "$keep_session" = 0 ] || return 0
-  # The source is retired; now end the Lavish session as the agent so the page
-  # reads as finished instead of lingering as a live session. Best effort: a
-  # missing or failing lavish-axi never fails the retirement.
+  end_session_best_effort "$artifact"
+}
+
+cmd_retired() {
+  local artifact=''
+  [ "$#" -ge 2 ] && [ -n "$1" ] && [ "$2" = -- ] || usage
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = poll ] && [ "$#" -ge 2 ]; then
+      artifact=$2
+      break
+    fi
+    shift
+  done
+  [ -n "$artifact" ] || die "the retired source's argv names no poll artifact"
+  end_session_best_effort "$artifact"
+}
+
+# The source is retired; now end the Lavish session as the agent so the page
+# reads as finished instead of lingering as a live session. Best effort: a
+# missing or failing lavish-axi never fails the retirement.
+end_session_best_effort() {  # <artifact>
+  local artifact=$1 real
   if ! command -v lavish-axi >/dev/null 2>&1; then
     printf 'session-end-skipped: lavish-axi is not installed\n'
     return 0
@@ -866,6 +897,7 @@ cmd_read() {
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
+  retired)   shift; cmd_retired "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   deliver-reply) shift; cmd_deliver_reply "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
