@@ -5440,7 +5440,7 @@ if [ "\${1-}" = end ]; then
 fi
 n=\$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)
 printf '%s\n' "\$((n + 1))" > "$SHOT_COUNT"
-printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\\\"schema\\\\":\\\\"fm-bearings-answer.v1\\\\",\\\\"question\\\\":\\\\"noop-check-oneshot\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n'
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","noop-check-oneshot -> a","Answer - noop-check-oneshot: a Context data: {\\\\"schema\\\\":\\\\"fm-decision-page-answer.v1\\\\",\\\\"question\\\\":\\\\"noop-check-oneshot\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n'
 SH
 chmod +x "$SHOT_BIN/lavish-axi"
 SHOT_ART="$TMP_ROOT/oneshot.html"
@@ -5456,6 +5456,9 @@ wait_capture "$HSHOT" "$shot_id" \
   || fail "the one-shot fixture was polled more than once before being handled"
 [ -e "$HSHOT/state/procevent/$shot_id.source" ] \
   || fail "an answered-but-not-ended one-shot source was retired before its answer was acknowledged"
+shot_answers=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$(first_result "$HSHOT" "$shot_id")")
+[ "$(printf '%s\n' "$shot_answers" | cut -f1,2)" = "$(printf 'noop-check-oneshot\ta')" ] \
+  || fail "a decision page's queued fm-decision-page-answer.v1 row was not read as a keyed answer: $shot_answers"
 handled_out=$(PATH="$SHOT_BIN:$PATH" pe "$HSHOT" handled "$shot_id" 1)
 assert_contains "$handled_out" "retired: $shot_id" \
   "acknowledging a one-shot source's answered-but-not-ended round did not report it retired"
@@ -5529,7 +5532,7 @@ case "\$n" in
   2) q=two-second ;;
   *) while [ ! -e "$TWO_RELEASE" ]; do sleep 0.1; done; exit 1 ;;
 esac
-printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\\\"schema\\\\":\\\\"fm-bearings-answer.v1\\\\",\\\\"question\\\\":\\\\"%s\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n' "\$q"
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","%s -> a","Answer - %s: a Context data: {\\\\"schema\\\\":\\\\"fm-decision-page-answer.v1\\\\",\\\\"question\\\\":\\\\"%s\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n' "\$q" "\$q" "\$q"
 SH
 chmod +x "$TWO_BIN/lavish-axi"
 TWO_ART="$TMP_ROOT/two-question.html"

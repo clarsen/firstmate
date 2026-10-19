@@ -741,6 +741,8 @@ cmd_answered() {
 # `choice`. A freeform `message` row is captain prose and is deliberately never a
 # source of decision keys. A row that does not carry both a slug-shaped `question`
 # and the versioned `selection` and `note` fields inside its `Context data:` block
+# (schema `fm-bearings-answer.v1` from the board or `fm-decision-page-answer.v1`
+# from a decision page, both queued by the shared decision card)
 # is skipped. A time-limited rollout branch accepts the old question/answer
 # shape only for ordinary answers and rejects its bare or annotated reconcile
 # values because old rows do not separate the selected option from its note.
@@ -770,7 +772,8 @@ cmd_choice_rows() {
       next unless ref($data) eq "HASH";
       my ($key, $selected, $note, $answer, $legacy);
       if (defined($data->{schema}) && !ref($data->{schema})
-          && $data->{schema} eq "fm-bearings-answer.v1") {
+          && ($data->{schema} eq "fm-bearings-answer.v1"
+            || $data->{schema} eq "fm-decision-page-answer.v1")) {
         $key = $data->{question};
         $selected = $data->{selection};
         $note = $data->{note};
