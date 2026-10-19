@@ -1,0 +1,11 @@
+$ fm-procevent-lavish.sh answers <round1>
+q-alpha	yes	Alpha? -> yes
+$ fm-procevent.sh handled lavish-0010323ff114fbe6 1
+handled: lavish-0010323ff114fbe6 1
+rc=0
+$ ls state/procevent
+lavish-0010323ff114fbe6.64775-178350.last-launch
+lavish-0010323ff114fbe6.source
+$ lavish-axi (isolated server) session status
+sessions[1]{file,status,url,pending_prompts,listener}:
+  /tmp/fm-lab.QEWvR3/data/lab-two/decision-page.html,open,"http://127.0.0.1:14499/session/0010323ff114fbe6",0,none

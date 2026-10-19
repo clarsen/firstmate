@@ -1,0 +1,4 @@
+# Cross-source claim contention: 10 other sources with unhandled results, all their locks held by another live process; one capture of src-a via real 'fm-procevent.sh start'
+base-6b38c90: other_sources=10 other_pending_results=10 start_rc=124(TIMED OUT after 20s: blocked) elapsed=193.83s src_a_captured=1 mkdir/rmdir_on_OTHER_source_locks=2440 on_own_lock=8
+head-1c294fe: other_sources=10 other_pending_results=10 start_rc=0 elapsed=9.06s src_a_captured=1 mkdir/rmdir_on_OTHER_source_locks=0 on_own_lock=8
+(mid-run observation of base runner _start src-a while blocked: 13849 mkdir/rmdir syscalls traced in ~3 min, 1356+ on other-10.lock.owner.* alone — the procevent-claims churn from the incident)

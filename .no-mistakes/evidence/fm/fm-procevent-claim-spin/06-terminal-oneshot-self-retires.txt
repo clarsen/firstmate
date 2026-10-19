@@ -1,0 +1,13 @@
+# one-shot page, captain clicked Send & End with only a note (no answers)
+$ fm-procevent-lavish.sh terminal <round1>
+terminal rc=0
+$ ls state/procevent (no .source => self-retired in start, before any handled)
+lavish-0010323ff114fbe6.64775-178350.last-launch
+lavish-34649247f6bc5bb3.64775-181312.last-launch
+$ fm-procevent.sh reconcile
+reconciled: published=1 started=0 stopped=0 uncertain=0 failed=0
+$ handled lavish-34649247f6bc5bb3 1
+handled: lavish-34649247f6bc5bb3 1
+rc=0
+$ live lab runners
+0

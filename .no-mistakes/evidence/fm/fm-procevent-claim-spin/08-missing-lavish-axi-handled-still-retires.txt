@@ -1,0 +1,11 @@
+# fully answered one-shot page acknowledged with lavish-axi absent from PATH
+$ PATH=<without lavish-axi> command -v lavish-axi
+(not found)
+$ PATH=<without lavish-axi> fm-procevent.sh handled lavish-616be32b555a9155 1
+handled: lavish-616be32b555a9155 1
+retired: lavish-616be32b555a9155 (owner acknowledged its answered round)
+rc=0
+$ ls state/procevent
+lavish-616be32b555a9155.64775-147909.last-launch
+$ lavish session status (left open: best-effort end skipped)
+open

@@ -1,0 +1,16 @@
+$ lavish-axi session status BEFORE handled
+  /tmp/fm-lab.QEWvR3/data/lab-two/decision-page.html,open,"http://127.0.0.1:14499/session/0010323ff114fbe6",0,none
+$ fm-procevent-lavish.sh answers <round2>
+q-beta	ship	Beta? -> ship
+$ fm-procevent.sh handled lavish-0010323ff114fbe6 2
+handled: lavish-0010323ff114fbe6 2
+retired: lavish-0010323ff114fbe6 (owner acknowledged its answered round)
+rc=0
+$ ls state/procevent
+lavish-0010323ff114fbe6.64775-178350.last-launch
+$ lavish-axi session status AFTER handled
+$ fm-procevent.sh reconcile
+reconciled: published=0 started=0 stopped=0 uncertain=0 failed=0
+$ live runners for lab
+0
+0010323ff114fbe6 ended /tmp/fm-lab.QEWvR3/data/lab-two/decision-page.html
