@@ -4,7 +4,7 @@
 # durable wakes.
 #
 # Usage:
-#   fm-procevent.sh register <adapter> <source-id> -- <argv>...
+#   fm-procevent.sh register <adapter> <source-id> [--one-shot] -- <argv>...
 #   fm-procevent.sh register-task <adapter> <source-id> <task-id> -- <argv>...
 #   fm-procevent.sh register-extension <adapter> <source-id> --config-ref <reference>
 #   fm-procevent.sh start <source-id>
@@ -24,7 +24,10 @@
 #            exact argv to execute. argv is stored one argument per line and
 #            executed directly, so there is no shell surface and no argument
 #            splitting. Built-in adapters register sources; nothing here parses
-#            user text.
+#            user text. `--one-shot` marks the registration so `handled`
+#            retires it automatically on its first terminal or answer-bearing
+#            round (see `handled` below); omit it for a source meant to stay
+#            armed across many separate rounds.
 # register-task
 #            Record a worker-owned built-in source. Its one source record
 #            persists across rounds, and re-registration by the same task
@@ -54,16 +57,20 @@
 #            source when the window ended, so this generation cannot start until
 #            it is retired.
 # start      Claim the source, run its child to completion, durably capture the
-#            output, and publish normalized wakes for pending results. It then
-#            releases the claim, unless the adapter's `relisten` command says
-#            to poll again in this same runner. It blocks for as long as the
-#            source blocks and is meant
-#            to run as a supervised background process, never in a conversational
-#            turn. After publishing, it asks the source's own adapter whether the
-#            captured result ends the source and normally retires the registration
-#            when it says so, so a source that has ended stops being restarted.
-#            A task-owned source instead keeps its terminal round open and
-#            registered until its owner concludes it with `handled`.
+#            output, and publish normalized wakes for THIS SOURCE'S OWN
+#            still-pending backlog (never another source's: that catch-up is
+#            `reconcile`'s own, separately-paced sweep, so a runner never
+#            touches another source's claim or lock). It then releases the
+#            claim, unless the adapter's `relisten` command says to poll again
+#            in this same runner. It blocks for as long as the source blocks
+#            and is meant to run as a supervised background process, never in
+#            a conversational turn. After publishing, it asks the source's own
+#            adapter whether the captured result ends the source and normally
+#            retires the registration when it says so, so a source that has
+#            ended stops being restarted. A task-owned source, or one
+#            registered `--one-shot`, instead keeps its round open and
+#            registered until it is concluded with `handled` (see `register`
+#            and `handled` above).
 # reconcile  Idempotent liveness entry the watcher calls on its ordinary cycle:
 #            republish every durably captured result with no handled
 #            acknowledgement yet - regardless of any earlier publication - and
@@ -101,10 +108,13 @@
 #            deduplicated so a paired external effect is never authorized
 #            twice. Until this is called, the result stays eligible for
 #            bounded re-announcement on every reconcile. Marking a result
-#            handled does not retire its source registration or claim, with one
-#            exception: acknowledging the terminal round of a task-owned source
-#            is that board's conclude step, so it also drops the registration
-#            that kept the board with its owner, and reports `retired:` too.
+#            handled does not retire its source registration or claim, with two
+#            exceptions: acknowledging the terminal round of a task-owned
+#            source is that board's conclude step, and acknowledging a terminal
+#            or answer-bearing round of a source registered `register
+#            --one-shot` has the same effect, because such a source has
+#            nothing further to collect once its one round is answered. Either
+#            exception drops the registration and reports `retired:` too.
 # retire     Drop a registration, stop a runner this home owns, release the claim.
 #            Idempotent, and still the supported explicit path after a source has
 #            already retired itself on its adapter's terminal verdict. Existing
@@ -412,12 +422,32 @@ adapter_self_announcing() {  # <adapter>
   "$script" self-announcing >/dev/null 2>&1
 }
 
+# Ask the source's own adapter whether a captured result carries any actual
+# answer, independent of whether the session itself has ended. cmd_handled
+# calls this only for a source registered `--one-shot` (see source_lifecycle):
+# once such a one-off source's answer is acknowledged, it has nothing further
+# to collect, unlike a board kept armed across many separate questions, which
+# is never registered one-shot. Exit 0 is the only verdict; everything else -
+# including a missing adapter or one without the command - leaves the source
+# armed exactly as before.
+adapter_result_is_answer_bearing() {  # <adapter> <result-file>
+  local script
+  script=$(adapter_script "$1")
+  [ -f "$script" ] && [ ! -L "$script" ] || return 1
+  "$script" answer-bearing "$2" >/dev/null 2>&1
+}
+
 source_file()  { printf '%s/%s.source\n' "$REG" "$1"; }
 source_field() {  # <source-id> <field>
   sed -n "s/^$2=//p" "$(source_file "$1")" | head -1
 }
 source_kind() { source_field "$1" kind; }
 source_owner_task() { source_field "$1" owner_task; }
+# Set only by `register --one-shot` (never by register-task, which uses
+# `kind` instead): a single acknowledged round retires this source
+# automatically, exactly like a task-owned source's terminal round (see
+# cmd_handled).
+source_lifecycle() { source_field "$1" lifecycle; }
 # Every captured round of one source with no handled acknowledgement yet.
 source_pending() {  # <source-id>
   fm_procevent_pending "$STATE" | awk -v id="$1" 'index($0, "/" id ".") { print }'
@@ -524,10 +554,17 @@ extension_registration_replacement_safe_locked() {  # <source-id>
 }
 
 cmd_register() {
-  local adapter=${1-} id=${2-} sep=${3-}
-  shift 3 2>/dev/null || usage
+  local adapter=${1-} id=${2-} one_shot=0 sep=''
+  local -a publish_args=()
+  shift 2 2>/dev/null || usage
   fm_procevent_adapter_valid "$adapter" || die "adapter name must be lowercase alphanumeric or dash: $adapter"
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe and at most 64 characters: $id"
+  if [ "${1-}" = --one-shot ]; then
+    one_shot=1
+    shift
+  fi
+  sep=${1-}
+  shift 2>/dev/null || usage
   [ "$sep" = -- ] || usage
   [ "$#" -ge 1 ] || die "register needs at least one argv element after --"
   local arg
@@ -546,7 +583,10 @@ cmd_register() {
     fm_procevent_source_lock_release "$id"
     die "cannot replace extension registration while its prior runner remains active: $id"
   fi
-  if ! fm_procevent_registration_publish_locked "$STATE" "$adapter" "$id" "$@"; then
+  publish_args=("$STATE" "$adapter" "$id")
+  [ "$one_shot" -eq 0 ] || publish_args+=(--one-shot)
+  publish_args+=("$@")
+  if ! fm_procevent_registration_publish_locked "${publish_args[@]}"; then
     fm_procevent_source_lock_release "$id"
     die "cannot publish the registration"
   fi
@@ -910,6 +950,27 @@ publish_pending() {  # [result-file-to-skip]
       published=$((published + 1))
     fi
   done < <(fm_procevent_pending "$STATE")
+  printf '%s\n' "$published"
+}
+
+# Publish only ONE source's own unhandled pending results. cmd_start calls
+# this instead of the whole-home publish_pending above: that unscoped sweep,
+# run from inside every runner's own capture loop, was found acquiring and
+# releasing every OTHER registered source's lock on every single capture -
+# harmless with a few sources, but O(sources-squared) lock churn with dozens
+# of them live at once, and the actual cause of a measured system-load
+# incident. The whole-home catch-up this existed for stays owned by
+# cmd_reconcile's own unscoped call, which runs once per supervision cycle
+# from one process rather than once per capture from every runner.
+publish_pending_for_source() {  # <source-id> [result-file-to-skip]
+  local id=$1 skip=${2-} result published=0
+  while IFS= read -r result; do
+    [ -n "$result" ] || continue
+    [ "$result" = "$skip" ] && continue
+    if publish_result "$result"; then
+      published=$((published + 1))
+    fi
+  done < <(source_pending "$id")
   printf '%s\n' "$published"
 }
 
@@ -1393,7 +1454,7 @@ EOF
     elif fm_procevent_is_handled "$STATE" "$id" "$(fm_procevent_result_sequence "$durable")"; then
       handled_capture=1
     fi
-    publish_pending "$durable" >/dev/null
+    publish_pending_for_source "$id" "$durable" >/dev/null
   fi
   [ "$extension_owner" -eq 1 ] || rm -f -- "$runner"
   if [ "$self_announcing" -eq 1 ]; then
@@ -1409,7 +1470,7 @@ EOF
     if publish_result "$durable"; then
       published_capture=1
     fi
-    publish_pending "$durable" >/dev/null
+    publish_pending_for_source "$id" "$durable" >/dev/null
   elif [ "$handled_capture" -eq 1 ]; then
     :
   elif [ "$extension_owner" -eq 0 ] \
@@ -2085,16 +2146,25 @@ cmd_classify() {
 
 cmd_handled() {
   local id=${1-} seq=${2-} status result='' result_adapter='' conclude=0 registration='' retained=''
+  local kind='' lifecycle='' conclude_reason=''
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
   owner_lease_refresh
   fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
-  if [ "$(source_kind "$id" 2>/dev/null || true)" = task-owned ]; then
+  kind=$(source_kind "$id" 2>/dev/null || true)
+  [ "$kind" = task-owned ] || lifecycle=$(source_lifecycle "$id" 2>/dev/null || true)
+  if [ "$kind" = task-owned ] || [ "$lifecycle" = one-shot ]; then
     result=$(source_pending "$id" | awk -v want="/$id.$seq.result" 'index($0, want) { print; exit }')
     if [ -n "$result" ] \
-      && result_adapter=$(fm_procevent_result_adapter "$result" 2>/dev/null) \
-      && adapter_result_is_terminal "$result_adapter" "$result"; then
-      conclude=1
+      && result_adapter=$(fm_procevent_result_adapter "$result" 2>/dev/null); then
+      if adapter_result_is_terminal "$result_adapter" "$result"; then
+        conclude=1
+        conclude_reason='terminal round'
+      elif [ "$lifecycle" = one-shot ] \
+        && adapter_result_is_answer_bearing "$result_adapter" "$result"; then
+        conclude=1
+        conclude_reason='answered round'
+      fi
     fi
   fi
   if [ "$conclude" -eq 1 ]; then
@@ -2132,7 +2202,7 @@ cmd_handled() {
     *) die "cannot durably record handling: $id $seq" ;;
   esac
   if [ "$conclude" -eq 1 ]; then
-    printf 'retired: %s (owner acknowledged its terminal round)\n' "$id"
+    printf 'retired: %s (owner acknowledged its %s)\n' "$id" "$conclude_reason"
   fi
 }
 

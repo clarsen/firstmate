@@ -5308,4 +5308,172 @@ PATH="$UNDISP/bin:$PATH" FM_HOME="$UNDISP/home" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$undisp_art" >/dev/null 2>&1 || true
 pass "arm does not launch beside a stale claim whose process group is alive"
 
+# --- regression: a runner's own capture never touches another source's lock --
+# The incident: cmd_start's post-capture catch-up called the whole-home
+# publish_pending with no source filter, which walks every OTHER registered
+# source's pending backlog and acquires-then-releases ITS lock too. With
+# dozens of live sources (one per registered Lavish answer listener) this
+# became measurable mkdir/rmdir churn and system load, worst right after a
+# Lavish server restart made every listener reconnect and capture at once.
+# Prove the fix by holding an unrelated source's lock for the whole capture
+# under test: if that capture's publish step still swept and touched it, this
+# call would block on the held lock and the bounded timeout below would fire.
+HSPIN="$TMP_ROOT/hspin"; new_home "$HSPIN"
+mkdir -p "$HSPIN/state/procevent-inbox"
+printf 'an unrelated unhandled result\n' > "$HSPIN/state/procevent-inbox/spin-other.1.result"
+printf 'lavish\n' > "$HSPIN/state/procevent-inbox/spin-other.1.adapter"
+chmod 0600 "$HSPIN/state/procevent-inbox/spin-other.1.result" "$HSPIN/state/procevent-inbox/spin-other.1.adapter"
+SPIN_READY="$TMP_ROOT/spin-other-ready"
+SPIN_RELEASE="$TMP_ROOT/spin-other-release"
+hold_source_lock spin-other "$SPIN_READY" "$SPIN_RELEASE"
+SPIN_HOLDER_PID=$HOLDER_PID
+wait_for "$SPIN_READY" || fail "could not hold the unrelated source's lock before the capture under test"
+
+SPIN_TRIG="$TMP_ROOT/spin-target-trigger"
+pe_register "$HSPIN" lavish spin-target -- "$BLOCKER" "$SPIN_TRIG" "spin payload"
+: > "$SPIN_TRIG"
+spin_status=0
+timeout 10 env FM_HOME="$HSPIN" "$ROOT/bin/fm-procevent.sh" start spin-target >/dev/null \
+  || spin_status=$?
+: > "$SPIN_RELEASE"
+wait "$SPIN_HOLDER_PID" 2>/dev/null || true
+[ "$spin_status" -eq 0 ] \
+  || fail "the unrelated source's held lock blocked (or otherwise broke) a capture that must never touch it (exit $spin_status)"
+pass "a runner's own capture-and-publish cycle never touches another registered source's lock"
+
+# --- fm_procevent_lock_backoff_wait paces retries instead of busy-looping ----
+# Claim acquisition for a contended source now backs off with jitter instead
+# of polling at a fixed cadence, so many waiters on the same lock desynchronize
+# rather than retrying in lockstep. Hold a lock for a known window and count
+# how many times the underlying try-acquire primitive actually runs while
+# waiting for it: a busy loop would run it far more than a handful of times in
+# that window, while a paced backoff runs it only a few times and still
+# succeeds once the lock is released.
+BACKOFF_LOCK="$TMP_ROOT/backoff-test.lock"
+BACKOFF_READY="$TMP_ROOT/backoff-ready"
+BACKOFF_RELEASE="$TMP_ROOT/backoff-release"
+BACKOFF_HOLD_PROBE="$TMP_ROOT/backoff-hold.sh"
+cat > "$BACKOFF_HOLD_PROBE" <<'SH'
+#!/usr/bin/env bash
+set -u
+root=$1; lockpath=$2; ready=$3; release=$4
+. "$root/bin/fm-pr-lib.sh"
+. "$root/bin/fm-wake-lib.sh"
+fm_lock_try_create "$lockpath" || exit 1
+printf 'ready\n' > "$ready"
+while [ ! -e "$release" ]; do sleep 0.02; done
+SH
+chmod +x "$BACKOFF_HOLD_PROBE"
+"$BACKOFF_HOLD_PROBE" "$ROOT" "$BACKOFF_LOCK" "$BACKOFF_READY" "$BACKOFF_RELEASE" &
+backoff_holder=$!
+wait_for "$BACKOFF_READY" || fail "could not hold the backoff test lock"
+(sleep 0.6; : > "$BACKOFF_RELEASE") &
+backoff_releaser=$!
+
+BACKOFF_ATTEMPTS="$TMP_ROOT/backoff-attempts"
+: > "$BACKOFF_ATTEMPTS"
+BACKOFF_WAIT_PROBE="$TMP_ROOT/backoff-wait.sh"
+cat > "$BACKOFF_WAIT_PROBE" <<'SH'
+#!/usr/bin/env bash
+set -u
+root=$1; lockpath=$2; attempts_file=$3
+. "$root/bin/fm-pr-lib.sh"
+. "$root/bin/fm-wake-lib.sh"
+eval "$(declare -f fm_lock_try_acquire | sed '1s/fm_lock_try_acquire/original_fm_lock_try_acquire/')"
+fm_lock_try_acquire() {
+  printf 'x' >> "$attempts_file"
+  original_fm_lock_try_acquire "$@"
+}
+. "$root/bin/fm-procevent-lib.sh"
+fm_procevent_lock_backoff_wait "$lockpath"
+SH
+chmod +x "$BACKOFF_WAIT_PROBE"
+timeout 10 "$BACKOFF_WAIT_PROBE" "$ROOT" "$BACKOFF_LOCK" "$BACKOFF_ATTEMPTS" \
+  || fail "the backoff wait never acquired the lock once it was released"
+wait "$backoff_releaser" 2>/dev/null || true
+wait "$backoff_holder" 2>/dev/null || true
+backoff_attempts=$(wc -c < "$BACKOFF_ATTEMPTS" | tr -d ' ')
+[ "$backoff_attempts" -ge 2 ] \
+  || fail "the backoff wait never retried a lock that was held when it started"
+[ "$backoff_attempts" -le 30 ] \
+  || fail "the backoff wait busy-looped: $backoff_attempts tries against a 0.6s-held lock"
+pass "fm_procevent_lock_backoff_wait paces retries with bounded churn instead of busy-looping on a contended lock"
+
+# --- a source armed one-shot retires once its answer is acknowledged, even --
+# --- when its session has not ended ----------------------------------------
+# The other incident cause: most of the long-lived listeners were decision
+# pages whose questions were already answered, because only a captured
+# result that ENDS the session self-retires; a real answer on a session that
+# stays open (so the captain could still reconcile it) left the registration
+# behind for reconcile to relaunch forever. A source registered `--one-shot`
+# (what bin/fm-bearings-board.sh page now arms with) has nothing further to
+# collect once it is answered, so acknowledging that round retires it exactly
+# like a terminal round would.
+HSHOT="$TMP_ROOT/hshot"; new_home "$HSHOT"
+SHOT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-oneshot-stub")
+SHOT_COUNT="$TMP_ROOT/oneshot-poll-count"
+cat > "$SHOT_BIN/lavish-axi" <<SH
+#!/usr/bin/env bash
+[ "\${1-}" != end ] || exit 0
+n=\$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)
+printf '%s\n' "\$((n + 1))" > "$SHOT_COUNT"
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\"schema\\":\\"fm-bearings-answer.v1\\",\\"question\\":\\"noop-check-oneshot\\",\\"selection\\":\\"a\\",\\"note\\":\\"\\"}"\n'
+SH
+chmod +x "$SHOT_BIN/lavish-axi"
+SHOT_ART="$TMP_ROOT/oneshot.html"
+printf '<h1>oneshot</h1>\n' > "$SHOT_ART"
+lavish_session "$SHOT_ART"
+shot_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SHOT_ART")
+fm_test_track_procevent_home "$HSHOT"
+PATH="$SHOT_BIN:$PATH" FM_HOME="$HSHOT" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$SHOT_ART" --one-shot >/dev/null
+wait_capture "$HSHOT" "$shot_id" \
+  || fail "the one-shot source's answer was never captured"
+[ "$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)" = 1 ] \
+  || fail "the one-shot fixture was polled more than once before being handled"
+[ -e "$HSHOT/state/procevent/$shot_id.source" ] \
+  || fail "an answered-but-not-ended one-shot source was retired before its answer was acknowledged"
+handled_out=$(PATH="$SHOT_BIN:$PATH" pe "$HSHOT" handled "$shot_id" 1)
+assert_contains "$handled_out" "retired: $shot_id" \
+  "acknowledging a one-shot source's answered-but-not-ended round did not report it retired"
+[ ! -e "$HSHOT/state/procevent/$shot_id.source" ] \
+  || fail "acknowledging a one-shot source's answer did not retire its registration"
+PATH="$SHOT_BIN:$PATH" pe "$HSHOT" reconcile >/dev/null 2>&1 || true
+sleep 0.3
+[ "$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)" = 1 ] \
+  || fail "reconcile relaunched a one-shot source after its answer was acknowledged and retired"
+pass "a one-shot source retires once its answered-but-not-ended round is acknowledged, and reconcile never relaunches it"
+
+# --- the same answered-but-not-ended round leaves an ordinary source armed --
+# A source registered without --one-shot (every board bin/fm-bearings-board.sh
+# build arms, and any other ordinary firstmate-owned board) must keep exactly
+# its old behavior: `handled` records the acknowledgement and nothing more,
+# because such a board is reused across many separate questions.
+HNOSHOT="$TMP_ROOT/hnoshot"; new_home "$HNOSHOT"
+NOSHOT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-noshot-stub")
+cat > "$NOSHOT_BIN/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\"schema\\":\\"fm-bearings-answer.v1\\",\\"question\\":\\"noop-check-noshot\\",\\"selection\\":\\"a\\",\\"note\\":\\"\\"}"\n'
+SH
+chmod +x "$NOSHOT_BIN/lavish-axi"
+NOSHOT_ART="$TMP_ROOT/noshot.html"
+printf '<h1>noshot</h1>\n' > "$NOSHOT_ART"
+lavish_session "$NOSHOT_ART"
+noshot_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$NOSHOT_ART")
+fm_test_track_procevent_home "$HNOSHOT"
+PATH="$NOSHOT_BIN:$PATH" FM_HOME="$HNOSHOT" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$NOSHOT_ART" >/dev/null
+wait_capture "$HNOSHOT" "$noshot_id" \
+  || fail "the ordinary board's answer was never captured"
+noshot_handled_out=$(PATH="$NOSHOT_BIN:$PATH" pe "$HNOSHOT" handled "$noshot_id" 1)
+assert_contains "$noshot_handled_out" "handled: $noshot_id 1" \
+  "acknowledging an ordinary board's answered-but-not-ended round did not record it"
+case "$noshot_handled_out" in
+  *retired:*) fail "acknowledging an ordinary (non-one-shot) board's answer retired it: $noshot_handled_out" ;;
+esac
+[ -e "$HNOSHOT/state/procevent/$noshot_id.source" ] \
+  || fail "acknowledging an ordinary board's answer retired its registration"
+pass "an ordinary board's answered-but-not-ended round stays armed after handled, exactly as before"
+
 printf '\nall procevent tests passed\n'

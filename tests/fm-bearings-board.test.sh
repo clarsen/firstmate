@@ -370,6 +370,12 @@ test_build_injects_binds_then_arms() {
     || fail "the board source is not bound any-origin"
   run_procevent "$home" list | awk 'NR > 1 { print $1 }' | grep -Fxq "$sid" \
     || fail "the board source is not registered after build"
+  # The persistent board is reused across many separate questions, unlike a
+  # one-off bin/fm-bearings-board.sh page, so it must never be registered
+  # one-shot: that would retire it the moment any single question is
+  # acknowledged, taking the whole fleet board down with it.
+  grep -qx 'lifecycle=one-shot' "$home/state/procevent/$sid.source" \
+    && fail "the persistent board source was registered one-shot and would be retired by its first acknowledged answer"
   pass "build injects the payload, binds any-origin, then arms the source"
 }
 

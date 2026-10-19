@@ -361,13 +361,35 @@ fm_procevent_source_lock_path() {
   printf '%s/%s.lock\n' "$(fm_procevent_claim_root)" "$1"
 }
 
+# Retry cadence for a contended source lock: capped exponential backoff with
+# jitter, so concurrent waiters on the SAME source (a runner racing reconcile,
+# or two generations racing a reclaim) desynchronize instead of retrying in
+# lockstep at fm_lock_acquire_wait's fixed interval - the thundering-herd shape
+# that turned claim contention into measurable system load. Still an
+# unconditional wait: fm_lock_try_acquire's own stale-owner recovery is
+# unchanged, so this only paces retries, never whether one eventually
+# succeeds.
+fm_procevent_lock_backoff_wait() {  # <lockdir>
+  local lockdir=$1 attempt=0
+  while ! fm_lock_try_acquire "$lockdir"; do
+    attempt=$((attempt < 10 ? attempt + 1 : attempt))
+    perl -MTime::HiRes=sleep -e '
+      my $attempt = shift;
+      my $cap = 1.0;
+      my $base = 0.05 * (2 ** ($attempt - 1));
+      $base = $cap if $base > $cap;
+      sleep($base / 2 + rand($base / 2));
+    ' "$attempt"
+  done
+}
+
 fm_procevent_source_lock_acquire() {
   local id=$1 root
   fm_procevent_source_id_valid "$id" || return 1
   root=$(fm_procevent_claim_root)
   (umask 077; mkdir -p "$root") || return 1
   [ -d "$root" ] && [ ! -L "$root" ] || return 1
-  fm_lock_acquire_wait "$(fm_procevent_source_lock_path "$id")"
+  fm_procevent_lock_backoff_wait "$(fm_procevent_source_lock_path "$id")"
 }
 
 # fm_procevent_source_lock_try_acquire <source-id>
@@ -386,9 +408,13 @@ fm_procevent_source_lock_release() {
   fm_lock_release "$(fm_procevent_source_lock_path "$1")"
 }
 
-fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <argv...>
-  local state=$1 adapter=$2 id=$3 reg dest tmp arg identity
+fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> [--one-shot] <argv...>
+  local state=$1 adapter=$2 id=$3 one_shot=0 reg dest tmp arg identity
   shift 3
+  if [ "${1-}" = --one-shot ]; then
+    one_shot=1
+    shift
+  fi
   fm_procevent_adapter_valid "$adapter" || return 1
   fm_procevent_source_id_valid "$id" || return 1
   [ "$#" -ge 1 ] || return 1
@@ -402,6 +428,7 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
   if {
     printf 'adapter=%s\n' "$adapter"
+    [ "$one_shot" -eq 0 ] || printf 'lifecycle=one-shot\n'
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
     printf '%s\n' "$@"

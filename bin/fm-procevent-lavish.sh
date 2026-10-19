@@ -2,10 +2,11 @@
 # Lavish adapter for the generic process-to-event runner.
 #
 # Usage:
-#   fm-procevent-lavish.sh arm <artifact.html> [--for <task-id>] [--agent-reply-file <path>]
+#   fm-procevent-lavish.sh arm <artifact.html> [--for <task-id>] [--agent-reply-file <path>] [--one-shot]
 #   fm-procevent-lavish.sh classify <result-file>
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh silent <result-file>
+#   fm-procevent-lavish.sh answer-bearing <result-file>
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
@@ -64,6 +65,16 @@
 #            only place Lavish's notion of "nothing was said" is decided.
 #            Task-owned terminal rounds bypass generic silence so their owner
 #            receives the stop-and-conclude instruction.
+# answer-bearing
+#            Exit 0 when the captured result carries any queued content block
+#            at all, regardless of whether the session has ended; any other
+#            exit means no answer. This is the generic one-shot-retirement
+#            contract bin/fm-procevent.sh's `handled` calls only for a source
+#            registered with `arm --one-shot`: once such a one-off source's
+#            answer is acknowledged, it retires exactly like a terminal round,
+#            because it has nothing further to collect. A board kept armed
+#            across many separate questions is never registered one-shot, so
+#            this seam never retires it.
 #
 # AN EMPTY BOARD CLOSE IS NOT NEWS, and that is what `silent` exists to say.
 # Closing a review surface that carried nothing is the single most common Lavish
@@ -252,8 +263,8 @@ cmd_source_id() {
 }
 
 cmd_arm() {
-  local artifact='' task='' reply_file='' id real owner listening
-  local -a listener=()
+  local artifact='' task='' reply_file='' one_shot=0 id real owner listening
+  local -a listener=() register_args=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --for)
@@ -266,6 +277,10 @@ cmd_arm() {
         reply_file=$2
         shift 2
         ;;
+      --one-shot)
+        one_shot=1
+        shift
+        ;;
       --*) usage ;;
       *)
         [ -z "$artifact" ] || usage
@@ -276,6 +291,10 @@ cmd_arm() {
   done
   [ -n "$artifact" ] || usage
   [ -z "$reply_file" ] || [ -n "$task" ] || usage
+  # --one-shot is a plain-register concept: a task-owned board already
+  # concludes its own terminal round through `handled`, by task, not by
+  # adapter-declared lifecycle.
+  [ "$one_shot" -eq 0 ] || [ -z "$task" ] || usage
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
   poll_retry_delay >/dev/null
   id=$(cmd_source_id "$artifact") || exit 1
@@ -290,7 +309,9 @@ cmd_arm() {
     # This adapter's own listener command, which runs the plain blocking form
     # with no --timeout-ms so completion is a server event, and absorbs only
     # the exact transient interruption.
-    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" \
+    register_args=(lavish "$id")
+    [ "$one_shot" -eq 0 ] || register_args+=(--one-shot)
+    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" register "${register_args[@]}" \
       -- "${listener[@]}" || exit 1
   fi
   # Registration is not a running listener. Readiness is the process-event
@@ -625,6 +646,18 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
+# Whether a captured result carries any actual answer the captain gave,
+# independent of whether the session itself has ended (see `answer-bearing`
+# in the header). result_has_queued_content already proves exactly this: 0
+# means content present, 1 means provably none, 2 means the check could not
+# complete, so only 0 is an answer.
+cmd_answer_bearing() {
+  local file=${1-}
+  [ -n "$file" ] || usage
+  [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
+  result_has_queued_content "$file"
+}
+
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
 # card's declared close mode (`done` or `release`) to the keyed-answer intake. Rows are enumerated by bin/FmLavishPrompts.pm, the
@@ -845,6 +878,7 @@ case "${1-}" in
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
+  answer-bearing) shift; cmd_answer_bearing "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;
