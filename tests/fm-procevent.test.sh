@@ -1252,10 +1252,11 @@ pass "an acknowledged note is never resurrected and stops ringing across repeate
 # reach past it and retire whatever board the artifact carries by then.
 HCONC="$TMP_ROOT/hconclude"; new_home "$HCONC"
 CONC_BIN=$(fm_fakebin "$TMP_ROOT/lavish-conclude-stub")
-cat > "$CONC_BIN/lavish-axi" <<'SH'
+CONC_END_LOG="$TMP_ROOT/conclude-end-log"
+cat > "$CONC_BIN/lavish-axi" <<SH
 #!/usr/bin/env bash
-[ "${1-}" != end ] || exit 0
-printf 'session:\n  status: ended\n  session_ended: true\n'
+if [ "\${1-}" = end ]; then printf '%s\\n' "\$2" >> "$CONC_END_LOG"; exit 0; fi
+printf 'session:\\n  status: ended\\n  session_ended: true\\n'
 SH
 chmod +x "$CONC_BIN/lavish-axi"
 CONC_ART="$TMP_ROOT/conclude-board.html"
@@ -1287,6 +1288,9 @@ assert_contains "$conclude_out" "retired: $conc_id" \
   "acknowledging the terminal round did not report the board retired"
 [ ! -e "$HCONC/state/procevent/$conc_id.source" ] \
   || fail "acknowledging the terminal round did not retire the worker-owned board"
+CONC_REAL=$("$ROOT/bin/fm-procevent-lavish.sh" canonical-path "$CONC_ART")
+[ "$(cat "$CONC_END_LOG" 2>/dev/null)" = "$CONC_REAL" ] \
+  || fail "concluding the worker-owned board did not end its Lavish session once: $(cat "$CONC_END_LOG" 2>/dev/null)"
 PATH="$CONC_BIN:$PATH" FM_HOME="$HCONC" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$CONC_ART" --for worker-7 >/dev/null
 repeat_out=$(PATH="$CONC_BIN:$PATH" pe "$HCONC" handled "$conc_id" 1)
@@ -1297,7 +1301,9 @@ case "$repeat_out" in
 esac
 [ -e "$HCONC/state/procevent/$conc_id.source" ] \
   || fail "repeating a closed acknowledgement retired the board armed after it"
-pass "acknowledging a terminal round concludes that round only"
+[ "$(cat "$CONC_END_LOG" 2>/dev/null)" = "$CONC_REAL" ] \
+  || fail "repeating a closed acknowledgement ended the re-armed board's session: $(cat "$CONC_END_LOG" 2>/dev/null)"
+pass "acknowledging a terminal round concludes that round only and ends its Lavish session"
 
 # --- end-user-aligned regression: an interrupted conclude ends the board -----
 # The conclude drops the registration and then records the acknowledgement. An
@@ -5307,5 +5313,290 @@ touch "$READY_RELEASE"
 PATH="$UNDISP/bin:$PATH" FM_HOME="$UNDISP/home" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$undisp_art" >/dev/null 2>&1 || true
 pass "arm does not launch beside a stale claim whose process group is alive"
+
+# --- regression: a runner's own capture never touches another source's lock --
+# The incident: cmd_start's post-capture catch-up called the whole-home
+# publish_pending with no source filter, which walks every OTHER registered
+# source's pending backlog and acquires-then-releases ITS lock too. With
+# dozens of live sources (one per registered Lavish answer listener) this
+# became measurable mkdir/rmdir churn and system load, worst right after a
+# Lavish server restart made every listener reconnect and capture at once.
+# Prove the fix by holding an unrelated source's lock for the whole capture
+# under test: if that capture's publish step still swept and touched it, this
+# call would block on the held lock and the bounded timeout below would fire.
+HSPIN="$TMP_ROOT/hspin"; new_home "$HSPIN"
+mkdir -p "$HSPIN/state/procevent-inbox"
+printf 'an unrelated unhandled result\n' > "$HSPIN/state/procevent-inbox/spin-other.1.result"
+printf 'lavish\n' > "$HSPIN/state/procevent-inbox/spin-other.1.adapter"
+chmod 0600 "$HSPIN/state/procevent-inbox/spin-other.1.result" "$HSPIN/state/procevent-inbox/spin-other.1.adapter"
+SPIN_READY="$TMP_ROOT/spin-other-ready"
+SPIN_RELEASE="$TMP_ROOT/spin-other-release"
+hold_source_lock spin-other "$SPIN_READY" "$SPIN_RELEASE"
+SPIN_HOLDER_PID=$HOLDER_PID
+wait_for "$SPIN_READY" || fail "could not hold the unrelated source's lock before the capture under test"
+
+SPIN_TRIG="$TMP_ROOT/spin-target-trigger"
+pe_register "$HSPIN" lavish spin-target -- "$BLOCKER" "$SPIN_TRIG" "spin payload"
+: > "$SPIN_TRIG"
+spin_status=0
+timeout 10 env FM_HOME="$HSPIN" "$ROOT/bin/fm-procevent.sh" start spin-target >/dev/null \
+  || spin_status=$?
+: > "$SPIN_RELEASE"
+wait "$SPIN_HOLDER_PID" 2>/dev/null || true
+[ "$spin_status" -eq 0 ] \
+  || fail "the unrelated source's held lock blocked (or otherwise broke) a capture that must never touch it (exit $spin_status)"
+pass "a runner's own capture-and-publish cycle never touches another registered source's lock"
+
+# --- fm_procevent_lock_backoff_wait paces retries instead of busy-looping ----
+# Claim acquisition for a contended source now backs off with jitter instead
+# of polling at a fixed cadence, so many waiters on the same lock desynchronize
+# rather than retrying in lockstep. Hold a lock for a known window and count
+# how many times the underlying try-acquire primitive actually runs while
+# waiting for it: a busy loop would run it far more than a handful of times in
+# that window, while a paced backoff runs it only a few times and still
+# succeeds once the lock is released.
+BACKOFF_LOCK="$TMP_ROOT/backoff-test.lock"
+BACKOFF_READY="$TMP_ROOT/backoff-ready"
+BACKOFF_RELEASE="$TMP_ROOT/backoff-release"
+BACKOFF_HOLD_PROBE="$TMP_ROOT/backoff-hold.sh"
+cat > "$BACKOFF_HOLD_PROBE" <<'SH'
+#!/usr/bin/env bash
+set -u
+root=$1; lockpath=$2; ready=$3; release=$4
+. "$root/bin/fm-pr-lib.sh"
+. "$root/bin/fm-wake-lib.sh"
+fm_lock_try_create "$lockpath" || exit 1
+printf 'ready\n' > "$ready"
+while [ ! -e "$release" ]; do sleep 0.02; done
+SH
+chmod +x "$BACKOFF_HOLD_PROBE"
+"$BACKOFF_HOLD_PROBE" "$ROOT" "$BACKOFF_LOCK" "$BACKOFF_READY" "$BACKOFF_RELEASE" &
+backoff_holder=$!
+wait_for "$BACKOFF_READY" || fail "could not hold the backoff test lock"
+(sleep 0.6; : > "$BACKOFF_RELEASE") &
+backoff_releaser=$!
+
+BACKOFF_ATTEMPTS="$TMP_ROOT/backoff-attempts"
+: > "$BACKOFF_ATTEMPTS"
+BACKOFF_WAIT_PROBE="$TMP_ROOT/backoff-wait.sh"
+cat > "$BACKOFF_WAIT_PROBE" <<'SH'
+#!/usr/bin/env bash
+set -u
+root=$1; lockpath=$2; attempts_file=$3
+. "$root/bin/fm-pr-lib.sh"
+. "$root/bin/fm-wake-lib.sh"
+eval "$(declare -f fm_lock_try_acquire | sed '1s/fm_lock_try_acquire/original_fm_lock_try_acquire/')"
+fm_lock_try_acquire() {
+  printf 'x' >> "$attempts_file"
+  original_fm_lock_try_acquire "$@"
+}
+. "$root/bin/fm-procevent-lib.sh"
+fm_procevent_lock_backoff_wait "$lockpath"
+SH
+chmod +x "$BACKOFF_WAIT_PROBE"
+timeout 10 "$BACKOFF_WAIT_PROBE" "$ROOT" "$BACKOFF_LOCK" "$BACKOFF_ATTEMPTS" \
+  || fail "the backoff wait never acquired the lock once it was released"
+wait "$backoff_releaser" 2>/dev/null || true
+wait "$backoff_holder" 2>/dev/null || true
+backoff_attempts=$(wc -c < "$BACKOFF_ATTEMPTS" | tr -d ' ')
+[ "$backoff_attempts" -ge 2 ] \
+  || fail "the backoff wait never retried a lock that was held when it started"
+[ "$backoff_attempts" -le 30 ] \
+  || fail "the backoff wait busy-looped: $backoff_attempts tries against a 0.6s-held lock"
+pass "fm_procevent_lock_backoff_wait paces retries with bounded churn instead of busy-looping on a contended lock"
+
+# --- a source armed one-shot retires once its answer is acknowledged, even --
+# --- when its session has not ended ----------------------------------------
+# The other incident cause: most of the long-lived listeners were decision
+# pages whose questions were already answered, because only a captured
+# result that ENDS the session self-retires; a real answer on a session that
+# stays open (so the captain could still reconcile it) left the registration
+# behind for reconcile to relaunch forever. A source registered `--one-shot`
+# (what bin/fm-bearings-board.sh page now arms with) has nothing further to
+# collect once it is answered, so acknowledging that round retires it exactly
+# like a terminal round would.
+# A minimal decision page as bin/fm-bearings-board.sh page publishes it: the
+# embedded fm-decision-page.v1 payload is what names the page's questions.
+decision_page() {  # <path> <question-key>...
+  local path=$1 key questions=''
+  shift
+  for key in "$@"; do
+    questions="$questions${questions:+,}{\"key\":\"$key\",\"title\":\"$key\",\"options\":[{\"value\":\"a\",\"label\":\"A\"}]}"
+  done
+  printf '<h1>page</h1>\n<script id="decision-page-data" type="application/json">\n{"schema":"fm-decision-page.v1","title":"t","questions":[%s]}\n</script>\n' \
+    "$questions" > "$path"
+}
+
+HSHOT="$TMP_ROOT/hshot"; new_home "$HSHOT"
+SHOT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-oneshot-stub")
+SHOT_COUNT="$TMP_ROOT/oneshot-poll-count"
+SHOT_END_LOG="$TMP_ROOT/oneshot-end-log"
+cat > "$SHOT_BIN/lavish-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1-}" = end ]; then
+  printf '%s\\n' "\$2" >> "$SHOT_END_LOG"
+  [ "\${SHOT_END_MODE:-ok}" = ok ] || { printf 'error: boom\\n' >&2; exit 1; }
+  exit 0
+fi
+n=\$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)
+printf '%s\n' "\$((n + 1))" > "$SHOT_COUNT"
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","noop-check-oneshot -> a","Answer - noop-check-oneshot: a Context data: {\\\\"schema\\\\":\\\\"fm-decision-page-answer.v1\\\\",\\\\"question\\\\":\\\\"noop-check-oneshot\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n'
+SH
+chmod +x "$SHOT_BIN/lavish-axi"
+SHOT_ART="$TMP_ROOT/oneshot.html"
+decision_page "$SHOT_ART" noop-check-oneshot
+lavish_session "$SHOT_ART"
+shot_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SHOT_ART")
+fm_test_track_procevent_home "$HSHOT"
+PATH="$SHOT_BIN:$PATH" FM_HOME="$HSHOT" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$SHOT_ART" --one-shot >/dev/null
+wait_capture "$HSHOT" "$shot_id" \
+  || fail "the one-shot source's answer was never captured"
+[ "$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)" = 1 ] \
+  || fail "the one-shot fixture was polled more than once before being handled"
+[ -e "$HSHOT/state/procevent/$shot_id.source" ] \
+  || fail "an answered-but-not-ended one-shot source was retired before its answer was acknowledged"
+shot_answers=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$(first_result "$HSHOT" "$shot_id")")
+[ "$(printf '%s\n' "$shot_answers" | cut -f1,2)" = "$(printf 'noop-check-oneshot\ta')" ] \
+  || fail "a decision page's queued fm-decision-page-answer.v1 row was not read as a keyed answer: $shot_answers"
+handled_out=$(PATH="$SHOT_BIN:$PATH" pe "$HSHOT" handled "$shot_id" 1)
+assert_contains "$handled_out" "retired: $shot_id" \
+  "acknowledging a one-shot source's answered-but-not-ended round did not report it retired"
+[ ! -e "$HSHOT/state/procevent/$shot_id.source" ] \
+  || fail "acknowledging a one-shot source's answer did not retire its registration"
+SHOT_REAL=$("$ROOT/bin/fm-procevent-lavish.sh" canonical-path "$SHOT_ART")
+[ "$(cat "$SHOT_END_LOG" 2>/dev/null)" = "$SHOT_REAL" ] \
+  || fail "retiring an answered one-shot page did not end its Lavish session once: $(cat "$SHOT_END_LOG" 2>/dev/null)"
+PATH="$SHOT_BIN:$PATH" pe "$HSHOT" reconcile >/dev/null 2>&1 || true
+sleep 0.3
+[ "$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)" = 1 ] \
+  || fail "reconcile relaunched a one-shot source after its answer was acknowledged and retired"
+pass "a one-shot source retires once its answered-but-not-ended round is acknowledged, and reconcile never relaunches it"
+
+# --- ending the session is best effort: a failing or missing lavish-axi never -
+# --- fails the acknowledgement that retires a one-shot page ---------------------
+for shot_mode in fail missing; do
+  HSHOTF="$TMP_ROOT/hshot-$shot_mode"; new_home "$HSHOTF"
+  rm -f "$SHOT_COUNT" "$SHOT_END_LOG"
+  SHOTF_ART="$TMP_ROOT/oneshot-$shot_mode.html"
+  decision_page "$SHOTF_ART" noop-check-oneshot
+  lavish_session "$SHOTF_ART"
+  shotf_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SHOTF_ART")
+  fm_test_track_procevent_home "$HSHOTF"
+  PATH="$SHOT_BIN:$PATH" FM_HOME="$HSHOTF" \
+    "$ROOT/bin/fm-procevent-lavish.sh" arm "$SHOTF_ART" --one-shot >/dev/null
+  wait_capture "$HSHOTF" "$shotf_id" \
+    || fail "the one-shot source's answer was never captured with end mode $shot_mode"
+  if [ "$shot_mode" = fail ]; then
+    shotf_path="$SHOT_BIN:$PATH"
+  else
+    shotf_path=$(printf '%s' "$PATH" | tr ':' '\n' \
+      | while IFS= read -r dir; do [ -x "$dir/lavish-axi" ] || printf '%s:' "$dir"; done)
+    shotf_path=${shotf_path%:}
+  fi
+  shotf_status=0
+  shotf_out=$(SHOT_END_MODE=$shot_mode PATH="$shotf_path" pe "$HSHOTF" handled "$shotf_id" 1) \
+    || shotf_status=$?
+  [ "$shotf_status" -eq 0 ] \
+    || fail "a $shot_mode lavish-axi failed the one-shot acknowledgement (exit $shotf_status)"
+  assert_contains "$shotf_out" "retired: $shotf_id" \
+    "a $shot_mode lavish-axi stopped the one-shot page from retiring"
+  [ ! -e "$HSHOTF/state/procevent/$shotf_id.source" ] \
+    || fail "a $shot_mode lavish-axi left the one-shot registration behind"
+  [ -f "$HSHOTF/state/procevent-inbox/$shotf_id.1.handled" ] \
+    || fail "a $shot_mode lavish-axi lost the one-shot acknowledgement"
+  case "$shot_mode" in
+    fail) [ -s "$SHOT_END_LOG" ] || fail "the failing lavish-axi end was never attempted" ;;
+    missing) [ ! -s "$SHOT_END_LOG" ] || fail "a lavish-axi absent from PATH was still invoked" ;;
+  esac
+done
+pass "a failing or missing lavish-axi never fails the acknowledgement that retires a one-shot page"
+
+# --- a one-shot page keeps listening until every question has an answer ------
+# A decision page can ask several questions and each card queues its own
+# answer, so a round that answers only some of them must not retire the page:
+# the rest would reach no listener. Only the round that leaves no question
+# unanswered, across every round so far, concludes it.
+HTWO="$TMP_ROOT/htwo"; new_home "$HTWO"
+TWO_BIN=$(fm_fakebin "$TMP_ROOT/lavish-two-stub")
+TWO_COUNT="$TMP_ROOT/two-poll-count"
+TWO_RELEASE="$TMP_ROOT/two-release"
+cat > "$TWO_BIN/lavish-axi" <<SH
+#!/usr/bin/env bash
+[ "\${1-}" != end ] || exit 0
+n=\$(cat "$TWO_COUNT" 2>/dev/null || echo 0)
+n=\$((n + 1))
+printf '%s\\n' "\$n" > "$TWO_COUNT"
+case "\$n" in
+  1) q=two-first ;;
+  2) q=two-second ;;
+  *) while [ ! -e "$TWO_RELEASE" ]; do sleep 0.1; done; exit 1 ;;
+esac
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","%s -> a","Answer - %s: a Context data: {\\\\"schema\\\\":\\\\"fm-decision-page-answer.v1\\\\",\\\\"question\\\\":\\\\"%s\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n' "\$q" "\$q" "\$q"
+SH
+chmod +x "$TWO_BIN/lavish-axi"
+TWO_ART="$TMP_ROOT/two-question.html"
+decision_page "$TWO_ART" two-first two-second
+lavish_session "$TWO_ART"
+two_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$TWO_ART")
+fm_test_track_procevent_home "$HTWO"
+PATH="$TWO_BIN:$PATH" FM_HOME="$HTWO" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$TWO_ART" --one-shot >/dev/null
+wait_capture "$HTWO" "$two_id" \
+  || fail "the two-question page's first answer was never captured"
+two_first_out=$(PATH="$TWO_BIN:$PATH" pe "$HTWO" handled "$two_id" 1)
+assert_contains "$two_first_out" "handled: $two_id 1" \
+  "acknowledging the partially answered round was not recorded"
+case "$two_first_out" in
+  *retired:*) fail "acknowledging a round that answered one of two questions retired the page: $two_first_out" ;;
+esac
+[ -e "$HTWO/state/procevent/$two_id.source" ] \
+  || fail "acknowledging a round that answered one of two questions dropped the page's registration"
+PATH="$TWO_BIN:$PATH" pe "$HTWO" reconcile >/dev/null 2>&1 || true
+wait_for "$HTWO/state/procevent-inbox/$two_id.2.result" \
+  || fail "the page stopped listening after a partially answered round"
+for _ in $(seq 1 100); do
+  [ -e "$FM_PROCEVENT_CLAIM_ROOT/$two_id.claim" ] || break
+  sleep 0.1
+done
+two_second_out=$(PATH="$TWO_BIN:$PATH" pe "$HTWO" handled "$two_id" 2)
+: > "$TWO_RELEASE"
+assert_contains "$two_second_out" "retired: $two_id" \
+  "acknowledging the round that answered the last open question did not retire the page"
+[ ! -e "$HTWO/state/procevent/$two_id.source" ] \
+  || fail "acknowledging the round that answered the last open question left the page registered"
+pass "a one-shot page stays armed through a partial answer and retires once every question is answered"
+
+# --- the same answered-but-not-ended round leaves an ordinary source armed --
+# A source registered without --one-shot (every board bin/fm-bearings-board.sh
+# build arms, and any other ordinary firstmate-owned board) must keep exactly
+# its old behavior: `handled` records the acknowledgement and nothing more,
+# because such a board is reused across many separate questions.
+HNOSHOT="$TMP_ROOT/hnoshot"; new_home "$HNOSHOT"
+NOSHOT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-noshot-stub")
+cat > "$NOSHOT_BIN/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+[ "${1-}" != end ] || exit 0
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\"schema\\":\\"fm-bearings-answer.v1\\",\\"question\\":\\"noop-check-noshot\\",\\"selection\\":\\"a\\",\\"note\\":\\"\\"}"\n'
+SH
+chmod +x "$NOSHOT_BIN/lavish-axi"
+NOSHOT_ART="$TMP_ROOT/noshot.html"
+printf '<h1>noshot</h1>\n' > "$NOSHOT_ART"
+lavish_session "$NOSHOT_ART"
+noshot_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$NOSHOT_ART")
+fm_test_track_procevent_home "$HNOSHOT"
+PATH="$NOSHOT_BIN:$PATH" FM_HOME="$HNOSHOT" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$NOSHOT_ART" >/dev/null
+wait_capture "$HNOSHOT" "$noshot_id" \
+  || fail "the ordinary board's answer was never captured"
+noshot_handled_out=$(PATH="$NOSHOT_BIN:$PATH" pe "$HNOSHOT" handled "$noshot_id" 1)
+assert_contains "$noshot_handled_out" "handled: $noshot_id 1" \
+  "acknowledging an ordinary board's answered-but-not-ended round did not record it"
+case "$noshot_handled_out" in
+  *retired:*) fail "acknowledging an ordinary (non-one-shot) board's answer retired it: $noshot_handled_out" ;;
+esac
+[ -e "$HNOSHOT/state/procevent/$noshot_id.source" ] \
+  || fail "acknowledging an ordinary board's answer retired its registration"
+pass "an ordinary board's answered-but-not-ended round stays armed after handled, exactly as before"
 
 printf '\nall procevent tests passed\n'

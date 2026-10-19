@@ -2,16 +2,18 @@
 # Lavish adapter for the generic process-to-event runner.
 #
 # Usage:
-#   fm-procevent-lavish.sh arm <artifact.html> [--for <task-id>] [--agent-reply-file <path>]
+#   fm-procevent-lavish.sh arm <artifact.html> [--for <task-id>] [--agent-reply-file <path>] [--one-shot]
 #   fm-procevent-lavish.sh classify <result-file>
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh silent <result-file>
+#   fm-procevent-lavish.sh answered <source-id> <result-file> -- <argv>...
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh canonical-path <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html> [--keep-session]
+#   fm-procevent-lavish.sh retired <source-id> -- <argv>...
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
 #   fm-procevent-lavish.sh deliver-reply poll <artifact.html> --agent-reply-file <path>
 #
@@ -64,6 +66,22 @@
 #            only place Lavish's notion of "nothing was said" is decided.
 #            Task-owned terminal rounds bypass generic silence so their owner
 #            receives the stop-and-conclude instruction.
+# answered   Exit 0 when every question key of the decision page the
+#            registration's argv polls (the argument following the literal
+#            `poll`, whose embedded `decision-page-data` payload lists the
+#            questions) has a queued choice in this source's captured rounds,
+#            up to and including <result-file> and captured no earlier than the
+#            page itself; any other exit means the page still has an
+#            unanswered question. A round that answers only some questions, or
+#            carries only a freeform note, never completes the page, and an
+#            artifact with no readable page payload is never complete. This is
+#            the generic one-shot-retirement contract bin/fm-procevent.sh's
+#            `handled` calls only for a source registered with
+#            `arm --one-shot`: once such a page is fully answered and that
+#            round is acknowledged, it retires exactly like a terminal round,
+#            because it has nothing further to collect. A board kept armed
+#            across many separate questions is never registered one-shot, so
+#            this seam never retires it.
 #
 # AN EMPTY BOARD CLOSE IS NOT NEWS, and that is what `silent` exists to say.
 # Closing a review surface that carried nothing is the single most common Lavish
@@ -111,6 +129,16 @@
 #            retires only the source and leaves the session open; the board
 #            reopen path in fm-bearings-board.sh uses it so a reopened board is
 #            never ended by the retirement of its previous generation.
+# retired    The generic post-retirement seam bin/fm-procevent.sh's `handled`
+#            calls after it concludes a source by dropping its registration (a
+#            task-owned board's terminal round, or a `--one-shot` source's
+#            terminal or answered round), with that registration's stored argv.
+#            The artifact is the argument following the literal `poll` in that
+#            argv, and its session is ended exactly as `retire` ends it, with
+#            the same best-effort `session-ended:`/`session-end-skipped:`
+#            report, so a source `handled` concludes reads as finished in
+#            Lavish just like one retired explicitly. An argv with no poll
+#            artifact exits nonzero; the runner ignores this seam's status.
 #
 # `answers` is this adapter's half of the generic keyed-answer contract in
 # bin/fm-procevent.sh. It reports what the captain actually chose, as
@@ -252,8 +280,8 @@ cmd_source_id() {
 }
 
 cmd_arm() {
-  local artifact='' task='' reply_file='' id real owner listening
-  local -a listener=()
+  local artifact='' task='' reply_file='' one_shot=0 id real owner listening
+  local -a listener=() register_args=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --for)
@@ -266,6 +294,10 @@ cmd_arm() {
         reply_file=$2
         shift 2
         ;;
+      --one-shot)
+        one_shot=1
+        shift
+        ;;
       --*) usage ;;
       *)
         [ -z "$artifact" ] || usage
@@ -276,6 +308,10 @@ cmd_arm() {
   done
   [ -n "$artifact" ] || usage
   [ -z "$reply_file" ] || [ -n "$task" ] || usage
+  # --one-shot is a plain-register concept: a task-owned board already
+  # concludes its own terminal round through `handled`, by task, not by
+  # adapter-declared lifecycle.
+  [ "$one_shot" -eq 0 ] || [ -z "$task" ] || usage
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
   poll_retry_delay >/dev/null
   id=$(cmd_source_id "$artifact") || exit 1
@@ -290,7 +326,9 @@ cmd_arm() {
     # This adapter's own listener command, which runs the plain blocking form
     # with no --timeout-ms so completion is a server event, and absorbs only
     # the exact transient interruption.
-    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" \
+    register_args=(lavish "$id")
+    [ "$one_shot" -eq 0 ] || register_args+=(--one-shot)
+    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" register "${register_args[@]}" \
       -- "${listener[@]}" || exit 1
   fi
   # Registration is not a running listener. Readiness is the process-event
@@ -327,7 +365,7 @@ cmd_deliver_reply() {
 }
 
 cmd_retire() {
-  local artifact='' keep_session=0 id real
+  local artifact='' keep_session=0 id
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --keep-session) keep_session=1; shift ;;
@@ -339,9 +377,35 @@ cmd_retire() {
   id=$(cmd_source_id "$artifact") || exit 1
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id" || exit $?
   [ "$keep_session" = 0 ] || return 0
-  # The source is retired; now end the Lavish session as the agent so the page
-  # reads as finished instead of lingering as a live session. Best effort: a
-  # missing or failing lavish-axi never fails the retirement.
+  end_session_best_effort "$artifact"
+}
+
+# The artifact a registered listener argv polls: the argument following the
+# literal `poll`.
+poll_artifact() {  # <argv>...
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = poll ] && [ "$#" -ge 2 ]; then
+      printf '%s\n' "$2"
+      return 0
+    fi
+    shift
+  done
+  return 1
+}
+
+cmd_retired() {
+  local artifact
+  [ "$#" -ge 2 ] && [ -n "$1" ] && [ "$2" = -- ] || usage
+  shift 2
+  artifact=$(poll_artifact "$@") || die "the retired source's argv names no poll artifact"
+  end_session_best_effort "$artifact"
+}
+
+# The source is retired; now end the Lavish session as the agent so the page
+# reads as finished instead of lingering as a live session. Best effort: a
+# missing or failing lavish-axi never fails the retirement.
+end_session_best_effort() {  # <artifact>
+  local artifact=$1 real
   if ! command -v lavish-axi >/dev/null 2>&1; then
     printf 'session-end-skipped: lavish-axi is not installed\n'
     return 0
@@ -625,6 +689,49 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
+# Whether a one-shot decision page has a queued choice for every question it
+# asks (see `answered` in the header). The page's question keys come from its
+# own embedded payload; the answered keys are every choice row, ordinary or
+# reconcile, across this source's captured rounds up to <result-file>. A round
+# captured before the page was last written belongs to an earlier page at the
+# same path and answers nothing here.
+cmd_answered() {
+  local id=${1-} file=${2-} artifact base seq round round_seq questions
+  [ -n "$id" ] && [ -n "$file" ] && [ "${3-}" = -- ] || usage
+  shift 3
+  [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
+  base=${file##*/}
+  seq=${base#"$id."}
+  seq=${seq%.result}
+  case "$seq" in ''|*[!0-9]*) die "result file does not belong to $id: $file" ;; esac
+  artifact=$(poll_artifact "$@") || die "the source's argv names no poll artifact"
+  [ -f "$artifact" ] || return 1
+  questions=$(perl -MJSON::PP -e '
+    local $/; my $html = <STDIN>;
+    $html =~ m{<script id="decision-page-data" type="application/json">\s*(.*?)\s*</script>}s or exit 1;
+    my $data = eval { decode_json($1) };
+    ref($data) eq "HASH" && ref($data->{questions}) eq "ARRAY" && @{ $data->{questions} } or exit 1;
+    for my $q (@{ $data->{questions} }) {
+      ref($q) eq "HASH" && defined($q->{key}) && !ref($q->{key}) && length($q->{key}) or exit 1;
+      print "$q->{key}\n";
+    }
+  ' < "$artifact" | sort -u) || return 1
+  [ -n "$questions" ] || return 1
+  [ -z "$(
+    for round in "${file%/*}/$id".*.result; do
+      [ -f "$round" ] && [ ! -L "$round" ] || continue
+      round_seq=${round##*/}
+      round_seq=${round_seq#"$id."}
+      round_seq=${round_seq%.result}
+      case "$round_seq" in ''|*[!0-9]*) continue ;; esac
+      [ "$round_seq" -le "$seq" ] || continue
+      [ "$artifact" -nt "$round" ] && continue
+      cmd_choice_rows answers "$round" 2>/dev/null
+      cmd_choice_rows reconciles "$round" 2>/dev/null
+    done | cut -f1 | sort -u | comm -23 <(printf '%s\n' "$questions") -
+  )" ]
+}
+
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
 # card's declared close mode (`done` or `release`) to the keyed-answer intake. Rows are enumerated by bin/FmLavishPrompts.pm, the
@@ -634,6 +741,8 @@ cmd_silent() {
 # `choice`. A freeform `message` row is captain prose and is deliberately never a
 # source of decision keys. A row that does not carry both a slug-shaped `question`
 # and the versioned `selection` and `note` fields inside its `Context data:` block
+# (schema `fm-bearings-answer.v1` from the board or `fm-decision-page-answer.v1`
+# from a decision page, both queued by the shared decision card)
 # is skipped. A time-limited rollout branch accepts the old question/answer
 # shape only for ordinary answers and rejects its bare or annotated reconcile
 # values because old rows do not separate the selected option from its note.
@@ -663,7 +772,8 @@ cmd_choice_rows() {
       next unless ref($data) eq "HASH";
       my ($key, $selected, $note, $answer, $legacy);
       if (defined($data->{schema}) && !ref($data->{schema})
-          && $data->{schema} eq "fm-bearings-answer.v1") {
+          && ($data->{schema} eq "fm-bearings-answer.v1"
+            || $data->{schema} eq "fm-decision-page-answer.v1")) {
         $key = $data->{question};
         $selected = $data->{selection};
         $note = $data->{note};
@@ -833,6 +943,7 @@ cmd_read() {
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
+  retired)   shift; cmd_retired "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   deliver-reply) shift; cmd_deliver_reply "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
@@ -845,6 +956,7 @@ case "${1-}" in
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
+  answered)  shift; cmd_answered "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;

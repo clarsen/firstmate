@@ -643,8 +643,14 @@ await_source_owner() {  # <source-id>
 # after the reopen retire: a one-off question page prints its captain-facing
 # URL there, while the board omits it because captains reach the stable board
 # path directly.
+# A page is armed `--one-shot` so bin/fm-procevent.sh handled retires it once
+# every one of its questions is answered or its session ends, instead of staying registered
+# and relaunched forever; the persistent board is reused across many separate
+# questions and is never armed that way.
 finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
   local kind=$1 file=$2 sid=$3 pre_reopen_owner=$4 link_url=$5 owner version
+  local -a arm_args=("$file")
+  [ "$kind" != page ] || arm_args+=(--one-shot)
   if [ "$LAVISH_SESSION_REOPENED" = 1 ]; then
     "$SCRIPT_DIR/fm-procevent-lavish.sh" retire "$file" --keep-session >/dev/null \
       || fail "cannot retire the pre-reopen source generation (observed owner: ${pre_reopen_owner:-none})"
@@ -664,14 +670,14 @@ finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
 
   owner=$(source_owner "$sid")
   if [ "$LAVISH_SESSION_REOPENED" = 1 ]; then
-    "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "$file" >/dev/null \
+    "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "${arm_args[@]}" >/dev/null \
       || fail "cannot arm a fresh $kind source after reopening"
     printf 'armed: %s\n' "$sid"
     owner=$(source_owner "$sid")
   elif [ -n "$owner" ]; then
     printf 'already-armed: %s\n' "$sid"
   else
-    "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "$file" >/dev/null \
+    "$SCRIPT_DIR/fm-procevent-lavish.sh" arm "${arm_args[@]}" >/dev/null \
       || fail "cannot arm the $kind as a process-event source"
     printf 'armed: %s\n' "$sid"
     owner=$(source_owner "$sid")

@@ -348,6 +348,20 @@ test_page_arms_a_firstmate_owned_source_never_a_task_owned_one() {
   pass "the page source is a firstmate-owned listener, never task-owned"
 }
 
+test_page_arms_a_one_shot_source_that_retires_once_answered() {
+  local home data page sid
+  home=$(make_home oneshot)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_valid_payload "$data"
+
+  run_page "$home" "$data" --label "$LABEL" >/dev/null || fail "a valid payload did not build"
+  sid=$(run_lavish_source_id "$home" "$page")
+  grep -qx 'lifecycle=one-shot' "$home/state/procevent/$sid.source" \
+    || fail "the page source was not registered one-shot, so acknowledging its answer would never retire it, leaving it registered and relaunched forever: $(cat "$home/state/procevent/$sid.source" 2>/dev/null)"
+  pass "a decision page's answer source is registered one-shot so acknowledging its answer retires it"
+}
+
 test_page_rebuild_after_the_session_ended_arms_a_fresh_source() {
   local home data page out sid row
   home=$(make_home reopen)
@@ -661,6 +675,7 @@ test_page_refuses_malformed_payloads_before_touching_the_page
 test_page_refuses_a_page_that_does_not_render_its_controls
 test_page_renders_the_right_radio_groups_and_answer_keys
 test_page_arms_a_firstmate_owned_source_never_a_task_owned_one
+test_page_arms_a_one_shot_source_that_retires_once_answered
 test_page_rebuild_after_the_session_ended_arms_a_fresh_source
 test_page_embeds_a_valid_option_and_question_image_as_a_data_uri
 test_page_refuses_a_missing_image_file_before_touching_the_page
