@@ -6,7 +6,7 @@
 #   fm-procevent-lavish.sh classify <result-file>
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh silent <result-file>
-#   fm-procevent-lavish.sh answer-bearing <result-file>
+#   fm-procevent-lavish.sh answered <source-id> <result-file> -- <argv>...
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
@@ -66,13 +66,19 @@
 #            only place Lavish's notion of "nothing was said" is decided.
 #            Task-owned terminal rounds bypass generic silence so their owner
 #            receives the stop-and-conclude instruction.
-# answer-bearing
-#            Exit 0 when the captured result carries any queued content block
-#            at all, regardless of whether the session has ended; any other
-#            exit means no answer. This is the generic one-shot-retirement
-#            contract bin/fm-procevent.sh's `handled` calls only for a source
-#            registered with `arm --one-shot`: once such a one-off source's
-#            answer is acknowledged, it retires exactly like a terminal round,
+# answered   Exit 0 when every question key of the decision page the
+#            registration's argv polls (the argument following the literal
+#            `poll`, whose embedded `decision-page-data` payload lists the
+#            questions) has a queued choice in this source's captured rounds,
+#            up to and including <result-file> and captured no earlier than the
+#            page itself; any other exit means the page still has an
+#            unanswered question. A round that answers only some questions, or
+#            carries only a freeform note, never completes the page, and an
+#            artifact with no readable page payload is never complete. This is
+#            the generic one-shot-retirement contract bin/fm-procevent.sh's
+#            `handled` calls only for a source registered with
+#            `arm --one-shot`: once such a page is fully answered and that
+#            round is acknowledged, it retires exactly like a terminal round,
 #            because it has nothing further to collect. A board kept armed
 #            across many separate questions is never registered one-shot, so
 #            this seam never retires it.
@@ -374,18 +380,24 @@ cmd_retire() {
   end_session_best_effort "$artifact"
 }
 
-cmd_retired() {
-  local artifact=''
-  [ "$#" -ge 2 ] && [ -n "$1" ] && [ "$2" = -- ] || usage
-  shift 2
+# The artifact a registered listener argv polls: the argument following the
+# literal `poll`.
+poll_artifact() {  # <argv>...
   while [ "$#" -gt 0 ]; do
     if [ "$1" = poll ] && [ "$#" -ge 2 ]; then
-      artifact=$2
-      break
+      printf '%s\n' "$2"
+      return 0
     fi
     shift
   done
-  [ -n "$artifact" ] || die "the retired source's argv names no poll artifact"
+  return 1
+}
+
+cmd_retired() {
+  local artifact
+  [ "$#" -ge 2 ] && [ -n "$1" ] && [ "$2" = -- ] || usage
+  shift 2
+  artifact=$(poll_artifact "$@") || die "the retired source's argv names no poll artifact"
   end_session_best_effort "$artifact"
 }
 
@@ -677,16 +689,47 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
-# Whether a captured result carries any actual answer the captain gave,
-# independent of whether the session itself has ended (see `answer-bearing`
-# in the header). result_has_queued_content already proves exactly this: 0
-# means content present, 1 means provably none, 2 means the check could not
-# complete, so only 0 is an answer.
-cmd_answer_bearing() {
-  local file=${1-}
-  [ -n "$file" ] || usage
+# Whether a one-shot decision page has a queued choice for every question it
+# asks (see `answered` in the header). The page's question keys come from its
+# own embedded payload; the answered keys are every choice row, ordinary or
+# reconcile, across this source's captured rounds up to <result-file>. A round
+# captured before the page was last written belongs to an earlier page at the
+# same path and answers nothing here.
+cmd_answered() {
+  local id=${1-} file=${2-} artifact base seq round round_seq questions
+  [ -n "$id" ] && [ -n "$file" ] && [ "${3-}" = -- ] || usage
+  shift 3
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
-  result_has_queued_content "$file"
+  base=${file##*/}
+  seq=${base#"$id."}
+  seq=${seq%.result}
+  case "$seq" in ''|*[!0-9]*) die "result file does not belong to $id: $file" ;; esac
+  artifact=$(poll_artifact "$@") || die "the source's argv names no poll artifact"
+  [ -f "$artifact" ] || return 1
+  questions=$(perl -MJSON::PP -e '
+    local $/; my $html = <STDIN>;
+    $html =~ m{<script id="decision-page-data" type="application/json">\s*(.*?)\s*</script>}s or exit 1;
+    my $data = eval { decode_json($1) };
+    ref($data) eq "HASH" && ref($data->{questions}) eq "ARRAY" && @{ $data->{questions} } or exit 1;
+    for my $q (@{ $data->{questions} }) {
+      ref($q) eq "HASH" && defined($q->{key}) && !ref($q->{key}) && length($q->{key}) or exit 1;
+      print "$q->{key}\n";
+    }
+  ' < "$artifact" | sort -u) || return 1
+  [ -n "$questions" ] || return 1
+  [ -z "$(
+    for round in "${file%/*}/$id".*.result; do
+      [ -f "$round" ] && [ ! -L "$round" ] || continue
+      round_seq=${round##*/}
+      round_seq=${round_seq#"$id."}
+      round_seq=${round_seq%.result}
+      case "$round_seq" in ''|*[!0-9]*) continue ;; esac
+      [ "$round_seq" -le "$seq" ] || continue
+      [ "$artifact" -nt "$round" ] && continue
+      cmd_choice_rows answers "$round" 2>/dev/null
+      cmd_choice_rows reconciles "$round" 2>/dev/null
+    done | cut -f1 | sort -u | comm -23 <(printf '%s\n' "$questions") -
+  )" ]
 }
 
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
@@ -910,7 +953,7 @@ case "${1-}" in
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
-  answer-bearing) shift; cmd_answer_bearing "$@" ;;
+  answered)  shift; cmd_answered "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;

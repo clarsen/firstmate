@@ -5415,6 +5415,18 @@ pass "fm_procevent_lock_backoff_wait paces retries with bounded churn instead of
 # (what bin/fm-bearings-board.sh page now arms with) has nothing further to
 # collect once it is answered, so acknowledging that round retires it exactly
 # like a terminal round would.
+# A minimal decision page as bin/fm-bearings-board.sh page publishes it: the
+# embedded fm-decision-page.v1 payload is what names the page's questions.
+decision_page() {  # <path> <question-key>...
+  local path=$1 key questions=''
+  shift
+  for key in "$@"; do
+    questions="$questions${questions:+,}{\"key\":\"$key\",\"title\":\"$key\",\"options\":[{\"value\":\"a\",\"label\":\"A\"}]}"
+  done
+  printf '<h1>page</h1>\n<script id="decision-page-data" type="application/json">\n{"schema":"fm-decision-page.v1","title":"t","questions":[%s]}\n</script>\n' \
+    "$questions" > "$path"
+}
+
 HSHOT="$TMP_ROOT/hshot"; new_home "$HSHOT"
 SHOT_BIN=$(fm_fakebin "$TMP_ROOT/lavish-oneshot-stub")
 SHOT_COUNT="$TMP_ROOT/oneshot-poll-count"
@@ -5428,11 +5440,11 @@ if [ "\${1-}" = end ]; then
 fi
 n=\$(cat "$SHOT_COUNT" 2>/dev/null || echo 0)
 printf '%s\n' "\$((n + 1))" > "$SHOT_COUNT"
-printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\"schema\\":\\"fm-bearings-answer.v1\\",\\"question\\":\\"noop-check-oneshot\\",\\"selection\\":\\"a\\",\\"note\\":\\"\\"}"\n'
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\\\"schema\\\\":\\\\"fm-bearings-answer.v1\\\\",\\\\"question\\\\":\\\\"noop-check-oneshot\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n'
 SH
 chmod +x "$SHOT_BIN/lavish-axi"
 SHOT_ART="$TMP_ROOT/oneshot.html"
-printf '<h1>oneshot</h1>\n' > "$SHOT_ART"
+decision_page "$SHOT_ART" noop-check-oneshot
 lavish_session "$SHOT_ART"
 shot_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SHOT_ART")
 fm_test_track_procevent_home "$HSHOT"
@@ -5464,7 +5476,7 @@ for shot_mode in fail missing; do
   HSHOTF="$TMP_ROOT/hshot-$shot_mode"; new_home "$HSHOTF"
   rm -f "$SHOT_COUNT" "$SHOT_END_LOG"
   SHOTF_ART="$TMP_ROOT/oneshot-$shot_mode.html"
-  printf '<h1>oneshot %s</h1>\n' "$shot_mode" > "$SHOTF_ART"
+  decision_page "$SHOTF_ART" noop-check-oneshot
   lavish_session "$SHOTF_ART"
   shotf_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$SHOTF_ART")
   fm_test_track_procevent_home "$HSHOTF"
@@ -5496,6 +5508,61 @@ for shot_mode in fail missing; do
   esac
 done
 pass "a failing or missing lavish-axi never fails the acknowledgement that retires a one-shot page"
+
+# --- a one-shot page keeps listening until every question has an answer ------
+# A decision page can ask several questions and each card queues its own
+# answer, so a round that answers only some of them must not retire the page:
+# the rest would reach no listener. Only the round that leaves no question
+# unanswered, across every round so far, concludes it.
+HTWO="$TMP_ROOT/htwo"; new_home "$HTWO"
+TWO_BIN=$(fm_fakebin "$TMP_ROOT/lavish-two-stub")
+TWO_COUNT="$TMP_ROOT/two-poll-count"
+TWO_RELEASE="$TMP_ROOT/two-release"
+cat > "$TWO_BIN/lavish-axi" <<SH
+#!/usr/bin/env bash
+[ "\${1-}" != end ] || exit 0
+n=\$(cat "$TWO_COUNT" 2>/dev/null || echo 0)
+n=\$((n + 1))
+printf '%s\\n' "\$n" > "$TWO_COUNT"
+case "\$n" in
+  1) q=two-first ;;
+  2) q=two-second ;;
+  *) while [ ! -e "$TWO_RELEASE" ]; do sleep 0.1; done; exit 1 ;;
+esac
+printf 'session:\n  status: feedback\nprompts[1]{tag,text,prompt}:\n  "choice","Option A","Context data: {\\\\"schema\\\\":\\\\"fm-bearings-answer.v1\\\\",\\\\"question\\\\":\\\\"%s\\\\",\\\\"selection\\\\":\\\\"a\\\\",\\\\"note\\\\":\\\\"\\\\"}"\n' "\$q"
+SH
+chmod +x "$TWO_BIN/lavish-axi"
+TWO_ART="$TMP_ROOT/two-question.html"
+decision_page "$TWO_ART" two-first two-second
+lavish_session "$TWO_ART"
+two_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$TWO_ART")
+fm_test_track_procevent_home "$HTWO"
+PATH="$TWO_BIN:$PATH" FM_HOME="$HTWO" \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$TWO_ART" --one-shot >/dev/null
+wait_capture "$HTWO" "$two_id" \
+  || fail "the two-question page's first answer was never captured"
+two_first_out=$(PATH="$TWO_BIN:$PATH" pe "$HTWO" handled "$two_id" 1)
+assert_contains "$two_first_out" "handled: $two_id 1" \
+  "acknowledging the partially answered round was not recorded"
+case "$two_first_out" in
+  *retired:*) fail "acknowledging a round that answered one of two questions retired the page: $two_first_out" ;;
+esac
+[ -e "$HTWO/state/procevent/$two_id.source" ] \
+  || fail "acknowledging a round that answered one of two questions dropped the page's registration"
+PATH="$TWO_BIN:$PATH" pe "$HTWO" reconcile >/dev/null 2>&1 || true
+wait_for "$HTWO/state/procevent-inbox/$two_id.2.result" \
+  || fail "the page stopped listening after a partially answered round"
+for _ in $(seq 1 100); do
+  [ -e "$FM_PROCEVENT_CLAIM_ROOT/$two_id.claim" ] || break
+  sleep 0.1
+done
+two_second_out=$(PATH="$TWO_BIN:$PATH" pe "$HTWO" handled "$two_id" 2)
+: > "$TWO_RELEASE"
+assert_contains "$two_second_out" "retired: $two_id" \
+  "acknowledging the round that answered the last open question did not retire the page"
+[ ! -e "$HTWO/state/procevent/$two_id.source" ] \
+  || fail "acknowledging the round that answered the last open question left the page registered"
+pass "a one-shot page stays armed through a partial answer and retires once every question is answered"
 
 # --- the same answered-but-not-ended round leaves an ordinary source armed --
 # A source registered without --one-shot (every board bin/fm-bearings-board.sh

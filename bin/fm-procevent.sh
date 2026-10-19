@@ -25,11 +25,12 @@
 #            executed directly, so there is no shell surface and no argument
 #            splitting. Built-in adapters register sources; nothing here parses
 #            user text. `--one-shot` marks the registration so `handled`
-#            retires it automatically when it acknowledges an answer-bearing
-#            round whose session has not ended (see `handled` below); a
-#            terminal round still self-retires in `start` exactly as for any
-#            ordinary source. Omit it for a source meant to stay armed across
-#            many separate rounds.
+#            retires it automatically when it acknowledges the round that
+#            leaves nothing the source asked unanswered, even while its
+#            session has not ended (see `handled` below); a terminal round
+#            still self-retires in `start` exactly as for any ordinary source.
+#            Omit it for a source meant to stay armed across many separate
+#            rounds.
 # register-task
 #            Record a worker-owned built-in source. Its one source record
 #            persists across rounds, and re-registration by the same task
@@ -73,7 +74,7 @@
 #            keeps its terminal round open and registered until it is
 #            concluded with `handled`. A source registered `--one-shot` is not
 #            exempt: its terminal round self-retires here like any other, and
-#            only its answered-but-not-ended round waits for `handled`.
+#            only its fully-answered-but-not-ended round waits for `handled`.
 # reconcile  Idempotent liveness entry the watcher calls on its ordinary cycle:
 #            republish every durably captured result with no handled
 #            acknowledgement yet - regardless of any earlier publication - and
@@ -113,12 +114,15 @@
 #            bounded re-announcement on every reconcile. Marking a result
 #            handled does not retire its source registration or claim, with two
 #            exceptions: acknowledging the terminal round of a task-owned
-#            source is that board's conclude step, and acknowledging an
-#            answer-bearing round of a still-registered source registered
-#            `register --one-shot` (one whose session has not ended, since a
-#            terminal one-shot round already self-retired in `start`) has the
-#            same effect, because such a source has nothing further to collect
-#            once its one round is answered. Either exception drops the
+#            source is that board's conclude step, and acknowledging a round of
+#            a still-registered source registered `register --one-shot` (one
+#            whose session has not ended, since a terminal one-shot round
+#            already self-retired in `start`) has the same effect once
+#            `bin/fm-procevent-<adapter>.sh answered <source-id> <result-file>
+#            -- <argv>...` says its captured rounds through that one answer
+#            everything it asked, because such a source then has nothing
+#            further to collect. A round that leaves any question unanswered
+#            keeps it registered and listening. Either exception drops the
 #            registration, reports `retired:` too, and then runs
 #            `bin/fm-procevent-<adapter>.sh retired <source-id> -- <argv>...`
 #            with the dropped registration's stored argv, so the adapter can
@@ -432,19 +436,21 @@ adapter_self_announcing() {  # <adapter>
   "$script" self-announcing >/dev/null 2>&1
 }
 
-# Ask the source's own adapter whether a captured result carries any actual
-# answer, independent of whether the session itself has ended. cmd_handled
-# calls this only for a source registered `--one-shot` (see source_lifecycle):
-# once such a one-off source's answer is acknowledged, it has nothing further
-# to collect, unlike a board kept armed across many separate questions, which
-# is never registered one-shot. Exit 0 is the only verdict; everything else -
-# including a missing adapter or one without the command - leaves the source
-# armed exactly as before.
-adapter_result_is_answer_bearing() {  # <adapter> <result-file>
-  local script
-  script=$(adapter_script "$1")
+# Ask the source's own adapter whether the source's captured rounds, through
+# this result, answer everything it asked, independent of whether the session
+# itself has ended. The registration's stored argv is passed so the adapter can
+# find what it asked. cmd_handled calls this only for a source registered
+# `--one-shot` (see source_lifecycle): once such a one-off source is fully
+# answered, it has nothing further to collect, unlike a board kept armed across
+# many separate questions, which is never registered one-shot. Exit 0 is the
+# only verdict; everything else - including a missing adapter or one without
+# the command - leaves the source armed exactly as before.
+adapter_source_is_answered() {  # <adapter> <source-id> <result-file> <argv>...
+  local adapter=$1 id=$2 result=$3 script
+  shift 3
+  script=$(adapter_script "$adapter")
   [ -f "$script" ] && [ ! -L "$script" ] || return 1
-  "$script" answer-bearing "$2" >/dev/null 2>&1
+  "$script" answered "$id" "$result" -- "$@" >/dev/null 2>&1
 }
 
 # Tell the source's own adapter that `handled` just concluded the source and
@@ -2178,6 +2184,7 @@ cmd_handled() {
   kind=$(source_kind "$id" 2>/dev/null || true)
   [ "$kind" = task-owned ] || lifecycle=$(source_lifecycle "$id" 2>/dev/null || true)
   if [ "$kind" = task-owned ] || [ "$lifecycle" = one-shot ]; then
+    read_argv "$id" || ARGV=()
     result=$(source_pending "$id" | awk -v want="/$id.$seq.result" 'index($0, want) { print; exit }')
     if [ -n "$result" ] \
       && result_adapter=$(fm_procevent_result_adapter "$result" 2>/dev/null); then
@@ -2185,7 +2192,7 @@ cmd_handled() {
         conclude=1
         conclude_reason='terminal round'
       elif [ "$lifecycle" = one-shot ] \
-        && adapter_result_is_answer_bearing "$result_adapter" "$result"; then
+        && adapter_source_is_answered "$result_adapter" "$id" "$result" ${ARGV[@]+"${ARGV[@]}"}; then
         conclude=1
         conclude_reason='answered round'
       fi
@@ -2203,7 +2210,6 @@ cmd_handled() {
       die "cannot read the registration this conclusion retires: $id"
     fi
     retired_adapter=$(read_adapter "$id") || retired_adapter=''
-    read_argv "$id" || ARGV=()
     if ! rm -f -- "$registration" 2>/dev/null || [ -e "$registration" ] || [ -L "$registration" ]; then
       rm -f -- "$retained"
       fm_procevent_source_lock_release "$id"

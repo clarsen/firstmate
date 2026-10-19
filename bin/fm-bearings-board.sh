@@ -644,7 +644,7 @@ await_source_owner() {  # <source-id>
 # URL there, while the board omits it because captains reach the stable board
 # path directly.
 # A page is armed `--one-shot` so bin/fm-procevent.sh handled retires it once
-# its question is answered or its session ends, instead of staying registered
+# every one of its questions is answered or its session ends, instead of staying registered
 # and relaunched forever; the persistent board is reused across many separate
 # questions and is never armed that way.
 finish_arming_source() {  # <kind> <file> <sid> <pre_reopen_owner> <link_url>
