@@ -207,6 +207,7 @@ Each key is reported as follows:
 | Key | Result |
 | --- | --- |
 | Names no task, names a task that is not captain-held, or names a task already closed | Reported as `skipped:` and feeds nothing. |
+| A reserved `captain-question.q-*` key, owned by [`bin/fm-captain-question.py`](../bin/fm-captain-question.py) | Always skipped, even if a task carries that id. |
 | A replay whose answer and requested close mode match the newest record | An idempotent `closed:`. |
 | A replay with a mode mismatch | Skipped. |
 
