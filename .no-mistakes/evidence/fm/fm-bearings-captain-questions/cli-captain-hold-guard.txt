@@ -1,0 +1,7 @@
+$ printf 'captain-question.q-20261020-4cb1dc0d	close	Close
+' | fm-captain-hold.sh answers --any-origin --source board-test
+skipped: captain-question.q-20261020-4cb1dc0d (captain question is owned by fm-captain-question.py)
+answers: closed=0 skipped=1
+exit 1
+$ fm-captain-question.py list (still open)
+{"id":"q-20261020-4cb1dc0d","state":"open"}

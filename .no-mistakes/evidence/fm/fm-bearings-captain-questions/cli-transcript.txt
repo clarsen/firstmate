@@ -1,0 +1,39 @@
+$ fm-captain-question.py open (captain asks DNSSEC question)
+q-20261020-4cb1dc0d
+$ repeat open (captain asks again)
+q-20261020-4cb1dc0d
+$ status refresh by firstmate
+exit 0
+$ list
+[
+  {
+    "id": "q-20261020-4cb1dc0d",
+    "question": "What is the status of the DNSSEC systemd-resolved fix rollout?\n",
+    "opened": "2026-10-20T23:18:21Z",
+    "status": "Fix merged; rolled to 4 of 7 resolvers; 3 hosts pending reboot window.\n",
+    "last_updated": "2026-10-20T23:18:21Z",
+    "links": [
+      {
+        "label": "Rollout PR",
+        "url": "https://github.com/example/infra/pull/42"
+      }
+    ],
+    "state": "open",
+    "closed_by_captain": null,
+    "stale": false
+  }
+]
+$ firstmate attempts close with no captain provenance
+usage: fm-captain-question.py close [-h]
+                                    (--captain-words-file CAPTAIN_WORDS_FILE | --board-result BOARD_RESULT)
+                                    id
+fm-captain-question.py close: error: one of the arguments --captain-words-file --board-result is required
+exit 2
+$ firstmate attempts close with unrelated board result
+fm-captain-question: board result has no captain Close answer for q-20261020-4cb1dc0d
+exit 1
+$ captain-hold keyed-answer intake with captain-question key
+fm-captain-hold: --source provenance is required so the durable decision records where the answer came from
+exit 1
+$ list after refused closes
+{"id":"q-20261020-4cb1dc0d","state":"open","stale":false}

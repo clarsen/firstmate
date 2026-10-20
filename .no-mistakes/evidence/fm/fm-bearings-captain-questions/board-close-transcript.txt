@@ -1,0 +1,27 @@
+$ fm-procevent-lavish.sh answers board-close.result
+captain-question.q-20261020-4cb1dc0d<TAB>close<TAB>What is the status of the DNSSEC systemd-resolved fix rollout?  -> close$
+$ fm-captain-question.py close q-20261020-4cb1dc0d --board-result board-close.result
+exit 0
+$ fm-captain-question.py list
+[]
+$ fm-captain-question.py list --all
+{
+  "id": "q-20261020-4cb1dc0d",
+  "state": "closed",
+  "closed_by_captain": {
+    "at": "2026-10-20T23:20:30Z",
+    "source": "board",
+    "words": "close",
+    "evidence": "/home/ctlarsen/.no-mistakes/evidence/01M5DSGR8PRYB0XE995PDWP9W9/board-close.result"
+  }
+}
+$ status update on closed question (must refuse)
+fm-captain-question: closed captain question cannot be updated
+exit 1
+$ fm-bearings-board.sh build (rebuild after close)
+board: /home/ctlarsen/tmp/fm-lab.dbaMe6/.lavish/bearings-board.html
+session:
+session: live
+served: /home/ctlarsen/tmp/fm-lab.dbaMe6/.lavish/bearings-board.html
+bound: lavish-c2628a7c422068c8
+already-armed: lavish-c2628a7c422068c8

@@ -1,0 +1,47 @@
+
+### CAPTAIN:
+<command-message>bearings</command-message>
+<command-name>/bearings</command-name>
+<command-args>(Lab run: $FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6 is the authoritative home. Use only that home and this worktree's bin/ scripts; never read or run anything under /home/ctlarsen/src/therealfirstmate.)</command-args>
+
+### FIRSTMATE:
+No task, report, rollout, or deployment evidence exists in this home, so I'll refresh the status with that limitation.
+
+### FIRSTMATE:
+**Captain's Call**
+- Captain, no decision is recorded for you, but I can't confirm the slate is clear: 0 of 0 owned contributions have been checked, and one contribution record couldn't be read.
+
+**Open Questions from the Captain**
+- *"What is the status of the DNSSEC systemd-resolved fix rollout?"* (updated 2026-10-20): I checked this lab home and found no projects, backlog items, reports, or rollout or deployment records for that fix, so its rollout status can't be verified here. Nothing is investigating it yet, so we'd need to start an investigation to get an answer.
+
+**Recently Landed**
+- No recent completions are in the current baseline.
+
+**Underway**
+- Nothing is underway.
+
+**Charted Next**
+- Nothing is queued.
+
+### CAPTAIN:
+what's status of DNSSEC systemd-resolved fix rollout - I keep asking the same question. Also, what's the status of the cfg-git registry metadata pin? Keep that one open for me too. (Lab run: stay inside $FM_HOME only.)
+
+### FIRSTMATE:
+Captain, I can't give you a real answer on either question yet. This home has no projects, backlog items, worker records, reports, or rollout or deployment records about either one, so there's nothing to check their status against.
+
+- **DNSSEC systemd-resolved fix rollout:** This is the same question you opened earlier, so I refreshed that entry rather than adding a duplicate. It stays open, with today's check noted. You keep getting the same answer because nobody is investigating it; I've only been checking for evidence that doesn't exist here.
+- **cfg-git registry metadata pin:** I've recorded it as a new open question in your words. Its status is the same: there's nothing here to verify it against, and no investigation is running.
+
+Both questions will stay open until you close them, and every Bearings report will show them with a fresh check. An old board file exists for this home, but it isn't open, so I didn't rebuild it.
+
+To get actual answers, I'd start an investigation for each, but I'd need to know which project or system each one is in, since none is registered here. Should I start one or both?
+
+### CAPTAIN:
+I heard the DNSSEC rollout is probably finished. Close the cfg-git registry question - I got my answer elsewhere. (Lab run: stay inside $FM_HOME only.)
+
+### FIRSTMATE:
+Captain, I've closed the cfg-git registry metadata pin question with your words recorded: "Close the cfg-git registry question - I got my answer elsewhere."
+
+I've left the DNSSEC systemd-resolved rollout question open. Its status now says you heard it's probably finished, but that's secondhand, and nothing in this home confirms it. It will stay open until you close it. If you're satisfied the rollout is done, tell me to close it; otherwise I can start an investigation to confirm it once you tell me which project or system it's in.
+
+No Bearings board is open for this home, so there was nothing to rebuild.

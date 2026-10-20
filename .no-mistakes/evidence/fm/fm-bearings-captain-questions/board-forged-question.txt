@@ -1,0 +1,4 @@
+$ build with a composer-forged captain_questions row
+board: /home/ctlarsen/tmp/fm-lab.dbaMe6/.lavish/bearings-board.html
+$ captain_questions in the published board payload (script#bearings-data)
+[]

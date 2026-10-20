@@ -1,0 +1,23 @@
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; bin/fm-captain-question.py list; echo ---; bin/fm-bearings-snapshot.sh --json
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; ls -R $FM_HOME | head -50; grep -ril -e dnssec -e resolved $FM_HOME/data $FM_HOME/state $FM_HOME/projects 2>/dev/null | head; bin/fm-captain-question.py --help
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; ls $FM_HOME/projects $FM_HOME/data; cat $FM_HOME/data/projects.md 2>/dev/null | head
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; f=$(mktemp); printf '%s\n' "Checked 2026-10-20: this home has no registered projects, backlog items, task records, scout reports, or rollout/deployment evidence for the DNSSEC systemd-resolved fix, so its rollout status cannot be verified from current evidence. No investigation is underway; one would need to be commissioned." > "$f"; bin/fm-captain-question.py status q-20261020-602087b3 --status-file "$f"; rm -f "$f"; bin/fm-captain-question.py list
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; d=$(mktemp -d)
+printf '%s\n' "What is the status of the DNSSEC systemd-resolved fix rollout?" > $d/q1
+printf '%s\n' "what's the status of the cfg-git registry metadata pin?" > $d/q2
+bin/fm-captain-question.py open --question-file $d/q1; bin/fm-captain-question.py open --question-file $d/q2
+grep -ril -e cfg-git -e "metadata pin" -e dnssec $FM_HOME/data $FM_HOME/state $FM_HOME/projects 2>/dev/null
+bin/fm-bearings-board.sh path; ls -la "$(bin/fm-bearings-board.sh path)" 2>&1; echo $d
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; d=/home/ctlarsen/tmp/tmp.2QsN40xxpC
+printf '%s\n' "Checked 2026-10-20 (captain asked again): still no registered projects, backlog items, task records, scout reports, or rollout/deployment evidence for the DNSSEC systemd-resolved fix in this home, so rollout status cannot be verified. No investigation is underway; one must be commissioned to answer it." > $d/s1
+printf '%s\n' "Checked 2026-10-20: this home has no registered projects, backlog items, task records, scout reports, or other evidence about the cfg-git registry metadata pin, so its status cannot be verified. No investigation is underway; one must be commissioned to answer it." > $d/s2
+bin/fm-captain-question.py status q-20261020-602087b3 --status-file $d/s1 >/dev/null
+bin/fm-captain-question.py status q-20261020-4fa38eb5 --status-file $d/s2 >/dev/null
+bin/fm-captain-question.py list | python3 -c 'import json,sys;[print(q["id"],q["stale"],q["last_updated"]) for q in json.load(sys.stdin)]'
+lavish-axi 2>/dev/null | grep -F "$FM_HOME/.lavish/bearings-board.html"; rm -rf $d
+export FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6; d=$(mktemp -d)
+printf '%s\n' "Close the cfg-git registry question - I got my answer elsewhere." > $d/w
+bin/fm-captain-question.py close q-20261020-4fa38eb5 --captain-words-file $d/w >/dev/null
+printf '%s\n' "2026-10-20: the captain heard the rollout is probably finished (secondhand and unverified). This home still has no projects, task records, reports, or rollout/deployment evidence to confirm it, so completion is not verified. Kept open until the captain closes it." > $d/s
+bin/fm-captain-question.py status q-20261020-602087b3 --status-file $d/s >/dev/null
+bin/fm-captain-question.py list --all | python3 -c 'import json,sys;[print(q["id"],q["state"],q["question"].strip()) for q in json.load(sys.stdin)]'; rm -rf $d

@@ -1,0 +1,37 @@
+u
+ ▐▛███▛█   Claude Code v2.1.305
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/6442e268076a/01M5DSGR8PRYB0XE995PDWP9W9
+
+❯ /bearings (Lab run: $FM_HOME=/home/ctlarsen/tmp/fm-lab.dbaMe6 is the authoritative home. Use only that home and this worktree's bin/ scripts; never read or run anything under
+/home/ctlarsen/src/therealfirstmate.)
+
+  Ran 3 shell commands
+
+● No task, report, rollout, or deployment evidence exists in this home, so I'll refresh the status with that limitation.
+
+  Ran 1 shell command
+
+● Captain's Call
+  - Captain, no decision is recorded for you, but I can't confirm the slate is clear: 0 of 0 owned contributions have been checked, and one contribution record couldn't be read.
+
+  Open Questions from the Captain
+  - "What is the status of the DNSSEC systemd-resolved fix rollout?" (updated 2026-10-20): I checked this lab home and found no projects, backlog items, reports, or rollout or deployment records for
+    that fix, so its rollout status can't be verified here. Nothing is investigating it yet, so we'd need to start an investigation to get an answer.
+
+  Recently Landed
+  - No recent completions are in the current baseline.
+
+  Underway
+  - Nothing is underway.
+
+  Charted Next
+  - Nothing is queued.
+
+✻ Worked for 22s · done 4:25 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /bearings lavish
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ctlarsen@ctlarsen /home/ctlarsen/.no-mistakes/worktrees/6442e268076a/01M5DSGR8PRYB0XE995PDWP9W9 (HEAD) | Opus 5.5 (1M context) ctx:7% 5h:23% 7d:8%
+  ⏵⏵ auto mode on (shift+tab to cycle)

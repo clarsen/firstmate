@@ -1,0 +1,50 @@
+{
+  "schema": "fm-captain-questions.v1",
+  "questions": [
+    {
+      "id": "q-20261020-4cb1dc0d",
+      "question": "What is the status of the DNSSEC systemd-resolved fix rollout?\n",
+      "opened": "2026-10-20T23:18:21Z",
+      "status": "Fix merged; rolled to 4 of 7 resolvers; 3 hosts pending reboot window.\n",
+      "last_updated": "2026-10-20T23:18:21Z",
+      "links": [
+        {
+          "label": "Rollout PR",
+          "url": "https://github.com/example/infra/pull/42"
+        }
+      ],
+      "state": "closed",
+      "closed_by_captain": {
+        "at": "2026-10-20T23:20:30Z",
+        "source": "board",
+        "words": "close",
+        "evidence": "/home/ctlarsen/.no-mistakes/evidence/01M5DSGR8PRYB0XE995PDWP9W9/board-close.result"
+      }
+    },
+    {
+      "id": "q-20261020-602087b3",
+      "question": "What is the status of the DNSSEC systemd-resolved fix rollout?\n",
+      "opened": "2026-10-20T23:21:22Z",
+      "status": "2026-10-20: the captain heard the rollout is probably finished (secondhand and unverified). This home still has no projects, task records, reports, or rollout/deployment evidence to confirm it, so completion is not verified. Kept open until the captain closes it.\n",
+      "last_updated": "2026-10-20T23:26:26Z",
+      "links": [],
+      "state": "open",
+      "closed_by_captain": null
+    },
+    {
+      "id": "q-20261020-4fa38eb5",
+      "question": "what's the status of the cfg-git registry metadata pin?\n",
+      "opened": "2026-10-20T23:25:52Z",
+      "status": "Checked 2026-10-20: this home has no registered projects, backlog items, task records, scout reports, or other evidence about the cfg-git registry metadata pin, so its status cannot be verified. No investigation is underway; one must be commissioned to answer it.\n",
+      "last_updated": "2026-10-20T23:25:58Z",
+      "links": [],
+      "state": "closed",
+      "closed_by_captain": {
+        "at": "2026-10-20T23:26:26Z",
+        "source": "captain-chat",
+        "words": "Close the cfg-git registry question - I got my answer elsewhere.\n",
+        "evidence": "/home/ctlarsen/tmp/tmp.0xxh3r3SES/w"
+      }
+    }
+  ]
+}
