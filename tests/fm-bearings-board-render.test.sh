@@ -390,6 +390,34 @@ test_a_board_without_projects_keeps_the_drilldown_hidden() {
   pass "a board without projects renders exactly as before, with the drilldown hidden"
 }
 
+test_open_captain_questions_render_separately_with_close_control() {
+  local home id out
+  home=$(make_home captain-questions)
+  printf 'What is the DNSSEC rollout status?\n' > "$home/question.txt"
+  id=$(FM_HOME="$home" "$ROOT/bin/fm-captain-question.py" open --question-file "$home/question.txt")
+  printf 'Two hosts remain.\n' > "$home/status.txt"
+  FM_HOME="$home" "$ROOT/bin/fm-captain-question.py" status "$id" \
+    --status-file "$home/status.txt" --link 'Rollout=https://example.com/rollout'
+  out=$(render "$home" '[]')
+  printf '%s' "$out" | jq -e --arg key "captain-question.$id" '
+    .error == "" and (.questions | length) == 1
+    and .questions[0].key == $key
+    and .questions[0].text == "What is the DNSSEC rollout status?\n"
+    and (.questions[0].status | contains("Two hosts remain."))
+    and .questions[0].options == ["close"]
+    and .questions[0].close == true
+    and .questions[0].links == [{"label":"Rollout","url":"https://example.com/rollout"}]
+    and (.stats | any(.label == "need you" and .n == 0))
+  ' >/dev/null || fail "the open captain question did not render independently: $out"
+  printf 'Close this question.\n' > "$home/close.txt"
+  FM_HOME="$home" "$ROOT/bin/fm-captain-question.py" close "$id" \
+    --captain-words-file "$home/close.txt"
+  out=$(render "$home" '[]')
+  printf '%s' "$out" | jq -e '.questions == [] and .error == ""' >/dev/null \
+    || fail "a captain-closed question remained on the board: $out"
+  pass "open captain questions render in their own section with status, link, and Close"
+}
+
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first
@@ -403,3 +431,4 @@ test_a_charted_row_with_detail_renders_its_panel_and_links
 test_a_charted_row_without_detail_renders_unchanged
 test_the_project_drilldown_renders_ranked_cards_and_quiet_projects
 test_a_board_without_projects_keeps_the_drilldown_hidden
+test_open_captain_questions_render_separately_with_close_control

@@ -1077,6 +1077,22 @@ test_default_is_bounded_and_local_only() {
   pass "default output is bounded, local-only, and marks omitted surfaces"
 }
 
+test_open_captain_questions_project_separately_from_decisions() {
+  local home fakebin id json
+  home=$(make_home captain-question-projection); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  printf 'What is the rollout status?\n' > "$home/question.txt"
+  id=$(FM_HOME="$home" "$ROOT/bin/fm-captain-question.py" open --question-file "$home/question.txt")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e --arg id "$id" '
+    (.captain_questions | length) == 1
+    and .captain_questions[0].id == $id
+    and .captain_questions[0].question == "What is the rollout status?\n"
+    and ([.decisions_open[].id] | index($id) == null)
+  ' >/dev/null || fail "open captain questions did not remain separate from decisions: $json"
+  pass "the snapshot includes every open captain question outside Captain's Call"
+}
+
 test_toon_json_parity() {
   local home fakebin toon json keys k
   home=$(make_home parity); write_fixture "$home"
@@ -1475,7 +1491,7 @@ test_perl_fallback_bounds_github_call() {
   fakebin=$(make_fakebin "$home")
   toolbin="$home/toolbin"
   mkdir -p "$toolbin"
-  for cmd in bash dirname basename jq date sed git grep tail cut tr head sort wc perl sleep cat find mktemp rm mkdir chmod mv cp awk; do
+  for cmd in bash dirname basename jq date sed git grep tail cut tr head sort wc perl python3 sleep cat find mktemp rm mkdir chmod mv cp awk; do
     ln -s "$(command -v "$cmd")" "$toolbin/$cmd"
   done
   for cmd in shasum sha256sum; do
@@ -3558,6 +3574,7 @@ test_nonprogressing_child_states_are_explicit
 test_registry_unavailability_and_bounds_are_explicit
 test_current_landed_baseline_is_repeatable_and_prior_report_independent
 test_default_is_bounded_and_local_only
+test_open_captain_questions_project_separately_from_decisions
 test_toon_json_parity
 test_landed_includes_secondmate_home_merges
 test_landed_accepts_only_kind_owned_delivery_artifacts

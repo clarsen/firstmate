@@ -22,6 +22,8 @@
 #
 # This wrapper consumes canonical status decisions plus canonically normalized
 # backlog roles, unresolved blockers, and captain actionability.
+# Open captain questions come from the separate home-local record owned by
+# bin/fm-captain-question.py. They are unbounded and never enter decision buckets.
 # Contributions project cached coverage and required actors from fm-contributions.sh;
 # only captain rows are exposed, with counts for the other actors and unmeasured homes. It never infers
 # decisions from report or visual-review prose or reimplements snapshot semantics.
@@ -54,7 +56,7 @@
 # Main-home inventory validity comes from the canonical snapshot's main_inventory
 # object (orphan structured in-flight without meta, unstructured current rows).
 # Bearings never invents Underway rows from backlog-only ids; it discloses those
-# gaps in omitted[] and, when invalid, a Charted Next gate line so the four-section
+# gaps in omitted[] and, when invalid, a Charted Next gate line so the Bearings
 # chat cannot claim an empty fleet while main current state is broken.
 #
 # An open away-return catch-up is disclosed the same way, as a single action-free
@@ -165,7 +167,9 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,name_full,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner}, landed{id,what,what_full,artifact,owner},
+  decisions_open{id,key,verb,summary,owner},
+  captain_questions{id,question,status,opened,last_updated,links,state,stale},
+  landed{id,what,what_full,artifact,owner},
   gates{id,title,title_full,blocked_by,reason,owner,filed,repo,kind,body,pr_url,report_path,links},
   reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
@@ -873,6 +877,11 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          else empty end),
         (if $include_prs == 1 then empty else {surface:"live PR discovery + checks", reveal:"--include-prs"} end) ]) }
 ') || { echo "fm-bearings-snapshot: projection failed" >&2; exit 1; }
+
+QUESTIONS=$("$SCRIPT_DIR/fm-captain-question.py" list) \
+  || { echo "fm-bearings-snapshot: captain questions unavailable" >&2; exit 1; }
+MODEL=$(printf '%s\n' "$MODEL" | jq --argjson questions "$QUESTIONS" '. + {captain_questions:$questions}') \
+  || { echo "fm-bearings-snapshot: captain question projection failed" >&2; exit 1; }
 
 if [ "$FORMAT" = json ]; then
   printf '%s\n' "$MODEL"

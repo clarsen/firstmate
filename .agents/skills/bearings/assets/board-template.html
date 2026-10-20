@@ -54,6 +54,10 @@ __FM_DECISION_CARD_CSS__
 .bb-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .bb-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .bb-cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 22px; }
+.bb-questions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.bb-question-links { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 20px 18px; }
+#bb-captain-questions-section .bb-section__head { flex-wrap: wrap; }
+#bb-captain-questions-sub { margin-left: auto; }
 
 /* ---- Captain's Call: one card at a time, dealt off a visible stack ---- */
 .bb-callwrap { display: flex; flex-direction: column; gap: 12px; }
@@ -243,6 +247,14 @@ __FM_DECISION_CARD_CSS__
   </section>
   </div>
 
+  <section class="bb-section" id="bb-captain-questions-section">
+    <div class="bb-section__head">
+      <span class="fm-sign fm-sign--eyebrow">Open Questions from the Captain</span>
+      <span class="fm-sign fm-sign--muted" id="bb-captain-questions-sub"></span>
+    </div>
+    <div class="bb-questions" id="bb-captain-questions"></div>
+  </section>
+
   <!-- Shown only when the payload carries the per-project drilldown
        (/bearings projects lavish); otherwise the board renders as before. -->
   <section class="bb-section" id="bb-projects-section" hidden>
@@ -342,7 +354,7 @@ __FM_DECISION_CARD_JS__
     renderBoardError("Unsupported board data schema: " + (data && data.schema ? data.schema : "(none)"));
     return;
   }
-  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted];
+  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted, data.captain_questions];
   var callItemsValid = Array.isArray(data.captains_call) && data.captains_call.every(function (item) {
     return item && typeof item === "object" &&
       typeof item.key === "string" && item.key.length > 0 &&
@@ -363,6 +375,38 @@ __FM_DECISION_CARD_JS__
   var badge = window.FMDecisionCard.badge;
   var ctxRow = window.FMDecisionCard.ctxRow;
   var utf8ByteLength = window.FMDecisionCard.utf8ByteLength;
+  var questions = document.getElementById("bb-captain-questions");
+  document.getElementById("bb-captain-questions-sub").textContent =
+    data.captain_questions.length + " open";
+  if (!data.captain_questions.length) {
+    questions.appendChild(el("div", "bb-empty", "No open questions from the captain."));
+  }
+  data.captain_questions.forEach(function (item) {
+    var card = window.FMDecisionCard.build({
+      key: "captain-question." + item.id,
+      title: item.question,
+      options: [{ value: "close", label: "Close this question" }]
+    }, {
+      schema: "fm-bearings-answer.v1",
+      promptLabel: "Captain question close",
+      buttonLabel: "Close",
+      context: [
+        ctxRow("status", item.status),
+        ctxRow("updated", item.last_updated + (item.stale ? " · status stale" : ""))
+      ],
+      alwaysShowContext: true
+    });
+    if (item.links.length) {
+      var links = el("div", "bb-question-links");
+      item.links.forEach(function (link) {
+        var a = el("a", "bb-decision__link", link.label);
+        a.href = link.url; a.target = "_blank"; a.rel = "noopener";
+        links.appendChild(a);
+      });
+      card.appendChild(links);
+    }
+    questions.appendChild(card);
+  });
   /* Warnings ride the charted feed for layout only; they are alarms, not work,
      so every count of queued work excludes them. */
   function isWarning(t) { return t && t.kind === "warning"; }

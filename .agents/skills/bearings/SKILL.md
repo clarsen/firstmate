@@ -14,18 +14,18 @@ metadata:
 # bearings
 
 Generate a complete current snapshot from the fleet's current state, so the captain can resume in one read after a break, a night, or a context reset.
-Plain `/bearings` returns only the concise four-section chat digest.
-Only `/bearings file` writes the dated markdown report artifact and then returns the concise four-section chat digest linked to that report.
+Plain `/bearings` returns only the concise five-section chat digest.
+Only `/bearings file` writes the dated markdown report artifact and then returns the concise five-section chat digest linked to that report.
 Only `/bearings lavish` builds the interactive fleet board beside that digest, through `bin/fm-bearings-board.sh` (its header owns every board mechanic and the fm-bearings-board.v1 payload contract).
-A digest/build invocation is operationally read-only apart from observational remote-ledger cache refreshes, durable per-target reconcile-notify requests when the captured state needs them, plus the explicit per-mode artifacts: the dated report in file mode, and in lavish mode the board file plus the answer binding and source registration that `bin/fm-bearings-board.sh build` records through their own owners.
+A digest/build invocation may refresh open captain-question status from current evidence in the separate private record, alongside observational remote-ledger cache refreshes, durable per-target reconcile-notify requests when the captured state needs them, and the explicit per-mode artifacts.
 During that invocation it never tears down a task, merges a PR, dispatches new work, steers a worker, answers a decision, cleans up work, or mutates backlog or task state.
 Board answers are acted on later under the normal authority rules; this skill's board-wake section explicitly owns the guarded routing at that time.
 
 ## Invocation modes
 
-- Plain `/bearings` gathers a fresh bounded snapshot and renders the four-section chat digest without creating, deleting, reading, or replacing `data/status-report-<YYYY-MM-DD>.md`.
-- `/bearings file` gathers a fresh bounded snapshot, replaces today's `data/status-report-<YYYY-MM-DD>.md` from scratch, and renders the four-section chat digest with a link or path to that report.
-- `/bearings lavish` gathers a fresh bounded snapshot, rebuilds and arms the interactive fleet board (the "Lavish board mode" section below), and renders the four-section chat digest with the board's URL inside it.
+- Plain `/bearings` gathers a fresh bounded snapshot and renders the five-section chat digest without creating, deleting, reading, or replacing `data/status-report-<YYYY-MM-DD>.md`.
+- `/bearings file` gathers a fresh bounded snapshot, replaces today's `data/status-report-<YYYY-MM-DD>.md` from scratch, and renders the five-section chat digest with a link or path to that report.
+- `/bearings lavish` gathers a fresh bounded snapshot, rebuilds and arms the interactive fleet board (the "Lavish board mode" section below), and renders the five-section chat digest with the board's URL inside it.
 - `/bearings projects` gathers the snapshot with its `--projects` drilldown and renders Charted Next as the per-project drilldown (the "Project drilldown" section below); the other three sections are unchanged.
 - `projects` composes with the other options: `/bearings file projects` writes the drilldown into the report's Charted Next, and `/bearings projects lavish` adds the board's Projects section.
 - Treat `file`, `lavish`, and `projects` only as explicit invocation options in the slash command.
@@ -37,11 +37,19 @@ Board answers are acted on later under the normal authority rules; this skill's 
 ## What it does
 
 For a contribution wake or linked-issue filing, go directly to Contribution follow-up; the digest procedure below applies to Bearings invocations.
+When the captain opens a question that warrants ongoing investigation, check the open-question list and record new exact words immediately with `bin/fm-captain-question.py open --question-file <file>`; a repeat of an already open question refreshes its status instead of creating a duplicate.
+Rebuild an already open Bearings board after recording the new question.
+Keep the question in that record until the captain explicitly closes it; an answer, finished investigation, landed fix, or firstmate judgment is status evidence rather than closure authority.
+When the captain closes one in chat, preserve those exact words with the script's `close --captain-words-file` path and rebuild an already open Bearings board so the item disappears there.
+The script header and help own the record format and exact commands, and this record never becomes a captain hold or Captain's Call card.
 
-1. **Gather live fleet state with one deterministic command.**
+1. **Refresh open captain questions, then gather live fleet state with one deterministic command.**
+   Before every periodic or on-demand Bearings rendering, list the open questions with `bin/fm-captain-question.py list`, investigate each against current task, report, rollout, and deployment evidence, and refresh its status timestamp through that script after each check, retaining evidence links when none have changed.
+   When current evidence cannot be verified, write that limitation into the refreshed status rather than presenting old findings as current.
+   A status older than 24 hours is marked stale by the script and remains visible until refreshed.
    Run `snapshot=$(bin/fm-bearings-snapshot.sh --json)` at invocation time and read that compact output.
    It is the single bounded, deterministic fleet-state source for Bearings.
-   Do not create or consult a second fleet-state reader, parser contract, status-event-tail interpretation, visible-session recap, ad-hoc project probe, or ad-hoc `gh-axi`/`gh` query.
+   Do not create or consult a second fleet-state reader, parser contract, status-event-tail interpretation, visible-session recap, ad-hoc project probe, or ad-hoc `gh-axi`/`gh` query for fleet composition; targeted evidence checks for open captain questions precede the snapshot.
    The command's header and `--help` output own its exact fields, bounds, opt-ins, and output contract.
    The default performs bounded concurrent remote-ledger reads for registered remote homes under one shared snapshot budget and may refresh the parent-side cache.
    Only pass `--include-prs` when the captain asks for repository-wide live GitHub PR enrichment.
@@ -74,13 +82,13 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    A home is still asked at most once per four-hour window, while a skipped or failed later delivery leaves the request durable for another supervision pass.
    Never edit another home's backlog or metadata from here, and never expect or wait on a reply.
 
-3. **Compose the four-section chat digest from the fresh snapshot.**
+3. **Compose the five-section chat digest from the fresh snapshot.**
    The gather step is deterministic; your judgment is scoped to ranking the command's facts by what matters right now and writing scannable captain-facing prose.
-   The chat response uses the four complete sections in the chat-response contract below, in the same order, each always present.
+   The chat response uses the five complete sections in the chat-response contract below, in the same order, each always present.
    Plain mode stops here and writes no report artifact.
 
 4. **In explicit file mode only, compose and replace the detailed report file.**
-   The report uses the same four complete sections as the chat, in the same order, and adds the detail the chat omits.
+   The report uses the same five complete sections as the chat, in the same order, and adds the detail the chat omits.
    Never read an earlier `data/status-report-*.md` to decide what to omit, include, describe as changed, or call current.
    Write the full report to `data/status-report-<YYYY-MM-DD>.md` using today's date.
    If today's file already exists, delete it first, then create a new file from scratch.
@@ -88,10 +96,11 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    The detailed report includes:
    - **Title** - `# Bearings - <day> <YYYY-MM-DD>` (use "Morning status" only when the captain specifically asks for a morning brief), followed by two or three sentences framing where things stand.
    - **Captain's Call** - every unsuppressed open decision summarized with its options from the structured decision record, plus each PR ready to merge and each needed credential or login, every PR with the full `https://...` URL, never a bare `#number`.
+   - **Open Questions from the Captain** - every open captain question with its exact text, current status, last update, stale marker when applicable, and evidence links.
    - **Recently Landed** - the bounded current recent-completions baseline from structured state across the main fleet and every registered secondmate home, rendered in full on every run.
    - **Underway** - each live direct report making progress, with its current state, and the plans or main pickup pointers worth reopening (`data/<id>/report.md` files, `.lavish/*.html` boards).
    - **Charted Next** - queued or gated work, including deferred or aged captain-hold safety gates and any main-inventory integrity warning, with each item's blocker, date, age, or integrity reason.
-   After writing the file, return the concise four-section chat digest and include the report path or link without adding a fifth section.
+   After writing the file, return the concise five-section chat digest and include the report path or link without adding another section.
    For a richer review surface, offer `/bearings lavish` when the report has enough structure to deserve one, but only after the required digest is ready.
 
 ## Project drilldown
@@ -117,6 +126,8 @@ Keep each next action to one scannable line; `(unassigned)` collects items no st
 
 Compose the payload from the same snapshot with the same ranking judgment as the chat digest, plus these board rules:
 
+- `bin/fm-bearings-board.sh build` injects every open captain question directly from the durable record into the dedicated "Open Questions from the Captain" section, even if the composer omits that array.
+- Refresh the question statuses before composing so the board never silently treats an old summary as a fresh investigation.
 - A Captain's Call decision key is the captain-held TASK ID from `decisions_open` (legacy `<origin>-decision-<key>` rows are already task ids); a merge card's key is `merge.<task-id>`; the Charted Next dispatch picker's key is `dispatch.charted`.
 - Before carding a hold, check that its SUBJECT has not already landed, and omit it when it has. `build` drops a card whose task or PR appears in the payload's own landed rows, and one whose task is no longer an open captain call. When a hold waits on one specific PR, put that PR in the card's `pr_url`. When it concerns a published version, put the artifact and numeric three-part version in the card's structured `subject`; landed rows for releases carry the same identity, and a matching or newer version drops the card. Identity matching is structured only, so verify any subject without one of these identities against current reality before carding it.
 - Never author a `reconcile` option on any card. `build` gives every decision card the standard reconcile choice itself, and the payload validator reserves that value across all card types; recommendations must name an authored option.
@@ -147,7 +158,7 @@ Never run `lavish-axi poll` for the board yourself: the armed source's supervise
 ### Handling a board wake
 
 A board answer arrives as an ordinary `procevent lavish <source-id> <sequence>` check wake. Identify it by comparing the wake source id with `bin/fm-procevent-lavish.sh source-id "$(bin/fm-bearings-board.sh path)"`, regardless of which answer kinds the result contains; then load `process-event-sources` and follow its contract for the result read, adapter classification, and the handled acknowledgement.
-Decision answers need no routing from you: the runner feeds the board's binding into `bin/fm-captain-hold.sh`'s one keyed-answer intake, which closes or releases each answered captain-held task at answer time; reconcile any `skipped:` key yourself with a direct `answer`, and when the captain's answer is "later", record it as a deferral with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` instead of a closure.
+Decision answers need no routing from you: the runner feeds the board's binding into `bin/fm-captain-hold.sh`'s one keyed-answer intake, which closes or releases each answered captain-held task at answer time; reconcile any decision `skipped:` key yourself with a direct `answer`, and when the captain's answer is "later", record it as a deferral with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` instead of a closure.
 A current structured Reconcile selection closes nothing: the versioned board context carries its exact selected option separately from any typed note, and the adapter routes that selection only into a durable re-check request while preserving the note as provenance.
 The rollout-compatible old context still feeds ordinary non-reconcile answers, but its bare or separator-annotated reconcile values and every structurally uncertain choice feed neither intake and remain announced for deliberate handling.
 Verify the call's latest state, then retire the request through `bin/fm-captain-hold.sh reconcile close <id> --evidence-file <path>` when it turns out to be moot, or `reconcile note <id> --note-file <path>` when it is genuinely still open.
@@ -156,10 +167,12 @@ A remote-secondmate card whose task is absent from the main backlog remains on t
 `captain-hold-lifecycle` owns why a reconcile may never be recorded as the captain's answer.
 Route the non-decision keys yourself:
 
+- `captain-question.<id>` with the exact answer `close` is the captain's explicit close for that question; pass the captured result file to `bin/fm-captain-question.py close <id> --board-result <result-file>` and preserve the captured provenance.
+- A note, a different answer, or a firstmate conclusion never closes a captain question.
 - `merge.<task-id>` is the captain's explicit merge order; follow the merge ruling below.
 - `dispatch.charted` carries comma-separated task ids the captain picked to start now; verify each id against the current backlog - still queued, blocker and time gate actually clear - then dispatch through the normal lifecycle, and report any id that no longer qualifies instead of forcing it.
 
-After handling, rebuild the board from a fresh snapshot so acted-on items leave Captain's Call, and echo every action taken in chat so the board and chat never diverge silently.
+After handling, rebuild the board from a fresh snapshot so acted-on items leave their respective sections, and echo every action taken in chat so the board and chat never diverge silently.
 
 ### The merge-click ruling (captain-decided)
 
@@ -170,7 +183,7 @@ Only the exact answer value `merge` authorizes a merge; an answer carrying a fre
 ## Chat-response contract
 
 This skill is the one owner of the `/bearings` chat-response format; the snapshot and classifier own the data that feeds it, and no other file restates this contract.
-Every `/bearings` chat response renders EXACTLY these four sections, in THIS order, and nothing else structural (there is no At Anchor section):
+Every `/bearings` chat response renders EXACTLY these five sections, in THIS order, and nothing else structural (there is no At Anchor section):
 
 1. **Captain's Call** - ONLY unsuppressed items that need the captain's own action now: a decision to make, a PR to approve or merge, a credential or login to provide, or a blocker only the captain can clear.
    Deferred or aged holds follow the presentation safety rule above instead.
@@ -178,11 +191,13 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
    Show the other contribution actors only as counts beside the checked/known coverage, and disclose `captain_omitted`, `unmeasured_homes`, stale verdicts and checks with no verdict when nonzero.
    Empty-state: "Nothing needs your action right now" is allowed only when `contributions.proven_clear` is true and the existing decision set is empty.
    When the section is empty but coverage is incomplete, say that no decision is recorded and give the checked/known count; a missing coverage field is also unverified.
-2. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
+2. **Open Questions from the Captain** - every captain-opened question still open in `captain_questions`, with its current status and last-updated date; mark `stale` when the snapshot says so and link available evidence.
+   Empty-state: "No open questions from the captain."
+3. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
    Empty-state: "No recent completions are in the current baseline."
-3. **Underway** - live work progressing on its own, one line of current state per direct report.
+4. **Underway** - live work progressing on its own, one line of current state per direct report.
    Empty-state: "Nothing is underway."
-4. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
+5. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
    In projects mode this section renders the per-project drilldown instead, under the same heading (the "Project drilldown" section above).
    Empty-state: "Nothing is queued."
 
@@ -201,8 +216,8 @@ Rules that keep the contract unambiguous:
 - Every PR appears as the full `https://...` URL; a shorthand `#number` is fine only as a back-reference after the full URL has already appeared in the same digest.
 - The chat follows `AGENTS.md` section 9 and carries one scannable line per item.
 - Detailed decisions, plans, full gate reasons, and evidence stay out of chat; file mode puts them in the report, while lavish mode puts only its payload-backed interactive detail on the board.
-- In file mode, include the report path or link inside the four-section digest without adding another heading.
-- In lavish mode, include the board URL inside the four-section digest the same way.
+- In file mode, include the report path or link inside the five-section digest without adding another heading.
+- In lavish mode, include the board URL inside the five-section digest the same way.
 
 ## Tone and content rules
 
