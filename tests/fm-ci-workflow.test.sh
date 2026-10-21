@@ -274,7 +274,7 @@ test_every_job_has_a_finite_timeout() {
   local reported
   reported=$(workflow_jobs | while IFS= read -r job; do
     { job_instance_timeouts "$job" || printf '%s\t%s\n' - unreadable; } | while IFS=$'\t' read -r shard timeout; do
-      case "$timeout" in ''|*[!0-9]*|0) printf '%s[%s]: %s\n' "$job" "$shard" "$timeout" ;; esac
+      case "$timeout" in (''|*[!0-9]*|0) printf '%s[%s]: %s\n' "$job" "$shard" "$timeout" ;; esac
     done
   done) || fail "could not read job timeouts from ci.yml"
   [ -z "$reported" ] || fail "these CI jobs have no finite hang tripwire:"$'\n'"$reported"
