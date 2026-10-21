@@ -24,6 +24,7 @@ Collect successful per-script measurements for every member before calculating a
 `tests/fm-supervision-host.test.sh` uses 789123 ms from run 36669175457, after the merged [host runtime fix](https://github.com/kunchenguid/firstmate/pull/6179), rather than its pre-fix maximum of 1065298 ms.
 That post-fix value has only one sample in this baseline, so further green runs must establish its variance.
 The native-Windows-only `tests/fm-pi-windows-shell-invocation.test.sh` retains its separate 5121 ms measurement from 2026-09-06T21:02Z instead of a portable capability skip.
+`tests/fm-captain-question.test.sh` postdates that baseline and uses its successful 1116 ms sample from run [39518822414](https://github.com/clarsen/firstmate/actions/runs/39518822414), so the unmeasured default no longer changes the serial packing.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 
 ## Parallel lanes
