@@ -307,6 +307,24 @@ jobs:
           set -eu
           bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Remote-job commands run under the product's operator PATH
+      # (fm_remote_job_compose_operator_path), which reads the account's
+      # ~/.local/bin but not this job's PATH, so the remote-transport tests
+      # need the provisioned Node and jq linked there. The always() step at the
+      # end removes exactly the links made here.
+      - name: Expose the provisioned Node and jq to remote-job commands
+        run: |
+          set -eu
+          account_bin="$(unset HOME; cd ~ && pwd -P)/.local/bin"
+          mkdir -p "$account_bin"
+          : > "$RUNNER_TEMP/fm-exposed-tools"
+          for tool in node jq; do
+            if [ -e "$account_bin/$tool" ] || [ -L "$account_bin/$tool" ]; then
+              continue
+            fi
+            ln -s "$(command -v "$tool")" "$account_bin/$tool"
+            printf '%s\n' "$account_bin/$tool" >> "$RUNNER_TEMP/fm-exposed-tools"
+          done
       - name: Isolate the npm global prefix
         run: |
           set -eu
@@ -358,6 +376,12 @@ jobs:
           name: fm-test-timing-portable-serial-${{ matrix.shard }}
           path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-serial-${{ matrix.shard }}.json
           if-no-files-found: warn
+      - name: Remove the links exposed to remote-job commands
+        if: always()
+        run: |
+          set -eu
+          [ -f "$RUNNER_TEMP/fm-exposed-tools" ] || exit 0
+          while IFS= read -r link; do rm -f -- "$link"; done < "$RUNNER_TEMP/fm-exposed-tools"
 
   # Required real-Herdr lane: pinned install, serial real-herdr-gated family,
   # hard-fail on "skip: herdr not found". Starts on Linux x86_64; if a genuine

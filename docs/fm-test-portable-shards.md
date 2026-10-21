@@ -150,6 +150,7 @@ Jobs self-provision their toolchain rather than relying on the hosted image, so 
 Every job that runs `npm`, `node`, or `tsc` sets up Node 22, the hosted `ubuntu-latest` default, with `actions/setup-node`.
 Jobs pin ShellCheck, actionlint, jq, Herdr, and Treehouse through their `bin/fm-install-*.sh` installers, and the jobs that run the Pi typecheck install a pinned TypeScript into the job-scoped npm prefix.
 A job cannot install a system package without root, so the runner image must provide `git`, `curl`, `tar`, `xz`, `python3`, and, for the jobs that check for them, `ruby` and `tmux`; each such job names any that are missing in its "Require runner tools" step.
+Remote-job commands run under the product's operator `PATH`, not the job's, so the serial shards link the provisioned Node and jq into the runner account's `~/.local/bin` for the run and remove those links when the job ends.
 `tests/fm-ci-workflow.test.sh` refuses a job that uses Node or jq before provisioning it.
 
 The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin`, `/opt/homebrew/bin`, and its provisioned Node, so `jq` must be installed in one of those system directories on a self-hosted runner.
