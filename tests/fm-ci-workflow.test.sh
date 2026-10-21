@@ -417,13 +417,15 @@ end
 }
 
 # Self-hosted runners: a job provisions the Node and jq it runs rather than
-# relying on what the hosted image happens to ship.
+# relying on what the hosted image happens to ship. A behavior-test lane or
+# family counts as using Node, because product readiness checks under test
+# (the supervision host's, for one) look for node on PATH.
 test_jobs_provision_node_and_jq_before_use() {
   local reported
   reported=$(ruby -ryaml -e '
 YAML.load_file(ARGV[0]).fetch("jobs").each do |name, job|
   steps = job.fetch("steps")
-  uses_node = steps.each_index.select { |i| steps[i]["run"].to_s.match?(/\b(npm|node|tsc)\b/) }
+  uses_node = steps.each_index.select { |i| steps[i]["run"].to_s.match?(/\b(npm|node|tsc)\b|fm-test-run\.sh --(lane|family)/) }
   unless uses_node.empty?
     setup = steps.index { |s| s["uses"].to_s.start_with?("actions/setup-node@") }
     puts "#{name}: Node is not set up before its first use" if setup.nil? || setup > uses_node.min
