@@ -1,0 +1,25 @@
+--- before expose:
+total 12
+drwxrwxr-x 2 runner runner 4096 Oct 21 06:39 .
+drwxrwxr-x 3 runner runner 4096 Oct 21 06:39 ..
+-rwxrwxr-x 1 runner runner   33 Oct 21 06:39 node
+expose exit=0
+--- after expose:
+total 12
+drwxrwxr-x 2 runner runner 4096 Oct 21 06:39 .
+drwxrwxr-x 3 runner runner 4096 Oct 21 06:39 ..
+lrwxrwxrwx 1 runner runner   26 Oct 21 06:39 jq -> /tmp/tmp.01dTRxiATW/bin/jq
+-rwxrwxr-x 1 runner runner   33 Oct 21 06:39 node
+--- recorded links:
+/home/runner/.local/bin/jq
+--- ~/.local/bin/node output: operator-own-node
+--- simulated test failure (shard exit 1), then always() cleanup:
+cleanup exit=0
+--- after cleanup:
+total 12
+drwxrwxr-x 2 runner runner 4096 Oct 21 06:39 .
+drwxrwxr-x 3 runner runner 4096 Oct 21 06:39 ..
+-rwxrwxr-x 1 runner runner   33 Oct 21 06:39 node
+node still operator-owned: operator-own-node
+--- cleanup when expose never ran (no record file):
+cleanup exit=0

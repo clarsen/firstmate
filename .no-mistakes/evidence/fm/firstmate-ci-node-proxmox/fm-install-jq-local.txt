@@ -1,0 +1,16 @@
+$ bin/fm-install-jq.sh $T/bin   # darwin arm64 host
+jq-1.7.1
+exit=0
+{
+  "ok": true
+}
+
+$ (fake curl returning tampered bytes) bin/fm-install-jq.sh $T/bin2
+fm-install-jq.sh: checksum mismatch for jq-macos-arm64 (expected 0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a, got 92e78d0b032962f47792a9fa95fd981ef63e1e3ef074d536d6304c75eddbe29f)
+exit=1
+lsd: /var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.2DvDqfJw5x/bin2: No such file or directory (os error 2).
+
+
+$ (fake uname FreeBSD riscv64) bin/fm-install-jq.sh $T/bin3
+fm-install-jq.sh: unsupported platform FreeBSD-riscv64; need linux or darwin on amd64/x86_64 or arm64/aarch64
+exit=1

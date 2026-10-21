@@ -1,0 +1,5 @@
+Upstream jq-1.7.1 sha256sum.txt (github.com/jqlang/jq/releases/download/jq-1.7.1/sha256sum.txt) vs bin/fm-install-jq.sh pins, and the actually-downloaded Linux assets:
+5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  jq-linux-amd64   (pin matches; downloaded asset hashes to same; ELF x86-64 static)
+4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5  jq-linux-arm64   (pin matches; downloaded asset hashes to same; ELF aarch64 static)
+4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443  jq-macos-amd64   (pin matches)
+0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a  jq-macos-arm64   (pin matches)
