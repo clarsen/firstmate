@@ -7,7 +7,8 @@
 # safeguards: PR runs supersede within one PR while main pushes are never
 # cancelled, and every CI job carries a finite hang tripwire drawn from the
 # three-tier timeout policy that docs/fm-test-portable-shards.md "Timeouts"
-# owns (fast, normal, heavy), so no job drifts back to a one-off number.
+# owns (fast, normal, heavy), so no job drifts back to a one-off number. The
+# dedicated supervision-host serial shard is that policy's single exception.
 #
 # The workflow is parsed as YAML and its concurrency expressions are resolved
 # against simulated pull_request and push contexts, so the assertions describe
@@ -64,10 +65,39 @@ puts [interpolate.call(concurrency.fetch("group")),
 ' "$CI_WORKFLOW" "$event" "$pr_number" "$run_id"
 }
 
-job_timeout() {
+# Print "<shard><TAB><timeout>" for every job instance, resolving the one
+# expression form the workflow uses, `${{ matrix.timeout }}`, against each
+# matrix include entry. A job with a literal timeout prints shard "-".
+job_instance_timeouts() {
   ruby -ryaml -e '
-puts YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("timeout-minutes", "none")
+job = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1])
+timeout = job.fetch("timeout-minutes", "none")
+if timeout.to_s.strip.match?(/\A\$\{\{\s*matrix\.timeout\s*\}\}\z/)
+  job.fetch("strategy").fetch("matrix").fetch("include").each do |entry|
+    puts [entry.fetch("shard"), entry.fetch("timeout").inspect].join("\t")
+  end
+else
+  puts ["-", timeout.inspect].join("\t")
+end
 ' "$CI_WORKFLOW" "$1"
+}
+
+# The dedicated portable serial shard is the final matrix entry and the policy's
+# one deliberate exception; every other instance carries the job's tier value.
+DEDICATED_SERIAL_JOB=tests-portable-serial
+
+job_timeout() {
+  local rows
+  rows=$(job_instance_timeouts "$1") || return 1
+  [ "$1" != "$DEDICATED_SERIAL_JOB" ] || rows=$(printf '%s\n' "$rows" | sed '$d')
+  rows=$(printf '%s\n' "$rows" | cut -f2 | LC_ALL=C sort -u)
+  [ "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')" = 1 ] \
+    || { echo "$1 instances disagree on their tier timeout: $(printf '%s' "$rows" | tr '\n' ' ')" >&2; return 1; }
+  printf '%s\n' "$rows"
+}
+
+dedicated_serial_timeout() {
+  job_instance_timeouts "$DEDICATED_SERIAL_JOB" | tail -n 1
 }
 
 # Tier membership is the executable inventory of the timeout policy: a new job
@@ -242,13 +272,11 @@ test_main_pushes_are_never_cancelled() {
 
 test_every_job_has_a_finite_timeout() {
   local reported
-  reported=$(ruby -ryaml -e '
-YAML.load_file(ARGV[0]).fetch("jobs").each do |name, job|
-  timeout = job["timeout-minutes"]
-  next if timeout.is_a?(Integer) && timeout > 0
-  puts "#{name}: #{timeout.inspect}"
-end
-' "$CI_WORKFLOW") || fail "could not read job timeouts from ci.yml"
+  reported=$(workflow_jobs | while IFS= read -r job; do
+    { job_instance_timeouts "$job" || printf '%s\t%s\n' - unreadable; } | while IFS=$'\t' read -r shard timeout; do
+      case "$timeout" in ''|*[!0-9]*|0) printf '%s[%s]: %s\n' "$job" "$shard" "$timeout" ;; esac
+    done
+  done) || fail "could not read job timeouts from ci.yml"
   [ -z "$reported" ] || fail "these CI jobs have no finite hang tripwire:"$'\n'"$reported"
   pass "every ci.yml job carries a finite timeout"
 }
@@ -326,6 +354,31 @@ puts steps[index].fetch("timeout-minutes", "none")
   pass "Herdr keeps a $step minute step tripwire under a $heavy minute job backstop"
 }
 
+# Dedicated shard: the final portable serial shard holds only the
+# supervision-host suite and alone carries a 45-minute budget, above the normal
+# tier and below the heavy backstop. The runner's --check-coverage owns the
+# modeled ceiling that keeps that suite clear of this limit.
+test_dedicated_serial_shard_is_the_single_raised_budget() {
+  local normal heavy row shard timeout count members
+  # shellcheck disable=SC2086
+  normal=$(tier_timeout normal $NORMAL_TIER_JOBS) || exit 1
+  # shellcheck disable=SC2086
+  heavy=$(tier_timeout heavy $HEAVY_TIER_JOBS) || exit 1
+  row=$(dedicated_serial_timeout) || fail "could not read the dedicated serial shard timeout"
+  shard=$(printf '%s\n' "$row" | cut -f1)
+  timeout=$(printf '%s\n' "$row" | cut -f2)
+  count=$(job_instance_timeouts "$DEDICATED_SERIAL_JOB" | wc -l | tr -d ' ')
+  [ "$shard" = "$count" ] || fail "the dedicated serial shard must be the final matrix entry, got $shard of $count"
+  [ "$timeout" = 45 ] || fail "the dedicated serial shard must carry the 45-minute budget, got $timeout"
+  [ "$timeout" -gt "$normal" ] && [ "$timeout" -lt "$heavy" ] \
+    || fail "the dedicated serial budget ($timeout) must sit between the normal ($normal) and heavy ($heavy) tiers"
+  members=$("$ROOT/bin/fm-test-run.sh" --list --lane "portable-serial-${shard}of${count}") \
+    || fail "could not list the dedicated serial shard"
+  [ "$members" = tests/fm-supervision-host.test.sh ] \
+    || fail "the raised budget must cover only the supervision-host suite, got: $members"
+  pass "only the dedicated supervision-host shard carries the $timeout minute budget"
+}
+
 test_ci_matrices_match_executable_partitions() {
   ruby -ryaml -ropen3 - "$CI_WORKFLOW" "$ROOT" <<'RUBY' || fail "CI partition contract"
 jobs = YAML.load_file(ARGV[0]).fetch("jobs")
@@ -333,8 +386,10 @@ root = ARGV[1]
 serial = jobs.fetch("tests-portable-serial").fetch("strategy")
 raise "serial failures must not cancel other shards" unless serial.fetch("fail-fast") == false
 matrix = serial.fetch("matrix")
-raise "unexpected serial dimensions" unless matrix.keys == ["shard"]
-shards = matrix.fetch("shard")
+raise "unexpected serial dimensions" unless matrix.keys == ["include"]
+raise "unexpected serial entry keys" unless matrix.fetch("include").all? { |e| e.keys.sort == %w[shard timeout] }
+shards = matrix.fetch("include").map { |e| e.fetch("shard") }
+raise "serial shards must be listed in order" unless shards == (1..shards.length).to_a
 lanes, status = Open3.capture2(File.join(root, "bin/fm-test-run.sh"), "--list-lanes")
 raise "cannot list runner lanes" unless status.success?
 actual = lanes.lines.map(&:strip).select { |l| l.match?(/\Aportable-serial-\d+of\d+\z/) }
@@ -456,3 +511,4 @@ test_every_job_belongs_to_exactly_one_timeout_tier
 test_fast_tier_shares_one_short_tripwire
 test_normal_tier_shares_one_budget
 test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop
+test_dedicated_serial_shard_is_the_single_raised_budget

@@ -137,9 +137,11 @@
 # configured shard count is refused, so a CI matrix cannot silently drop a shard.
 # --check-coverage also reports serial_max_ms (largest shared-shard packed hint
 # sum, including default weights) and serial_budget_ms (the 20-minute packing
-# target), refusing a shared shard above that target. Neither figure is an
-# execution timeout or proof of observed headroom: refresh growing files from
-# CI measurements.
+# target), refusing a shared shard above that target. It likewise reports
+# serial_dedicated_ms and serial_dedicated_budget_ms for the final shard,
+# refusing a host suite hint above that shard's 38-minute ceiling. Neither
+# figure is an execution timeout or proof of observed headroom: refresh growing
+# files from CI measurements.
 # --changed is conservative: it over-selects related families rather than
 # under-selecting, and never expands to the complete suite unless --all. The one
 # place it is deliberately narrow is a bin/ path with no curated family: a test
@@ -206,6 +208,11 @@ PORTABLE_SERIAL_SHARDS=10
 # can consume nearly the whole 30-minute CI job. Pack all other scripts into
 # the preceding shards so they retain the 20-minute modeled target.
 PORTABLE_SERIAL_DEDICATED_SCRIPT=tests/fm-supervision-host.test.sh
+
+# Ceiling, not an execution timeout, for the dedicated shard's 45-minute CI job:
+# leave at least seven minutes for setup and runtime variance. --check-coverage
+# refuses a host suite hint above it; speed up or split the suite instead.
+PORTABLE_SERIAL_DEDICATED_MAX_WEIGHT_MS=2280000
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -1070,7 +1077,7 @@ select_lane() {
 }
 
 run_coverage_guard() {
-  local tmp missing extra a b shard unhinted serial_total serial_ms serial_max_ms=0
+  local tmp missing extra a b shard unhinted serial_total serial_ms serial_max_ms=0 serial_dedicated_ms=0
   local p1_ms p1_unhinted p2_ms p2_unhinted parallel_max_ms parallel_imbalance_ms
   local -a saved_scripts=()
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-coverage.XXXXXX")
@@ -1123,9 +1130,11 @@ run_coverage_guard() {
       return 1
     fi
     printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" >>"$tmp/serial_shards_raw"
-    if [ "$shard" -lt "$PORTABLE_SERIAL_SHARDS" ]; then
-      serial_ms=$(printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | portable_serial_lane_weight)
-      [ "$serial_ms" -le "$serial_max_ms" ] || serial_max_ms=$serial_ms
+    serial_ms=$(printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | portable_serial_lane_weight)
+    if [ "$shard" -eq "$PORTABLE_SERIAL_SHARDS" ]; then
+      serial_dedicated_ms=$serial_ms
+    elif [ "$serial_ms" -gt "$serial_max_ms" ]; then
+      serial_max_ms=$serial_ms
     fi
     shard=$((shard + 1))
   done
@@ -1209,6 +1218,13 @@ run_coverage_guard() {
     return 1
   fi
 
+  if [ "$serial_dedicated_ms" -gt "$PORTABLE_SERIAL_DEDICATED_MAX_WEIGHT_MS" ]; then
+    log "coverage guard: dedicated portable serial shard packs ${serial_dedicated_ms}ms above the ${PORTABLE_SERIAL_DEDICATED_MAX_WEIGHT_MS}ms ceiling"
+    log "speed up or split $PORTABLE_SERIAL_DEDICATED_SCRIPT; do not raise the job timeout further: docs/fm-test-portable-shards.md"
+    rm -rf "$tmp"
+    return 1
+  fi
+
   if [ -x "$ROOT/bin/fm-test-isolation-proof.sh" ]; then
     "$ROOT/bin/fm-test-isolation-proof.sh" --list | LC_ALL=C sort -u >"$tmp/proof_list"
     if ! cmp -s "$tmp/proven" "$tmp/proof_list"; then
@@ -1228,7 +1244,7 @@ run_coverage_guard() {
   parallel_imbalance_ms=$((p1_ms - p2_ms))
   [ "$parallel_imbalance_ms" -ge 0 ] || parallel_imbalance_ms=$((-parallel_imbalance_ms))
 
-  printf 'FM_TEST_COVERAGE ok total=%s parallel=%s parallel_max_ms=%s parallel_imbalance_ms=%s parallel_unhinted=%s serial=%s serial_shards=%s serial_unhinted=%s serial_max_ms=%s serial_budget_ms=%s herdr=%s\n' \
+  printf 'FM_TEST_COVERAGE ok total=%s parallel=%s parallel_max_ms=%s parallel_imbalance_ms=%s parallel_unhinted=%s serial=%s serial_shards=%s serial_unhinted=%s serial_max_ms=%s serial_budget_ms=%s serial_dedicated_ms=%s serial_dedicated_budget_ms=%s herdr=%s\n' \
     "$(wc -l <"$tmp/all" | tr -d ' ')" \
     "$(wc -l <"$tmp/shards_union" | tr -d ' ')" \
     "$parallel_max_ms" \
@@ -1239,6 +1255,8 @@ run_coverage_guard() {
     "$unhinted" \
     "$serial_max_ms" \
     "$PORTABLE_SERIAL_MAX_WEIGHT_MS" \
+    "$serial_dedicated_ms" \
+    "$PORTABLE_SERIAL_DEDICATED_MAX_WEIGHT_MS" \
     "$(wc -l <"$tmp/herdr" | tr -d ' ')"
   rm -rf "$tmp"
   return 0
