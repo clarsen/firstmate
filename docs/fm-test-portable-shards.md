@@ -148,12 +148,13 @@ Point `FIRSTMATE_CI_LINUX_RUNNER` at the laptop only after a trial run of those 
 Serial shards also assume no other stateful shard shares the machine, so give each runner instance its own home and temporary directory before running several at once.
 
 Jobs self-provision their toolchain rather than relying on the hosted image, so a minimal self-hosted runner can serve them.
-Every job that runs `npm`, `node`, `tsc`, or a behavior-test lane or family sets up Node 22, the hosted `ubuntu-latest` default, with `actions/setup-node`.
+Every job on `FIRSTMATE_CI_RUNNER` or `FIRSTMATE_CI_LINUX_RUNNER` sets up Node 22, the hosted `ubuntu-latest` default, with `actions/setup-node` and runs its "Install pinned jq" step before any run step other than checkout, the pinned-tool provisioning steps, and "Require runner tools".
 Jobs pin ShellCheck, actionlint, jq, Ruby, Herdr, and Treehouse through their `bin/fm-install-*.sh` installers, and the jobs that run the Pi typecheck install a pinned TypeScript into the job-scoped npm prefix.
-A job cannot install a system package without root, so the runner image must provide `git`, `curl`, `tar`, `xz`, `python3`, and, for the serial shards, `tmux`; each such job names any that are missing in its "Require runner tools" step.
-Remote-job commands run under the product's operator `PATH`, not the job's, so the serial shards link the provisioned Node and jq into the runner account's `~/.local/bin` for the run and remove those links when the job ends.
+A job cannot install a system package without root, so the runner image must provide `git`, `curl`, `tar`, `xz`, `python3`, and, for the serial shards, `tmux`.
+The "Require runner tools" steps name a missing `python3` (and `tmux` in the serial shards), and the Herdr job's tool check also covers `curl` and `tar`; any other missing tool fails inside the installer that needs it.
+Remote-job commands run under the product's operator `PATH`, not the job's, so the serial shards link the provisioned Node and jq into the runner account's `~/.local/bin`, replacing any symlink another job left but never a regular file, and when the job ends remove each link that still points at this job's tool.
 Ruby comes from Homebrew's relocatable portable build, because `ruby/setup-ruby`'s prebuilt Rubies need a hosted tool cache path that a runner user without root cannot write.
-`tests/fm-ci-workflow.test.sh` refuses a job that uses Node or jq before provisioning it.
+`tests/fm-ci-workflow.test.sh` checks only that structural ordering of the setup-node and "Install pinned jq" steps; the real proof that no job relies on the hosted image is the jobs passing on the Proxmox runner.
 
 The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin`, `/opt/homebrew/bin`, and its provisioned Node, so `jq` must be installed in one of those system directories on a self-hosted runner.
 

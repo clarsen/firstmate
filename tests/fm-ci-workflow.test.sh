@@ -416,29 +416,31 @@ end
   pass "every npm global install runs under a job-scoped prefix"
 }
 
-# Self-hosted runners: a job provisions the Node and jq it runs rather than
-# relying on what the hosted image happens to ship. A behavior-test lane or
-# family counts as using Node, because product readiness checks under test
-# (the supervision host's, for one) look for node on PATH.
+# Self-hosted runners: every job on FIRSTMATE_CI_RUNNER or
+# FIRSTMATE_CI_LINUX_RUNNER sets up Node and installs the pinned jq before its
+# first run step that is not checkout, a pinned-tool provisioning step, or the
+# runner-tool check, rather than relying on what the hosted image ships.
 test_jobs_provision_node_and_jq_before_use() {
-  local reported
-  reported=$(ruby -ryaml -e '
-YAML.load_file(ARGV[0]).fetch("jobs").each do |name, job|
-  steps = job.fetch("steps")
-  uses_node = steps.each_index.select { |i| steps[i]["run"].to_s.match?(/\b(npm|node|tsc)\b|fm-test-run\.sh --(lane|family)/) }
-  unless uses_node.empty?
-    setup = steps.index { |s| s["uses"].to_s.start_with?("actions/setup-node@") }
-    puts "#{name}: Node is not set up before its first use" if setup.nil? || setup > uses_node.min
-  end
-  next if steps.any? { |s| s.fetch("env", {}).key?("PATH") }
-  uses_jq = steps.each_index.select { |i| steps[i]["run"].to_s.match?(/\bjq\b/) && !steps[i]["run"].to_s.include?("fm-install-jq.sh") }
-  next if uses_jq.empty?
-  install = steps.index { |s| s["run"].to_s.include?("bin/fm-install-jq.sh") }
-  puts "#{name}: jq is not installed before its first use" if install.nil? || install > uses_jq.min
-end
-' "$CI_WORKFLOW") || fail "could not read ci.yml steps"
+  local job runner missing reported=
+  for job in $(workflow_jobs); do
+    runner=$(job_runner "$job") || fail "$job runs-on: could not resolve the runner"
+    case "$(printf '%s\n' "$runner" | cut -f1)" in
+      FIRSTMATE_CI_RUNNER|FIRSTMATE_CI_LINUX_RUNNER) ;;
+      *) continue ;;
+    esac
+    missing=$(ruby -ryaml -e '
+steps = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("steps")
+provisioning = ->(s) { s["name"].to_s.match?(/\A(Install|Set up) pinned /) || s["name"] == "Require runner tools" }
+first = steps.index { |s| s.key?("run") && !provisioning.call(s) } || steps.length
+setup = steps.index { |s| s["uses"].to_s.start_with?("actions/setup-node@") }
+jq = steps.index { |s| s["name"] == "Install pinned jq" }
+puts "#{ARGV[1]}: Node is not set up before its first run step" if setup.nil? || setup > first
+puts "#{ARGV[1]}: jq is not installed before its first run step" if jq.nil? || jq > first
+' "$CI_WORKFLOW" "$job") || fail "could not read $job steps"
+    [ -z "$missing" ] || reported+="$missing"$'\n'
+  done
   [ -z "$reported" ] || fail "these jobs rely on the runner image for Node or jq:"$'\n'"$reported"
-  pass "every job provisions Node and jq before its first use"
+  pass "every self-hostable job provisions Node and jq before its first run step"
 }
 
 test_ci_matrices_match_executable_partitions

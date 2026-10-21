@@ -53,6 +53,18 @@ jobs:
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # Single owner of the lint definition (shell file set, config, version,
       # and GitHub workflow lint). Do not re-spell the checks here; keep CI
       # and the pre-push gate on this script so a self-broken ci.yml still
@@ -88,6 +100,18 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Prove complete regression partition
         run: bin/fm-test-run.sh --check-coverage
 
@@ -324,8 +348,10 @@ jobs:
       # Remote-job commands run under the product's operator PATH
       # (fm_remote_job_compose_operator_path), which reads the account's
       # ~/.local/bin but not this job's PATH, so the remote-transport tests
-      # need the provisioned Node and jq linked there. The always() step at the
-      # end removes exactly the links made here.
+      # need this job's Node and jq linked there. A symlink left by another job
+      # is replaced, a regular file is the account's own tool and is kept, and
+      # the always() step at the end removes a link only while it is still this
+      # job's.
       - name: Expose the provisioned Node and jq to remote-job commands
         run: |
           set -eu
@@ -333,11 +359,12 @@ jobs:
           mkdir -p "$account_bin"
           : > "$RUNNER_TEMP/fm-exposed-tools"
           for tool in node jq; do
-            if [ -e "$account_bin/$tool" ] || [ -L "$account_bin/$tool" ]; then
+            if [ -e "$account_bin/$tool" ] && [ ! -L "$account_bin/$tool" ]; then
               continue
             fi
-            ln -s "$(command -v "$tool")" "$account_bin/$tool"
-            printf '%s\n' "$account_bin/$tool" >> "$RUNNER_TEMP/fm-exposed-tools"
+            target=$(command -v "$tool")
+            ln -sfn "$target" "$account_bin/$tool"
+            printf '%s\t%s\n' "$account_bin/$tool" "$target" >> "$RUNNER_TEMP/fm-exposed-tools"
           done
       - name: Isolate the npm global prefix
         run: |
@@ -395,7 +422,9 @@ jobs:
         run: |
           set -eu
           [ -f "$RUNNER_TEMP/fm-exposed-tools" ] || exit 0
-          while IFS= read -r link; do rm -f -- "$link"; done < "$RUNNER_TEMP/fm-exposed-tools"
+          while IFS=$'\t' read -r link target; do
+            [ "$(readlink -- "$link" || true)" != "$target" ] || rm -f -- "$link"
+          done < "$RUNNER_TEMP/fm-exposed-tools"
 
   # Required real-Herdr lane: pinned install, serial real-herdr-gated family,
   # hard-fail on "skip: herdr not found". Starts on Linux x86_64; if a genuine
@@ -547,6 +576,18 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v6
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # Tools a job cannot install without root, so the runner image must
       # provide them (docs/fm-test-portable-shards.md "Runner override").
       - name: Require runner tools
@@ -707,6 +748,18 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Compatibility pointers must stay intact
         run: |
           set -eu
