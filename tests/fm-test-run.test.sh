@@ -1117,6 +1117,9 @@ test_portable_serial_shards_partition_the_serial_lane() {
   [ "$count" -ge 2 ] || fail "expected at least two portable serial shard lanes, got $count"
   printf '%s\n' "$lanes" | grep -q "^portable-serial-1of${count}\$" \
     || fail "shard lane names must carry the shard count ${count}: $lanes"
+  [ "$("$RUNNER" --list --lane "portable-serial-${count}of${count}")" = \
+    tests/fm-supervision-host.test.sh ] \
+    || fail "final portable serial shard must contain only the supervision-host suite"
 
   serial=$("$RUNNER" --list --lane portable-serial | LC_ALL=C sort)
   union=""
