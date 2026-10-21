@@ -1,0 +1,22 @@
+NOTE: docker egress is blocked on this host (transparent proxy 127.0.0.1:31280 down); assets were fetched on the host from the exact release URLs, sha256-matched to the pins, and served offline by a curl stand-in. Everything else is the real script.
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+Linux aarch64
+before: jq=none ruby=none
+curl-standin: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64
+jq-1.7.1
+curl-standin: https://github.com/Homebrew/homebrew-portable-ruby/releases/download/3.4.5/portable-ruby-3.4.5.arm64_linux.bottle.tar.gz
+ruby 3.4.5 with yaml 0.2.5
+after: jq=/tmp/rt/bin/jq ruby=/tmp/rt/bin/ruby
+{"x":1}
+{"jobs" => {"a" => 1}}
+exit=0
+--- adversarial: tampered asset must be rejected ---
+curl-standin: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64
+fm-install-jq.sh: checksum mismatch for jq-linux-arm64 (expected 4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5, got f55ba6e3f1964785683d18c3884a5f72f72b6a7836d94082f97b52f19ff3c480)
+exit=1
+ls: cannot access '/tmp/badbin/jq': No such file or directory
+--- adversarial: unsupported arch must fail before download ---
+fm-install-jq.sh: unsupported platform Linux-riscv64; need linux or darwin on amd64/x86_64 or arm64/aarch64
+exit=1
+fm-install-ruby.sh: unsupported platform Linux-riscv64; need linux on amd64/x86_64 or arm64/aarch64, or darwin on arm64/aarch64
+exit=1

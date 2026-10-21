@@ -1,0 +1,20 @@
+===== ubuntu:noble linux/arm64 =====
+Linux aarch64
+before: jq=none ruby=none node=none npm=none
+/src/bin/fm-install-jq.sh: line 59: curl: command not found
+fm-install-jq.sh: download attempt 1 failed; retrying
+/src/bin/fm-install-jq.sh: line 59: curl: command not found
+fm-install-jq.sh: download attempt 2 failed; retrying
+/src/bin/fm-install-jq.sh: line 59: curl: command not found
+fm-install-jq.sh: download attempt 3 failed; retrying
+/src/bin/fm-install-jq.sh: line 59: curl: command not found
+fm-install-jq.sh: download attempt 4 failed; retrying
+/src/bin/fm-install-jq.sh: line 59: curl: command not found
+fm-install-jq.sh: download attempt 5 failed; retrying
+/src/bin/fm-install-jq.sh: line 59: curl: command not found
+fm-install-jq.sh: download failed after 6 attempts
+===== ubuntu:noble linux/amd64 =====
+Unable to find image 'ubuntu:noble' locally
+docker: Error response from daemon: Get "https://registry-1.docker.io/v2/": writing response to registry-1.docker.io:443: connecting to 127.0.0.1:31280: dial tcp 127.0.0.1:31280: connect: connection refused
+
+Run 'docker run --help' for more information

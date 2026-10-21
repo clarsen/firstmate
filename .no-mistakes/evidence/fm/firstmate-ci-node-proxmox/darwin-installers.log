@@ -1,0 +1,14 @@
+## darwin-arm64 host: fm-install-jq.sh
+jq-1.7.1
+exit=0
+.rwxr-xr-x clarsen staff 789 KB Wed Oct 21 02:04:59 2026 jq
+
+## darwin-arm64 host: fm-install-ruby.sh
+ruby 3.4.5 with yaml 0.2.5
+exit=0
+.rwxr-xr-x clarsen staff 789 KB Wed Oct 21 02:04:59 2026 jq
+lrwxr-xr-x clarsen staff 100 B  Wed Oct 21 02:05:01 2026 ruby ⇒ /private/var/folders/6n/m7pmtf6j7dz_j4t438z_jmp80000gn/T/tmp.XrDFYq95TU/portable-ruby-3.4.5/bin/ruby
+{"a" => [1, 2]}
+{
+  "ok": true
+}

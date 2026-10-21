@@ -1,0 +1,13 @@
+### Regression: updated guard vs. the BASE ci.yml (ff722f8, the one that hit 'npm: command not found' on Proxmox)
+not ok - macos-stock-bash must use FIRSTMATE_CI_MACOS_RUNNER with a macos-latest fallback, got FIRSTMATE_CI_RUNNER	macos-latest
+exit=
+
+### Mutation: drop setup-node from tests-portable-serial only
+not ok - these jobs rely on the runner image for Node or jq:
+tests-portable-serial: Node is not set up before its first run step
+
+
+### Mutation: move 'Install pinned jq' after the test step in tests-herdr
+not ok - these jobs rely on the runner image for Node or jq:
+tests-herdr: jq is not installed before its first run step
+
