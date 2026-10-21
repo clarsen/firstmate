@@ -122,19 +122,20 @@ The workflow retains per-PR supersession without cancelling main pushes or chang
 Every job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) reads its runner from a repository variable through `fromJSON`, and falls back to the GitHub-hosted runner it always used when the variable is unset.
 A fork or template user who sets nothing is unaffected.
 Set a variable under the repository's Actions variables, never in the workflow file.
-Pull requests from forks ignore both variables and always run on the hosted fallback, so code from outside the repository never reaches a self-hosted runner.
+Pull requests from forks ignore every variable and always run on the hosted fallback, so code from outside the repository never reaches a self-hosted runner.
 Pushes to `main` and pull requests from branches of this repository follow the variables.
 
 | Variable | Jobs | Hosted fallback |
 |---|---|---|
-| `FIRSTMATE_CI_RUNNER` | lint, coverage guard, portable parallel 1 and 2, timing aggregate, repo invariants, stock macOS Bash | `ubuntu-latest`, and `macos-latest` for stock macOS Bash |
+| `FIRSTMATE_CI_RUNNER` | lint, coverage guard, portable parallel 1 and 2, timing aggregate, repo invariants | `ubuntu-latest` |
 | `FIRSTMATE_CI_LINUX_RUNNER` | portable serial shards, Herdr | `ubuntu-latest` |
+| `FIRSTMATE_CI_MACOS_RUNNER` | stock macOS Bash | `macos-latest` |
 
 The value is a JSON runner label or label array.
 The captain's laptop (macOS arm64, three runner instances as the standard user `ghrunner`) uses `["self-hosted","macOS","ARM64","mac-laptop-arm64"]`.
 The runners are declared in the separate nix-config repository, not here.
 The homelab Proxmox runner scale set `firstmate-linux-x64` (an Ubuntu noble runner template) is supported for `FIRSTMATE_CI_LINUX_RUNNER` as `["firstmate-linux-x64"]`.
-Stock macOS Bash follows `FIRSTMATE_CI_RUNNER`, so on the laptop it stops billing at the hosted macOS rate.
+Stock macOS Bash follows its own `FIRSTMATE_CI_MACOS_RUNNER`, so it can stay on a macOS runner such as the laptop (which stops billing at the hosted macOS rate) while `FIRSTMATE_CI_RUNNER` moves to Linux runners.
 
 The serial shards and Herdr have their own variable because they were not proven on macOS.
 Running the lanes on an Apple-silicon Mac on 2026-10-09 passed lint, the coverage guard, both parallel lanes, and serial shards 1, 2, 4, and 8.

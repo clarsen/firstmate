@@ -25,7 +25,7 @@ concurrency:
 # Runner policy: every job's runs-on reads a repository variable as JSON and
 # falls back to the GitHub-hosted runner when it is unset. Fork pull requests
 # always get the hosted runner. docs/fm-test-portable-shards.md "Runner
-# override" owns the two variables, the fork rule, and the self-hosted hygiene rules.
+# override" owns the three variables, the fork rule, and the self-hosted hygiene rules.
 
 # Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the three
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
@@ -568,7 +568,7 @@ jobs:
 
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_RUNNER || '"macos-latest"') || 'macos-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_MACOS_RUNNER || '"macos-latest"') || 'macos-latest' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
