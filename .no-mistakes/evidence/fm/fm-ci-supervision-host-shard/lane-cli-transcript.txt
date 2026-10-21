@@ -1,0 +1,51 @@
+$ bin/fm-test-run.sh --check-coverage
+comm: file 2 is not in sorted order
+comm: input is not in sorted order
+exit=0
+
+$ bin/fm-test-run.sh --list --lane portable-serial-1of10 | wc -l; grep supervision-host.test
+rc=0 count=1
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-2of10 | wc -l; grep supervision-host.test
+rc=0 count=27
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-3of10 | wc -l; grep supervision-host.test
+rc=0 count=26
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-4of10 | wc -l; grep supervision-host.test
+rc=0 count=27
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-5of10 | wc -l; grep supervision-host.test
+rc=0 count=27
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-6of10 | wc -l; grep supervision-host.test
+rc=0 count=27
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-7of10 | wc -l; grep supervision-host.test
+rc=0 count=28
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-8of10 | wc -l; grep supervision-host.test
+rc=0 count=28
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-9of10 | wc -l; grep supervision-host.test
+rc=0 count=29
+(host suite not in this shard)
+
+$ bin/fm-test-run.sh --list --lane portable-serial-10of10 | wc -l; grep supervision-host.test
+rc=0 count=1
+1:tests/fm-supervision-host.test.sh
+
+$ bin/fm-test-run.sh --list --lane portable-serial-10of10
+tests/fm-supervision-host.test.sh
+
+$ bin/fm-test-run.sh --list --lane portable-serial-2of9   # stale 9-shard matrix
+fm-test-run: lane 'portable-serial-2of9' asks for 9 portable serial shards but this runner is configured for 10 (see --list-lanes)
+exit=2

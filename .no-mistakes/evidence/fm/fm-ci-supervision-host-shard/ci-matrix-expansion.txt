@@ -1,0 +1,13 @@
+timeout-minutes expression: ${{ matrix.timeout }}
+expanded jobs (job-total=10):
+  Behavior portable serial 1: timeout=30m lane=portable-serial-1of10 rc=0 scripts=1 -> tests/fm-watch-triage.test.sh
+  Behavior portable serial 2: timeout=30m lane=portable-serial-2of10 rc=0 scripts=27
+  Behavior portable serial 3: timeout=30m lane=portable-serial-3of10 rc=0 scripts=26
+  Behavior portable serial 4: timeout=30m lane=portable-serial-4of10 rc=0 scripts=27
+  Behavior portable serial 5: timeout=30m lane=portable-serial-5of10 rc=0 scripts=27
+  Behavior portable serial 6: timeout=30m lane=portable-serial-6of10 rc=0 scripts=27
+  Behavior portable serial 7: timeout=30m lane=portable-serial-7of10 rc=0 scripts=28
+  Behavior portable serial 8: timeout=30m lane=portable-serial-8of10 rc=0 scripts=28
+  Behavior portable serial 9: timeout=30m lane=portable-serial-9of10 rc=0 scripts=29
+  Behavior portable serial 10: timeout=45m lane=portable-serial-10of10 rc=0 scripts=1 -> tests/fm-supervision-host.test.sh
+aggregate needs: ['tests-timing-aggregate']
