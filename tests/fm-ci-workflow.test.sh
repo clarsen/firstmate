@@ -415,10 +415,34 @@ end
   pass "every npm global install runs under a job-scoped prefix"
 }
 
+# Self-hosted runners: a job provisions the Node and jq it runs rather than
+# relying on what the hosted image happens to ship.
+test_jobs_provision_node_and_jq_before_use() {
+  local reported
+  reported=$(ruby -ryaml -e '
+YAML.load_file(ARGV[0]).fetch("jobs").each do |name, job|
+  steps = job.fetch("steps")
+  uses_node = steps.each_index.select { |i| steps[i]["run"].to_s.match?(/\b(npm|node|tsc)\b/) }
+  unless uses_node.empty?
+    setup = steps.index { |s| s["uses"].to_s.start_with?("actions/setup-node@") }
+    puts "#{name}: Node is not set up before its first use" if setup.nil? || setup > uses_node.min
+  end
+  next if steps.any? { |s| s.fetch("env", {}).key?("PATH") }
+  uses_jq = steps.each_index.select { |i| steps[i]["run"].to_s.match?(/\bjq\b/) && !steps[i]["run"].to_s.include?("fm-install-jq.sh") }
+  next if uses_jq.empty?
+  install = steps.index { |s| s["run"].to_s.include?("bin/fm-install-jq.sh") }
+  puts "#{name}: jq is not installed before its first use" if install.nil? || install > uses_jq.min
+end
+' "$CI_WORKFLOW") || fail "could not read ci.yml steps"
+  [ -z "$reported" ] || fail "these jobs rely on the runner image for Node or jq:"$'\n'"$reported"
+  pass "every job provisions Node and jq before its first use"
+}
+
 test_ci_matrices_match_executable_partitions
 test_every_job_runner_is_overridable_with_hosted_defaults
 test_fork_pull_requests_always_use_the_hosted_runner
 test_npm_global_installs_use_a_job_scoped_prefix
+test_jobs_provision_node_and_jq_before_use
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled

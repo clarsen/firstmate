@@ -133,6 +133,7 @@ Pushes to `main` and pull requests from branches of this repository follow the v
 The value is a JSON runner label or label array.
 The captain's laptop (macOS arm64, three runner instances as the standard user `ghrunner`) uses `["self-hosted","macOS","ARM64","mac-laptop-arm64"]`.
 The runners are declared in the separate nix-config repository, not here.
+The homelab Proxmox runner scale set `firstmate-linux-x64` (an Ubuntu noble runner template) is supported for `FIRSTMATE_CI_LINUX_RUNNER` as `["firstmate-linux-x64"]`.
 Stock macOS Bash follows `FIRSTMATE_CI_RUNNER`, so on the laptop it stops billing at the hosted macOS rate.
 
 The serial shards and Herdr have their own variable because they were not proven on macOS.
@@ -142,10 +143,16 @@ Two were genuine Linux-only constructs in tests (GNU-only `sed -i` and the util-
 Others depended on the runner's tools: a Node major that prints a typeless-module warning (the Pi extension tests assert silent output), a Git whose handling of an unknown `~user` hooks path differs from the hosted one, and live-harness guards that run wherever a real harness CLI is installed.
 A few watcher and listener scripts also timed out or failed on the laptop and have not been shown green there.
 Real Herdr was not run locally because its default-session tripwire would collide with a live fleet.
-Point `FIRSTMATE_CI_LINUX_RUNNER` at the laptop only after a trial run of those shards is green there, and keep the runner's Node, Git, and installed harnesses aligned with what the hosted image provides.
+Point `FIRSTMATE_CI_LINUX_RUNNER` at the laptop only after a trial run of those shards is green there, and keep the runner's Git and installed harnesses aligned with what the hosted image provides.
 Serial shards also assume no other stateful shard shares the machine, so give each runner instance its own home and temporary directory before running several at once.
 
-The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin` and `/opt/homebrew/bin`, so `npm` and `jq` must be installed in one of them on a self-hosted runner.
+Jobs self-provision their toolchain rather than relying on the hosted image, so a minimal self-hosted runner can serve them.
+Every job that runs `npm`, `node`, or `tsc` sets up Node 22, the hosted `ubuntu-latest` default, with `actions/setup-node`.
+Jobs pin ShellCheck, actionlint, jq, Herdr, and Treehouse through their `bin/fm-install-*.sh` installers, and the jobs that run the Pi typecheck install a pinned TypeScript into the job-scoped npm prefix.
+A job cannot install a system package without root, so the runner image must provide `git`, `curl`, `tar`, `xz`, `python3`, and, for the jobs that check for them, `ruby` and `tmux`; each such job names any that are missing in its "Require runner tools" step.
+`tests/fm-ci-workflow.test.sh` refuses a job that uses Node or jq before provisioning it.
+
+The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin`, `/opt/homebrew/bin`, and its provisioned Node, so `jq` must be installed in one of those system directories on a self-hosted runner.
 
 Self-hosted hygiene:
 

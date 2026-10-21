@@ -112,6 +112,31 @@ jobs:
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Tools a job cannot install without root, so the runner image must
+      # provide them (docs/fm-test-portable-shards.md "Runner override").
+      - name: Require runner tools
+        run: |
+          set -eu
+          missing=
+          for tool in python3; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          [ -z "$missing" ] || {
+            echo "::error::runner lacks required tools:$missing"
+            exit 1
+          }
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Isolate the npm global prefix
         run: |
           set -eu
@@ -131,6 +156,13 @@ jobs:
           set -eu
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
+      # The Pi typecheck needs tsc, which the hosted image ships but a
+      # self-hosted runner may not, so pin it into the job-scoped prefix.
+      - name: Install pinned TypeScript for the Pi typecheck
+        run: |
+          set -eu
+          npm install -g typescript@5.9.3
+          tsc --version
       - name: Run portable parallel shard 1
         run: |
           set -eu
@@ -164,6 +196,31 @@ jobs:
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Tools a job cannot install without root, so the runner image must
+      # provide them (docs/fm-test-portable-shards.md "Runner override").
+      - name: Require runner tools
+        run: |
+          set -eu
+          missing=
+          for tool in python3 ruby; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          [ -z "$missing" ] || {
+            echo "::error::runner lacks required tools:$missing"
+            exit 1
+          }
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Isolate the npm global prefix
         run: |
@@ -223,14 +280,33 @@ jobs:
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Require tmux for e2e tests
+      # Tools a job cannot install without root, so the runner image must
+      # provide them (docs/fm-test-portable-shards.md "Runner override").
+      - name: Require runner tools
         run: |
           set -eu
-          command -v tmux >/dev/null || {
-            echo "::error::tmux is required for real afk injection e2e coverage"
+          missing=
+          for tool in tmux python3 ruby; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          [ -z "$missing" ] || {
+            echo "::error::runner lacks required tools:$missing"
             exit 1
           }
+          # tmux backs the real afk injection e2e coverage.
           tmux -V
+      # Self-provision Node instead of relying on the hosted image, so a
+      # self-hosted runner without Node runs this job too. 22 is the hosted
+      # ubuntu-latest default (docs/fm-test-portable-shards.md "Runner override").
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Isolate the npm global prefix
         run: |
           set -eu
@@ -253,6 +329,13 @@ jobs:
           set -eu
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
+      # The Pi typecheck needs tsc, which the hosted image ships but a
+      # self-hosted runner may not, so pin it into the job-scoped prefix.
+      - name: Install pinned TypeScript for the Pi typecheck
+        run: |
+          set -eu
+          npm install -g typescript@5.9.3
+          tsc --version
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
           # job-total rather than a literal, so shrinking or growing the matrix
@@ -291,6 +374,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Install pinned jq
+        run: |
+          set -eu
+          bin/fm-install-jq.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Require tools for real Herdr
         run: |
           set -eu
@@ -414,6 +502,19 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v6
+      # Tools a job cannot install without root, so the runner image must
+      # provide them (docs/fm-test-portable-shards.md "Runner override").
+      - name: Require runner tools
+        run: |
+          set -eu
+          missing=
+          for tool in python3; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          [ -z "$missing" ] || {
+            echo "::error::runner lacks required tools:$missing"
+            exit 1
+          }
       - name: Download lane timing artifacts
         uses: actions/download-artifact@v4
         with:
@@ -448,6 +549,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      # Self-provision Node instead of relying on the runner image; the stock
+      # Bash step pins PATH, so it adds this Node's directory explicitly.
+      - name: Set up pinned Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
       - name: Isolate the npm global prefix
         run: |
           set -eu
@@ -457,10 +564,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/npm"
           echo "NPM_CONFIG_PREFIX=$RUNNER_TEMP/npm" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
+      - name: Record the pinned Node directory
+        run: |
+          set -eu
+          echo "FM_NODE_BIN=$(dirname "$(command -v npm)")" >> "$GITHUB_ENV"
       - name: Run snapshot consumers with stock Bash
         shell: /bin/bash {0}
         env:
-          PATH: /bin:/usr/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin
+          PATH: ${{ env.FM_NODE_BIN }}:/bin:/usr/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin
         run: |
           set -eu
           case "$BASH_VERSION" in

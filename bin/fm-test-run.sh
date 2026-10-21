@@ -1651,7 +1651,7 @@ families_for_changed_path() {
     bin/fm-home-summary-refresh.sh)
       printf '%s\n' snapshot-bearings
       ;;
-    bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-herdr-ci-cleanup.sh)
+    bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-install-jq.sh|bin/fm-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
       # Pin or cleanup changes also select the real-Herdr family so the required
       # lane's contract coverage re-runs.
