@@ -26,6 +26,10 @@
 #
 #   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
+# FM_CREW_STATE_LEDGER=1 adds a second line for an attributed run: a stable
+# run-step label for the independent watcher ledger. The ordinary current-state
+# line and its authority order are unchanged.
+#
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
 #      recording remote_host= is a remote secondmate: its worktree and endpoint
@@ -214,12 +218,19 @@ DELIVERY_REPOSITORY=
 
 # Emit the one canonical line and exit 0. Detail is optional.
 emit() {  # <state> <source> [detail]
-  local line="state: $1${SEP}source: $2"
+  local line="state: $1${SEP}source: $2" run_pr
   [ -n "${3:-}" ] && line="$line${SEP}$3"
   if [ -n "$DELIVERY_REPOSITORY" ] && [ "$2" = run-step ]; then
     line="$line${SEP}repository: $DELIVERY_REPOSITORY"
   fi
   printf '%s\n' "$line"
+  if [ "${FM_CREW_STATE_LEDGER:-0}" = 1 ] && [ "$2" = run-step ]; then
+    printf 'run-step: %s\n' "${RUN_STATUS:-${COARSE_STATUS:-unknown}}${CI_STEP_STATUS:+/$CI_STEP_STATUS}${CI_LOG_STATE:+/$CI_LOG_STATE}"
+    run_pr=$(strip_quotes "$(nm_field pr)")
+    if fm_pr_url_parse "$run_pr"; then
+      printf 'run-pr: %s\n' "$FM_PR_URL"
+    fi
+  fi
   exit 0
 }
 

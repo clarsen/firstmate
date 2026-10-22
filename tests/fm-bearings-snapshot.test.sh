@@ -3562,6 +3562,28 @@ test_a_remote_home_without_any_ledger_is_explicitly_unreadable_without_remote_co
   pass "a missing remote ledger stays explicitly unreadable without remote summary computation"
 }
 
+test_crew_ledger_projection() {
+  local home fakebin json
+  home=$(make_home crew-ledger-projection)
+  fakebin=$(make_fakebin "$home")
+  write_fixture "$home"
+  cat > "$home/state/crew-ledger.json" <<'EOF'
+{"schema":"fm-crew-ledger.v1","checked_at":10000,"crew":[{"id":"ship-task","harness":{"state":"idle","source":"claude-hook","since":9000},"last_status":{"state":"paused","raw":"paused [at=8000]: waiting","at":8000},"run_step":{"state":"ci/running","changed_at":8000},"ci_progress":{"pr_url":"https://github.com/clarsen/firstmate/pull/35","completed_count":2,"progress_at":9000},"checked_at":10000,"alert":{"condition":"declared-wait-no-run-progress"}}]}
+EOF
+  json=$(run "$home" "$fakebin" --json) || fail 'default ledger bearings projection failed'
+  printf '%s' "$json" | jq -e '.crew_alerts == [{id:"ship-task",condition:"declared-wait-no-run-progress",checked_at:10000}]' \
+    >/dev/null || fail 'Bearings did not surface the crew alert'
+  json=$(run "$home" "$fakebin" --json --fields crew-ledger) || fail 'full ledger bearings projection failed'
+  printf '%s' "$json" | jq -e '.crew_ledger[0] |
+    .id == "ship-task" and .harness == "idle" and .status_at == 8000 and
+    .run_step == "ci/running" and .step_changed_at == 8000 and .checked_at == 10000 and
+    .pr_url == "https://github.com/clarsen/firstmate/pull/35" and .completed_checks == 2 and
+    .ci_progress_at == 9000' \
+    >/dev/null || fail 'Bearings omitted the requested crew ledger'
+  pass 'Bearings surfaces crew alerts and can reveal the full ledger'
+}
+
+test_crew_ledger_projection
 test_task_teardown_during_metadata_capture_does_not_abort_snapshot
 test_current_state_uses_captured_status_observation
 test_relaunched_task_does_not_inherit_reused_endpoint_state

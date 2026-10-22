@@ -297,6 +297,10 @@ WATCHER_STALL_BOUND=$(fm_watcher_stall_bound "$POLL")
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
+# Independent observation of every direct report, including idle panes whose
+# run-step still says working. The ledger owns alert de-duplication across arms.
+CREW_LEDGER_CHECK_SECS=${FM_CREW_LEDGER_CHECK_SECS:-60}
+case "$CREW_LEDGER_CHECK_SECS" in ''|*[!0-9]*|0) CREW_LEDGER_CHECK_SECS=60 ;; esac
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -2731,6 +2735,25 @@ while :; do
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
   [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" capture || true
+
+  if [ "$(age_of "$STATE/crew-ledger.json")" -ge "$CREW_LEDGER_CHECK_SECS" ]; then
+    crew_ledger_alerts=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      FM_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$SCRIPT_DIR/fm-crew-state.sh}" \
+      "$SCRIPT_DIR/fm-crew-ledger.sh" tick) || {
+      triage_log "crew-ledger observation unavailable"
+      crew_ledger_alerts=
+    }
+    if [ -n "$crew_ledger_alerts" ]; then
+      first_crew_ledger_alert=
+      while IFS= read -r crew_ledger_reason; do
+        [ -n "$crew_ledger_reason" ] || continue
+        [ -n "$first_crew_ledger_alert" ] || first_crew_ledger_alert=$crew_ledger_reason
+      done <<EOF
+$crew_ledger_alerts
+EOF
+      wake "$first_crew_ledger_alert"
+    fi
+  fi
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
