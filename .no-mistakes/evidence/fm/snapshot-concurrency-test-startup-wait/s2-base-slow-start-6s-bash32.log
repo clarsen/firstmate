@@ -1,0 +1,5 @@
+### s2-base-slow-start-6s-bash32
+$ env SLOW_START=6 /tmp/fmb32/inst/bin/bash /tmp/fmb32/h/base.sh   # runs only test_large_local_snapshot_overlaps_local_reads_without_projection_drift
+test-shell bash: 3.2.57(3)-release
+not ok - concurrent local snapshot never began a current-state read
+exit=1

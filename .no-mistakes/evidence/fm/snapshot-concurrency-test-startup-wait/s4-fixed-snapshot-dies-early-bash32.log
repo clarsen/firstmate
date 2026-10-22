@@ -1,0 +1,9 @@
+### s4-fixed-snapshot-dies-early-bash32
+$ env NEVER_SIGNAL=1 /tmp/fmb32/inst/bin/bash /tmp/fmb32/h/new.sh   # runs only test_large_local_snapshot_overlaps_local_reads_without_projection_drift
+test-shell bash: 3.2.57(3)-release
+not ok - concurrent local snapshot never began a current-state read
+exit=1
+
+### wall-clock of the failing run (cap is 120 polls of 1s):
+not ok - concurrent local snapshot never began a current-state read
+exit= total wall 13s

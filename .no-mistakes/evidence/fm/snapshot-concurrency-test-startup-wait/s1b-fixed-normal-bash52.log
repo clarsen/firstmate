@@ -1,0 +1,6 @@
+### s1b-fixed-normal-bash52
+$ env  /bin/bash /tmp/fmb32/h/new.sh   # runs only test_large_local_snapshot_overlaps_local_reads_without_projection_drift
+test-shell bash: 5.2.26(1)-release
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+harness: elapsed 15s
+exit=0

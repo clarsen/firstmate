@@ -1,0 +1,6 @@
+### s1-fixed-normal-bash32
+$ env  /tmp/fmb32/inst/bin/bash /tmp/fmb32/h/new.sh   # runs only test_large_local_snapshot_overlaps_local_reads_without_projection_drift
+test-shell bash: 3.2.57(3)-release
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+harness: elapsed 18s
+exit=0
