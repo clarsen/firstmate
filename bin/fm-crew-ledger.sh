@@ -11,8 +11,13 @@
 # Usage: fm-crew-ledger.sh tick
 # Configuration: FM_CREW_LEDGER_IDLE_SECS (default 300),
 # FM_CREW_LEDGER_WAIT_SECS (default 1800), FM_CREW_LEDGER_STATE_TIMEOUT
-# (default 12), and FM_CREW_LEDGER_CI_TIMEOUT (default 8). The watcher owns
+# (default 12), FM_CREW_LEDGER_CI_TIMEOUT (default 8), and
+# FM_CREW_LEDGER_BUDGET_SECS (default 20). The watcher owns
 # FM_CREW_LEDGER_CHECK_SECS.
+# Once the tick budget is spent, remaining crew keep their previous rows; crew
+# are visited least-recently-checked first so every report is eventually read.
+# CI progress is the latest of the run-step or wait change, the newest finished
+# job on the current head, and the retained progress for that same head.
 # GitHub CI waits use completed checks on the PR's current head; GitLab waits
 # use finished jobs on the MR's head pipeline and surface a skipped head immediately.
 set -u
@@ -27,9 +32,10 @@ IDLE_SECS=${FM_CREW_LEDGER_IDLE_SECS:-300}
 WAIT_SECS=${FM_CREW_LEDGER_WAIT_SECS:-1800}
 STATE_TIMEOUT=${FM_CREW_LEDGER_STATE_TIMEOUT:-12}
 CI_TIMEOUT=${FM_CREW_LEDGER_CI_TIMEOUT:-8}
+BUDGET_SECS=${FM_CREW_LEDGER_BUDGET_SECS:-20}
 GH_BIN=${FM_CREW_LEDGER_GH_BIN:-gh}
 GLAB_BIN=${FM_CREW_LEDGER_GLAB_BIN:-glab}
-for value in "$NOW" "$IDLE_SECS" "$WAIT_SECS" "$STATE_TIMEOUT" "$CI_TIMEOUT"; do
+for value in "$NOW" "$IDLE_SECS" "$WAIT_SECS" "$STATE_TIMEOUT" "$CI_TIMEOUT" "$BUDGET_SECS"; do
   case "$value" in ''|*[!0-9]*|0) echo "fm-crew-ledger: positive integer required" >&2; exit 2 ;; esac
 done
 
@@ -62,8 +68,7 @@ fi
 : > "$tmp/rows"
 : > "$tmp/alerts"
 
-for meta in "$STATE"/*.meta; do
-  [ -f "$meta" ] || continue
+while IFS= read -r meta <&3; do
   id=${meta##*/}; id=${id%.meta}
   kind=$(fm_meta_get "$meta" kind)
   [ -n "$kind" ] || kind=ship
@@ -72,6 +77,10 @@ for meta in "$STATE"/*.meta; do
   previous=$(jq -c --arg id "$id" --arg generation "$generation" \
     '.crew[]? | select(.id == $id and .generation == $generation)' "$tmp/previous.json" | head -1)
   [ -n "$previous" ] || previous='{}'
+  if [ "$SECONDS" -ge "$BUDGET_SECS" ]; then
+    [ "$previous" = '{}' ] || printf '%s\n' "$previous" >> "$tmp/rows"
+    continue
+  fi
 
   status_file="$STATE/$id.status"
   status_raw=$(grep -v '^[[:space:]]*$' "$status_file" 2>/dev/null | tail -1 || true)
@@ -169,7 +178,8 @@ for meta in "$STATE"/*.meta; do
                   if all(.[]; type == "array") then
                     [ .[][] | select((.finished_at // "") != "") ] as $finished
                     | {completed_count:($finished | length),
-                       latest_completed_at:([$finished[].finished_at] | max // null)}
+                       latest_completed_at:([$finished[].finished_at | sub("\\.[0-9]+"; "") |
+                         fromdateiso8601] | max // null)}
                   else error("invalid pipeline jobs") end' 2>/dev/null) || jobs_progress=
                 if [ -n "$jobs_progress" ]; then
                   ci_snapshot=$(jq -cn --argjson ci "$ci_snapshot" --argjson jobs "$jobs_progress" '$ci + $jobs')
@@ -215,21 +225,17 @@ for meta in "$STATE"/*.meta; do
        else $now end) as $wait_since
     | ([$step_changed, $wait_since] | map(select(. != null)) | max) as $wait_progress_at
     | (if $ci == null then null
-       elif $ci.head != $old.ci_progress.head and $old.ci_progress.head != null then $now
-       elif $ci.provider == "gitlab" then
-         (if $ci.pipeline_id != $old.ci_progress.pipeline_id and $old.ci_progress.pipeline_id != null or
-             $ci.latest_completed_at != $old.ci_progress.latest_completed_at and $old.ci_progress.head != null
-          then $now
-          elif $old.ci_progress.progress_at != null then $old.ci_progress.progress_at
-          elif $ci.completed_count > 0 then $now
-          else $wait_at end)
+       elif ($ci.head != $old.ci_progress.head and $old.ci_progress.head != null) or
+            ($ci.pipeline_id != $old.ci_progress.pipeline_id and $old.ci_progress.pipeline_id != null)
+       then $now
        elif $ci.completed_count < ($old.ci_progress.completed_count // 0) and $old.ci_progress.head != null
        then $now
        elif $ci.completed_count > ($old.ci_progress.completed_count // 0) and
             $ci.latest_completed_at == $old.ci_progress.latest_completed_at and
             $old.ci_progress.head != null
        then $now
-       else ([$wait_progress_at, $ci.latest_completed_at] | map(select(. != null)) | max) end) as $ci_progress_at
+       else ([$wait_progress_at, $ci.latest_completed_at, $old.ci_progress.progress_at]
+             | map(select(. != null)) | max) end) as $ci_progress_at
     | (if $kind == "secondmate" or $harness != "idle" or $wait_class == "captain-held" or
           ([$state] | any(. == "done" or . == "blocked" or . == "failed" or . == "parked"))
        then null
@@ -269,7 +275,10 @@ for meta in "$STATE"/*.meta; do
                elif $signature == $old.alert.signature then $old.alert
                else {condition:$condition,signature:$signature,reported_at:$now} end)
       }
-    ')
+    ') || {
+    echo "fm-crew-ledger.sh:$LINENO: row evaluation failed for $id" >&2
+    exit 1
+  }
   printf '%s\n' "$row" >> "$tmp/rows"
   if jq -e --argjson old "$previous" '.alert != null and .alert.signature != $old.alert.signature' <<< "$row" >/dev/null; then
     condition=$(jq -r '.alert.condition' <<< "$row")
@@ -284,10 +293,17 @@ for meta in "$STATE"/*.meta; do
     printf 'check: crew-ledger %s %s; pane=%s; status=%s; run-step=%s; %s; last-checked=%s; inspect worker and validation\n' \
       "$id" "$condition" "$harness" "${status_verb:-none}" "${step:-none}" "$ci_detail" "$NOW" >> "$tmp/alerts"
   fi
-done
+done 3< <(
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    id=${meta##*/}; id=${id%.meta}
+    checked=$(jq -r --arg id "$id" 'first(.crew[]? | select(.id == $id) | .checked_at // 0) // 0' "$tmp/previous.json")
+    printf '%s\t%s\n' "$checked" "$meta"
+  done | sort -s -n -k1,1 | cut -f2-
+)
 
 jq -s --argjson checked_at "$NOW" \
-  '{schema:"fm-crew-ledger.v1",checked_at:$checked_at,crew:.}' "$tmp/rows" > "$tmp/next.json" || exit 1
+  '{schema:"fm-crew-ledger.v1",checked_at:$checked_at,crew:sort_by(.id)}' "$tmp/rows" > "$tmp/next.json" || exit 1
 if [ -s "$tmp/alerts" ]; then
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
   while IFS= read -r reason; do

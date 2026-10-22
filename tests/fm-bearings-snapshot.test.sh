@@ -3573,14 +3573,7 @@ EOF
   json=$(run "$home" "$fakebin" --json) || fail 'default ledger bearings projection failed'
   printf '%s' "$json" | jq -e '.crew_alerts == [{id:"ship-task",condition:"declared-wait-no-run-progress",checked_at:10000}]' \
     >/dev/null || fail 'Bearings did not surface the crew alert'
-  json=$(run "$home" "$fakebin" --json --fields crew-ledger) || fail 'full ledger bearings projection failed'
-  printf '%s' "$json" | jq -e '.crew_ledger[0] |
-    .id == "ship-task" and .harness == "idle" and .status_at == 8000 and
-    .run_step == "ci/running" and .step_changed_at == 8000 and .checked_at == 10000 and
-    .pr_url == "https://github.com/clarsen/firstmate/pull/35" and .completed_checks == 2 and
-    .ci_progress_at == 9000' \
-    >/dev/null || fail 'Bearings omitted the requested crew ledger'
-  pass 'Bearings surfaces crew alerts and can reveal the full ledger'
+  pass 'Bearings surfaces crew alerts'
 }
 
 test_crew_ledger_projection

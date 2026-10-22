@@ -35,13 +35,7 @@ if [ "$1" != ci-ship ]; then
     printf 'run-pr: https://github.com/clarsen/firstmate/pull/35\n'
     exit 0
   fi
-  if [ "$1" = mr-skipped ]; then
-    printf 'state: working · source: run-step · validating (running)\n'
-    printf 'run-step: running/running\n'
-    printf 'run-pr: https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416\n'
-    exit 0
-  fi
-  if [ "$1" = mr-running ]; then
+  if [ "${1#mr-}" != "$1" ]; then
     printf 'state: working · source: run-step · validating (running)\n'
     printf 'run-step: running/running\n'
     printf 'run-pr: https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416\n'
@@ -180,16 +174,67 @@ gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" mr-running)
 cat > "$home/mr-snapshot" <<'JSON'
 {"sha":"0000000000000000000000000000000000000003","head_pipeline":{"id":837363,"sha":"0000000000000000000000000000000000000003","status":"running"}}
 JSON
-printf '[{"id":1,"finished_at":"2026-10-22T21:59:00.000Z"}]\n' > "$home/mr-jobs"
+printf '[{"id":1,"finished_at":"1970-01-01T05:46:40.000Z"}]\n' > "$home/mr-jobs"
 out=$(tick 21000) || fail 'running MR completion baseline failed'
 assert_equals '' "$out" 'a completed MR pipeline job counts as progress'
 out=$(tick 21901) || fail 'running MR stall tick failed'
 assert_contains "$out" 'mr-running declared-wait-no-ci-progress' \
   'a running MR pipeline without another job completion wakes after the bound'
-printf '[{"id":1,"finished_at":"2026-10-22T21:59:00.000Z"},{"id":2,"finished_at":"2026-10-22T22:01:00.000Z"}]\n' > "$home/mr-jobs"
+printf '[{"id":1,"finished_at":"1970-01-01T05:46:40.000Z"},{"id":2,"finished_at":"1970-01-01T06:05:00.000Z"}]\n' > "$home/mr-jobs"
 out=$(tick 21902) || fail 'running MR completion tick failed'
 assert_equals '' "$out" 'a new MR pipeline job completion clears the alert'
 printf 'done [at=21903]: delivered\n' > "$home/state/mr-running.status"
+# A worker that re-arms its bounded CI monitor takes a busy turn between idle
+# observations; that turn must not restart the MR's job-completion clock.
+fm_write_meta "$home/state/mr-rearm.meta" \
+  'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-mr-rearm' \
+  "worktree=$home/projects/task" 'spawn_gen=one'
+printf 'paused [at=22100]: CI monitor running; resume on final CI result\n' \
+  > "$home/state/mr-rearm.status"
+gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" mr-rearm)
+"$ROOT/bin/fm-busy-event.sh" apply "$home/state" mr-rearm idle --gen "$gen" \
+  --source claude-hook --event stop
+cat > "$home/mr-snapshot" <<'JSON'
+{"sha":"0000000000000000000000000000000000000004","head_pipeline":{"id":837364,"sha":"0000000000000000000000000000000000000004","status":"running"}}
+JSON
+printf '[{"id":1,"finished_at":"1970-01-01T06:10:00.000Z"}]\n' > "$home/mr-jobs"
+out=$(tick 22300) || fail 'MR re-arm baseline failed'
+assert_equals '' "$out" 'a recent MR job completion holds the re-armed wait'
+"$ROOT/bin/fm-busy-event.sh" apply "$home/state" mr-rearm busy --gen "$gen" \
+  --source claude-hook --event user-prompt-submit
+out=$(tick 22600) || fail 'MR re-arm busy tick failed'
+assert_equals '' "$out" 'a busy re-arm turn does not alert'
+jq -e '.crew[] | select(.id == "mr-rearm") | .harness.state == "running" and .ci_progress == null' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'busy re-arm turn was not observed'
+"$ROOT/bin/fm-busy-event.sh" apply "$home/state" mr-rearm idle --gen "$gen" \
+  --source claude-hook --event stop
+out=$(tick 23101) || fail 'MR re-arm stall tick failed'
+assert_contains "$out" 'mr-rearm declared-wait-no-ci-progress' \
+  'a re-armed MR wait without a new job completion wakes after the bound'
+jq -e '.crew[] | select(.id == "mr-rearm") | .ci_progress.progress_at == 22200' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'MR progress was anchored to the re-arm'
+printf 'done [at=23102]: delivered\n' > "$home/state/mr-rearm.status"
+# An undeclared GitLab CI wait whose head pipeline has not finished any job.
+fm_write_meta "$home/state/mr-pending.meta" \
+  'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-mr-pending' \
+  "worktree=$home/projects/task" 'spawn_gen=one'
+printf 'working [at=23200]: CI monitor running\n' > "$home/state/mr-pending.status"
+gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" mr-pending)
+"$ROOT/bin/fm-busy-event.sh" apply "$home/state" mr-pending idle --gen "$gen" \
+  --source claude-hook --event stop
+cat > "$home/mr-snapshot" <<'JSON'
+{"sha":"0000000000000000000000000000000000000005","head_pipeline":{"id":837365,"sha":"0000000000000000000000000000000000000005","status":"pending"}}
+JSON
+printf '[]\n' > "$home/mr-jobs"
+out=$(tick 23300) || fail 'MR without finished jobs baseline failed'
+assert_equals '' "$out" 'a new MR pipeline without finished jobs gets the progress bound'
+jq -e '.crew[] | select(.id == "mr-pending") |
+  .ci_progress.completed_count == 0 and .ci_progress.progress_at == 23300' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'MR without finished jobs dropped out of the ledger'
+out=$(tick 24201) || fail 'MR without finished jobs stall failed'
+assert_contains "$out" 'mr-pending run-step-no-ci-progress' \
+  'an MR pipeline that never finishes a job wakes after the bound'
+printf 'done [at=24202]: delivered\n' > "$home/state/mr-pending.status"
 fm_write_meta "$home/state/ci-undeclared.meta" \
   'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-ci-undeclared' \
   "worktree=$home/projects/task" 'spawn_gen=one'
@@ -223,6 +268,8 @@ rm -f "$home/state/crew-ledger.json" "$home/state/plain.meta" "$home/state/plain
   "$home/state/ci-progress.meta" "$home/state/ci-progress.status"
 rm -f "$home/state/mr-skipped.meta" "$home/state/mr-skipped.status"
 rm -f "$home/state/mr-running.meta" "$home/state/mr-running.status"
+rm -f "$home/state/mr-rearm.meta" "$home/state/mr-rearm.status" \
+  "$home/state/mr-pending.meta" "$home/state/mr-pending.status"
 rm -f "$home/state/ci-undeclared.meta" "$home/state/ci-undeclared.status"
 PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
   FM_CREW_STATE_BIN="$home/fakebin/crew-state" FM_CREW_LEDGER_NOW=10000 \
@@ -279,4 +326,29 @@ jq -e '.crew[] | select(.id == "committed-idle") |
   || fail 'committed idle ledger evidence is incomplete'
 out=$(tick 30361) || fail 'committed idle repeat failed'
 assert_equals '' "$out" 'unchanged committed idle evidence wakes only once'
+
+# A slow tick stops at its budget, keeps unread rows, and reads them first next time.
+cat > "$home/fakebin/slow-crew-state" <<SH
+#!/usr/bin/env bash
+sleep 3
+exec "$home/fakebin/crew-state" "\$@"
+SH
+chmod +x "$home/fakebin/slow-crew-state"
+fm_write_meta "$home/state/budget-new.meta" \
+  'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-budget-new' \
+  "worktree=$home/projects/task" 'spawn_gen=one'
+slow_tick() {
+  PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    FM_CREW_STATE_BIN="$home/fakebin/slow-crew-state" FM_CREW_LEDGER_NOW="$1" \
+    FM_CREW_LEDGER_BUDGET_SECS=2 FM_CREW_LEDGER_WAIT_SECS=900 FM_CREW_LEDGER_IDLE_SECS=300 \
+    "$ROOT/bin/fm-crew-ledger.sh" tick
+}
+slow_tick 30400 >/dev/null || fail 'first budgeted tick failed'
+jq -e '[.crew[] | {id,checked_at}] ==
+  [{id:"budget-new",checked_at:30400},{id:"committed-idle",checked_at:30361}]' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'budgeted tick did not keep the unread row'
+slow_tick 30460 >/dev/null || fail 'second budgeted tick failed'
+jq -e '[.crew[] | {id,checked_at}] ==
+  [{id:"budget-new",checked_at:30400},{id:"committed-idle",checked_at:30460}]' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'budgeted tick did not read the oldest row first'
 pass 'crew ledger flags the observed paused and idle CI stall once per unchanged episode'
