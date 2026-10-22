@@ -274,12 +274,14 @@ for meta in "$STATE"/*.meta; do
   if jq -e --argjson old "$previous" '.alert != null and .alert.signature != $old.alert.signature' <<< "$row" >/dev/null; then
     condition=$(jq -r '.alert.condition' <<< "$row")
     step=$(jq -r '.run_step.state // "none"' <<< "$row")
-    ci_detail=$(jq -r 'if .ci_progress == null then
+    ci_detail=$(jq -r 'if .run_step.state == null then
+      "no attributed validation run; inspect commit and worker status"
+      elif .ci_progress == null then
       "PR=" + (.run_step.pr_url // "unknown") + "; CI evidence unavailable" else
       "PR=" + .ci_progress.pr_url + "; pipeline=" + (.ci_progress.pipeline_status // "unknown") +
       "; completed-checks=" + (.ci_progress.completed_count | tostring) +
       "; last-completion=" + ((.ci_progress.latest_completed_at // "none") | tostring) end' <<< "$row")
-    printf 'check: crew-ledger %s %s; pane=%s; status=%s; run-step=%s; %s; last-checked=%s; inspect worker and PR checks\n' \
+    printf 'check: crew-ledger %s %s; pane=%s; status=%s; run-step=%s; %s; last-checked=%s; inspect worker and validation\n' \
       "$id" "$condition" "$harness" "${status_verb:-none}" "${step:-none}" "$ci_detail" "$NOW" >> "$tmp/alerts"
   fi
 done

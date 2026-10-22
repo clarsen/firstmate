@@ -245,4 +245,38 @@ assert_contains "$(cat "$home/watch.out")" 'check: crew-ledger ci-ship declared-
   'watcher did not print the actionable reason'
 assert_contains "$(cat "$home/state/.wake-queue")" 'crew-ledger ci-ship declared-wait-no-run-progress' \
   'watcher did not queue the durable wake'
+
+# A committed ship can leave the pane idle before it starts no-mistakes.
+# The working event is nonterminal and there is no attributed run-step.
+rm -f "$home/state/crew-ledger.json" "$home/state/ci-ship.meta" "$home/state/ci-ship.status"
+committed_worktree="$home/projects/committed-task"
+mkdir -p "$committed_worktree"
+git -C "$committed_worktree" init -q || fail 'could not initialize committed fixture'
+printf 'implementation\n' > "$committed_worktree/change.txt"
+git -C "$committed_worktree" add change.txt || fail 'could not stage committed fixture'
+git -C "$committed_worktree" -c user.name=Test -c user.email=test@example.invalid \
+  commit -qm 'Finish implementation' || fail 'could not commit fixture'
+[ -n "$(git -C "$committed_worktree" rev-parse HEAD)" ] || fail 'fixture has no commit'
+[ ! -e "$committed_worktree/.no-mistakes" ] || fail 'fixture unexpectedly has a validation run'
+fm_write_meta "$home/state/committed-idle.meta" \
+  'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-committed-idle' \
+  "worktree=$committed_worktree" 'spawn_gen=one'
+printf 'working [at=30000]: implementation committed\n' > "$home/state/committed-idle.status"
+gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" committed-idle)
+"$ROOT/bin/fm-busy-event.sh" apply "$home/state" committed-idle idle --gen "$gen" \
+  --source claude-hook --event stop
+out=$(tick 30000) || fail 'committed idle baseline failed'
+assert_equals '' "$out" 'a newly idle committed ship gets the configured grace'
+out=$(tick 30301) || fail 'committed idle threshold failed'
+assert_contains "$out" 'committed-idle idle-without-terminal-status' \
+  'a committed idle ship without validation or terminal status wakes firstmate'
+assert_contains "$out" 'no attributed validation run; inspect commit and worker status' \
+  'the wake identifies the missing validation run'
+jq -e '.crew[] | select(.id == "committed-idle") |
+  .harness.state == "idle" and .last_status.state == "working" and
+  .run_step.state == null and .alert.condition == "idle-without-terminal-status" and
+  .checked_at == 30301' "$home/state/crew-ledger.json" >/dev/null \
+  || fail 'committed idle ledger evidence is incomplete'
+out=$(tick 30361) || fail 'committed idle repeat failed'
+assert_equals '' "$out" 'unchanged committed idle evidence wakes only once'
 pass 'crew ledger flags the observed paused and idle CI stall once per unchanged episode'
