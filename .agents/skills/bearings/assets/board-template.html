@@ -61,8 +61,7 @@ __FM_DECISION_CARD_CSS__
 
 /* ---- Captain's Call: one card at a time, dealt off a visible stack ---- */
 .bb-callwrap { display: flex; flex-direction: column; gap: 12px; }
-/* extra top margin clears the pile edges that poke below the active card */
-.bb-stacknav { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.bb-stacknav { display: flex; align-items: center; gap: 10px; }
 .bb-stacknav__count { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted); }
 .bb-stacknav__btn {
   display: inline-grid; place-items: center; width: 34px; height: 34px; cursor: pointer;
@@ -210,9 +209,6 @@ __FM_DECISION_CARD_CSS__
       <span class="fm-sign fm-sign--muted" id="bb-call-sub"></span>
     </div>
     <div class="bb-callwrap">
-      <div class="bb-call" id="bb-call"></div>
-      <!-- nav sits under the stack so the active card's top edge aligns with
-           the Charted Next card across the row -->
       <div class="bb-stacknav">
         <span class="bb-stacknav__count" id="bb-stack-count">-</span>
         <button type="button" class="bb-stacknav__btn" id="bb-stack-prev" aria-label="Previous card">
@@ -222,6 +218,7 @@ __FM_DECISION_CARD_CSS__
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
         </button>
       </div>
+      <div class="bb-call" id="bb-call"></div>
     </div>
   </section>
 
