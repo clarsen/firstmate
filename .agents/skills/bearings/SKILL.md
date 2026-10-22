@@ -40,11 +40,11 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 When the captain opens a question that warrants ongoing investigation, check the open-question list and record new exact words immediately with `bin/fm-captain-question.py open --question-file <file>`; a repeat of an already open question returns its id instead of creating a duplicate, and refreshes its status when `--status-file` is passed.
 Rebuild an already open Bearings board after recording the new question.
 Keep the question in that record until the captain explicitly closes it; an answer, finished investigation, landed fix, or firstmate judgment is status evidence rather than closure authority.
-When the captain closes one in chat, preserve those exact words with the script's `close --captain-words-file` path and rebuild an already open Bearings board so the item disappears there.
+When the captain closes one in chat, preserve those exact words with `bin/fm-captain-question.py close <id> --captain-words-file <file>` and rebuild an already open Bearings board so the item disappears there.
 The script header and help own the record format and exact commands, and this record never becomes a captain hold or Captain's Call card.
 
 1. **Refresh open captain questions, then gather live fleet state with one deterministic command.**
-   Before every periodic or on-demand Bearings rendering, list the open questions with `bin/fm-captain-question-list.sh`, investigate each against current task, report, rollout, and deployment evidence, and refresh its status timestamp through that script after each check, retaining evidence links when none have changed.
+   Before every periodic or on-demand Bearings rendering, list the open questions with `bin/fm-captain-question-list.sh`, investigate each against current task, report, rollout, and deployment evidence, and after each check refresh its status and timestamp with `bin/fm-captain-question.py status <id> --status-file <file>`, which retains evidence links unless `--link` or `--clear-links` is passed; the list script is read-only.
    When current evidence cannot be verified, write that limitation into the refreshed status rather than presenting old findings as current.
    A status older than 24 hours is marked stale by the list and remains visible until refreshed.
    Run `snapshot=$(bin/fm-bearings-snapshot.sh --json)` at invocation time and read that compact output.
