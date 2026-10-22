@@ -1,0 +1,18 @@
+== base
+result: "\"card 1 of 3 | next@598,655 | prev@598,611 | cardH=363 | nextDisabled=false\""
+result: "\"card 2 of 3 | next@913,655 | prev@913,611 | cardH=678 | nextDisabled=false\""
+result: "\"card 3 of 3 | next@717,655 | prev@717,611 | cardH=483 | nextDisabled=true\""
+-- after Next at last card, then Prev
+result: "\"card 3 of 3 | next@717,655 | prev@717,611 | cardH=483 | nextDisabled=true\""
+result: "\"card 2 of 3 | next@913,655 | prev@913,611 | cardH=678 | nextDisabled=false\""
+== head
+result: "\"card 1 of 3 | next@216,655 | prev@216,611 | cardH=363 | nextDisabled=false\""
+result: "\"card 2 of 3 | next@216,655 | prev@216,611 | cardH=678 | nextDisabled=false\""
+result: "\"card 3 of 3 | next@216,655 | prev@216,611 | cardH=483 | nextDisabled=true\""
+-- after Next at last card, then Prev
+result: "\"card 3 of 3 | next@216,655 | prev@216,611 | cardH=483 | nextDisabled=true\""
+result: "\"card 2 of 3 | next@216,655 | prev@216,611 | cardH=678 | nextDisabled=false\""
+== head narrow 420px
+result: "\"card 1 of 3 next@302,358\""
+result: "\"card 2 of 3 next@302,358\""
+result: "\"card 3 of 3 next@302,358\""

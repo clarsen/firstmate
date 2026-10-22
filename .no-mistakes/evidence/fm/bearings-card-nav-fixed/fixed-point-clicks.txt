@@ -1,0 +1,8 @@
+== base: clicking fixed point (672,233) three times
+result: "\"card 1 of 3 -> hit=none:bb-decision__pad -> card 1 of 3\""
+result: "\"card 1 of 3 -> hit=none:bb-decision__pad -> card 1 of 3\""
+result: "\"card 1 of 3 -> hit=none:bb-decision__pad -> card 1 of 3\""
+== head: clicking fixed point (672,233) three times
+result: "\"card 1 of 3 -> hit=bb-stack-next -> card 2 of 3\""
+result: "\"card 2 of 3 -> hit=bb-stack-next -> card 3 of 3\""
+result: "\"card 3 of 3 -> hit=bb-stack-next -> card 3 of 3\""
