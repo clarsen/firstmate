@@ -25,9 +25,16 @@ window.FMDecisionCard = (function () {
     row.appendChild(el("span", "bb-ctx__v", v));
     return row;
   }
+  var ISO_INSTANT = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
   function displayTime(value, zone) {
+    var m = typeof value === "string" ? ISO_INSTANT.exec(value) : null;
+    if (!m) return String(value);
     var instant = new Date(value);
-    if (isNaN(instant.getTime())) return "time unavailable";
+    var offset = m[2] ? (m[2] === "-" ? -1 : 1) * (Number(m[3]) * 60 + Number(m[4])) : 0;
+    if (isNaN(instant.getTime())
+        || new Date(instant.getTime() + offset * 60000).toISOString().slice(0, 16) !== m[1]) {
+      return String(value);
+    }
     var options = {
       year: "numeric", month: "short", day: "numeric", hour: "numeric",
       minute: "2-digit", timeZoneName: "short", timeZone: zone || "UTC"

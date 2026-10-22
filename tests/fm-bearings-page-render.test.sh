@@ -208,6 +208,37 @@ test_deleting_the_questions_container_is_caught_as_a_render_failure() {
   pass "deleting the questions container is caught, not silently tolerated"
 }
 
+provenance_for_generated() {  # <home> <generated-json>
+  FM_TEST_DISPLAY_ZONE=America/Los_Angeles render "$1" "$(jq -n --argjson generated "$2" '{
+    schema: "fm-decision-page.v1", title: "Timed", generated: $generated,
+    questions: [ { key: "q1", title: "First", options: [ {value: "a", label: "A"} ] } ]
+  }')" | jq -r '.provenance'
+}
+
+test_explicit_iso_instants_render_in_the_display_zone() {
+  local home out
+  home=$(fm_test_tmproot render-iso-generated)
+  out=$(provenance_for_generated "$home" '"2026-10-22T21:00:00Z"')
+  [ "$out" = "fm-decision-page.v1 · Oct 22, 2026, 2:00 PM PDT" ] \
+    || fail "a UTC instant did not render in the display zone: $out"
+  out=$(provenance_for_generated "$home" '"2026-11-01T04:30:00.250+03:00"')
+  [ "$out" = "fm-decision-page.v1 · Oct 31, 2026, 6:30 PM PDT" ] \
+    || fail "an offset instant did not render in the display zone: $out"
+  pass "explicit ISO-8601 instants render as display-zone local time"
+}
+
+test_ambiguous_or_invalid_generated_values_render_verbatim() {
+  local home value out
+  home=$(fm_test_tmproot render-raw-generated)
+  for value in '"Oct 22"' '"2026-10-22 14:00 PDT"' '"2026-10-22T14:00:00"' \
+    '"2026-02-30T12:00:00Z"' '"2026-10-22T24:00:00Z"' '"2026-13-01T00:00:00Z"' '20261022'; do
+    out=$(provenance_for_generated "$home" "$value")
+    [ "$out" = "fm-decision-page.v1 · $(jq -r . <<< "$value")" ] \
+      || fail "generated $value was reinterpreted instead of shown verbatim: $out"
+  done
+  pass "ambiguous or invalid generated values render verbatim, never as a converted local time"
+}
+
 test_two_questions_each_render_their_own_radio_group
 test_a_question_with_no_options_never_reaches_the_page
 test_a_wrong_schema_payload_renders_the_fail_closed_error
@@ -217,3 +248,5 @@ test_a_question_with_no_images_reports_none_rendered
 test_question_and_option_videos_render_playable_and_poster_is_honored
 test_a_question_with_no_videos_reports_none_rendered
 test_deleting_the_questions_container_is_caught_as_a_render_failure
+test_explicit_iso_instants_render_in_the_display_zone
+test_ambiguous_or_invalid_generated_values_render_verbatim
