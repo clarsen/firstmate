@@ -1,0 +1,3 @@
+Captain, the DNSSEC question is closed and your words are saved with it. Since you checked host-e yourself, the rollout is done on all 5 hosts. The question will no longer show on Bearings. There's no Bearings board open right now, so nothing needed rebuilding.
+
+The vendor Q4 renewal-price question is still open, with no reply on record yet.

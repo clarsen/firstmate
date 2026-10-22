@@ -1,0 +1,21 @@
+### Captain closes the DNSSEC question in chat
+exit=0
+{
+  "state": "closed",
+  "closed_by_captain": {
+    "at": "2026-10-22T01:32:37Z",
+    "source": "captain-chat",
+    "words": "Thanks, that answers it - close the DNSSEC question.",
+    "evidence": "/home/ctlarsen/tmp/tmp.XV5smlariZ/words"
+  }
+}
+### Closing again is refused
+fm-captain-question: captain question is already closed
+exit=1
+### Status on closed question is refused
+fm-captain-question: closed captain question cannot be updated
+exit=1
+### Snapshot now lists only the remaining open question
+[{"question":"Did the vendor confirm the Q4 renewal price?","stale":true}]
+### Board rebuild
+board: /tmp/fm-lab.dKfyk0/.lavish/bearings-board.html

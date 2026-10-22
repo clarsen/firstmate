@@ -1,0 +1,24 @@
+### Repeat open with --status-file refreshes status + last_updated (no duplicate)
+before: {"status":"Rolled to 4/5 hosts; host-e pending.","last_updated":"2026-10-22T01:31:13Z"}
+q-20261022-bab98b08
+after:  {"status":"Repeat-open refresh: 5/5 hosts verified via resolvectl.","last_updated":"2026-10-22T01:31:28Z"}
+row count: 1
+
+### Snapshot without python3 on PATH
+python3 visible: none
+exit=1 stderr: /home/ctlarsen/.no-mistakes/worktrees/6442e268076a/01M5GJ5FBQB6GT3RD7C4PJFZGJ/bin/fm-fleet-snapshot.sh: line 1974: find: command not found
+/home/ctlarsen/.no-mistakes/worktrees/6442e268076a/01M5GJ5FBQB6GT3RD7C4PJFZGJ/bin/fm-fleet-snapshot.sh: line 1757: grep: command not found
+jq: invalid JSON text passed to --argjson
+Use jq --help for help with command-line options,
+or see the jq manpage, or onli
+
+### Claimed answer adversarial: fm-captain-hold.sh answers with captain-question key must skip
+fm-captain-hold: legacy-origin must be a non-empty privacy-safe slug: /home/ctlarsen/tmp/tmp.RtSyYcWHhx/ans
+exit=1
+state after: open
+
+### Closing without captain provenance is refused
+fm-captain-question.py close: error: one of the arguments --captain-words-file --board-result is required
+exit=0
+### A status update can never close
+state: open

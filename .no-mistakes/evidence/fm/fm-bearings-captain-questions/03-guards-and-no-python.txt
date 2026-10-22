@@ -1,0 +1,19 @@
+### Snapshot without python3 on PATH
+python3 visible: none
+exit=0
+{"n":1,"q":"what's status of DNSSEC systemd-resolved fix rollout","status":"Rollout complete; firstmate believes answered."}
+stderr: 
+
+### Board-answer adversarial: fm-captain-hold.sh answers with captain-question key must skip
+skipped: captain-question.q-20261022-bab98b08 (captain question is owned by fm-captain-question.py)
+answers: closed=0 skipped=1
+exit=1
+state after: open
+
+### Closing without captain provenance is refused
+exit=2
+fm-captain-question.py close: error: one of the arguments --captain-words-file --board-result is required
+### Closing with a board result lacking a Close answer is refused
+fm-captain-question: board result has no captain Close answer for q-20261022-bab98b08
+exit=1
+state: open

@@ -1,0 +1,63 @@
+### lab FM_HOME=/tmp/fm-lab.dKfyk0
+$ fm-captain-question.py open --question-file q
+q-20261022-bab98b08
+$ fm-captain-question.py open (repeat, same text)
+q-20261022-bab98b08
+$ fm-captain-question-list.sh
+[
+  {
+    "id": "q-20261022-bab98b08",
+    "question": "what's status of DNSSEC systemd-resolved fix rollout",
+    "opened": "2026-10-22T01:31:12Z",
+    "status": "Investigation pending.",
+    "last_updated": "2026-10-22T01:31:12Z",
+    "links": [],
+    "state": "open",
+    "closed_by_captain": null,
+    "stale": false
+  }
+]
+$ repeat open with --status-file (refresh)
+q-20261022-bab98b08
+$ status with --link
+[
+  {
+    "id": "q-20261022-bab98b08",
+    "question": "what's status of DNSSEC systemd-resolved fix rollout",
+    "opened": "2026-10-22T01:31:12Z",
+    "status": "Rolled to 4/5 hosts; host-e pending.",
+    "last_updated": "2026-10-22T01:31:13Z",
+    "links": [
+      {
+        "label": "rollout PR",
+        "url": "https://github.com/example/infra/pull/12"
+      }
+    ],
+    "state": "open",
+    "closed_by_captain": null,
+    "stale": false
+  }
+]
+$ fm-bearings-snapshot.sh --json | jq "{captain_questions,decisions_open}"
+{
+  "captain_questions": [
+    {
+      "id": "q-20261022-bab98b08",
+      "question": "what's status of DNSSEC systemd-resolved fix rollout",
+      "opened": "2026-10-22T01:31:12Z",
+      "status": "Rolled to 4/5 hosts; host-e pending.",
+      "last_updated": "2026-10-22T01:31:13Z",
+      "links": [
+        {
+          "label": "rollout PR",
+          "url": "https://github.com/example/infra/pull/12"
+        }
+      ],
+      "state": "open",
+      "closed_by_captain": null,
+      "stale": false
+    }
+  ],
+  "decisions_open": []
+}
+stderr:

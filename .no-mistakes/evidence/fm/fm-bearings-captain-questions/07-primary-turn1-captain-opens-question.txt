@@ -1,0 +1,9 @@
+Captain, the DNSSEC systemd-resolved fix was last recorded as rolled out to 4 of 5 hosts, and each of those was verified with `resolvectl`. The fifth, host-e, is waiting for the Thursday maintenance window. The rollout PR is https://github.com/example/infra/pull/12.
+
+That status is from earlier tonight, and I haven't re-checked it. Nothing in this home tracks the rollout: no running work, no investigation report, and no access to the hosts. So I can't confirm whether host-e has been done.
+
+You'd already closed this question once tonight, so I opened it again as a new entry. It will now show on Bearings under "Open Questions from the Captain" until you close it. You can close it in chat or with the board's close answer. It's marked as not re-verified, and each Bearings refresh will update its status from whatever evidence is available.
+
+The vendor Q4 renewal-price question is also still open. Its "investigation pending" status hasn't been updated in more than a day, so Bearings marks it stale.
+
+To get a real answer on host-e, I can send someone to check the hosts after Thursday's window. Do you want that?

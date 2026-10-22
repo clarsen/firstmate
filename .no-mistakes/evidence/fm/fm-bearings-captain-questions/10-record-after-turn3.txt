@@ -1,0 +1,4 @@
+{"id":"q-20261022-bab98b08","question":"what's status of DNSSEC systemd-resolved fix rollout","state":"closed","closed_by_captain":{"source":"captain-chat","words":"Thanks, that answers it - close the DNSSEC question."}}
+{"id":"q-20261022-1dd345e9","question":"Did the vendor confirm the Q4 renewal price?","state":"open","closed_by_captain":null}
+{"id":"q-20261022-95266145","question":"What's the status of the DNSSEC systemd-resolved fix rollout?","state":"closed","closed_by_captain":{"source":"captain-chat","words":"Close the DNSSEC question - I checked host-e myself and it's done."}}
+["Did the vendor confirm the Q4 renewal price?"]

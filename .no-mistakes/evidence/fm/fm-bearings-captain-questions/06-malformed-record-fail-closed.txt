@@ -1,0 +1,13 @@
+### Malformed record (truncated JSON)
+jq: parse error: Unfinished JSON term at EOF at line 1, column 55
+list exit=5
+snapshot exit=0
+stderr: fm-bearings-snapshot: captain questions unavailable
+{"captain_questions":null,"omitted":[{"surface":"captain questions unavailable: invalid data/captain-questions.json","reveal":"repair the record owned by bin/fm-captain-question.py"}],"has_in_flight":"array","has_gates":"array"}
+### Board build with malformed record
+jq: parse error: Unfinished JSON term at EOF at line 1, column 55
+### Mutations refuse to overwrite a malformed record
+fm-captain-question: Expecting value: line 1 column 56 (char 55)
+open exit=1
+### Empty FM_HOME= treated as unset (resolves to repo root, not cwd)
+list exit=0; cwd data dir created: no

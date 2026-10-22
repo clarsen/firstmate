@@ -1,0 +1,15 @@
+**Captain's Call**
+- Captain, there are no open decisions, PRs to merge, or credentials needed. I can't say nothing at all needs you, though: the contribution tracker has 0 of 0 items checked and one record it couldn't read.
+
+**Open Questions from the Captain**
+- *"What's the status of the DNSSEC systemd-resolved fix rollout?"* (refreshed 2026-10-22 01:36 UTC). Last report: 4 of 5 hosts done and verified with `resolvectl`. host-e is waiting on Thursday's maintenance window. Nothing here tracks the rollout, so host-e is still unconfirmed. PR: https://github.com/example/infra/pull/12
+- *"Did the vendor confirm the Q4 renewal price?"* (refreshed 2026-10-22 01:36 UTC). Still pending: there's no vendor reply or investigation on record.
+
+**Recently Landed**
+- Nothing has been completed recently.
+
+**Underway**
+- Nothing is underway.
+
+**Charted Next**
+- Nothing is queued.
