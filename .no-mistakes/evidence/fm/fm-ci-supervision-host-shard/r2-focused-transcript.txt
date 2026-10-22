@@ -1,0 +1,62 @@
+$ bin/fm-test-run.sh --check-coverage
+comm: file 2 is not in sorted order
+comm: input is not in sorted order
+exit=1
+
+$ bin/fm-test-run.sh --list --lane portable-serial-10of10
+tests/fm-supervision-host.test.sh
+exit=0
+
+# shard sizes 1..10 (count of scripts) and whether host suite appears outside shard 10
+shard 1: 1 scripts, host=0
+shard 2: 27 scripts, host=0
+shard 3: 26 scripts, host=0
+shard 4: 27 scripts, host=0
+shard 5: 27 scripts, host=0
+shard 6: 27 scripts, host=0
+shard 7: 28 scripts, host=0
+shard 8: 28 scripts, host=0
+shard 9: 29 scripts, host=0
+shard 10: 1 scripts, host=1
+
+$ bin/fm-test-run.sh --list --lane portable-serial-9of9   (adversarial: stale shard count)
+fm-test-run: lane 'portable-serial-9of9' asks for 9 portable serial shards but this runner is configured for 10 (see --list-lanes)
+exit=2
+
+$ bin/fm-test-run.sh --list --lane portable-serial-11of10 (adversarial: out of range)
+fm-test-run: lane 'portable-serial-11of10' shard index is outside 1..10 (see --list-lanes)
+exit=2
+
+# union of shards 1..10 == --list --lane portable-serial ?
+union matches, no duplicates: 0 dups
+
+# NOTE: --check-coverage under LANG=en_US.UTF-8 also fails identically on base 77b1cc2 (comm sort-order, pre-existing); rerun with LC_ALL=C
+$ LC_ALL=C bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=261 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=221 serial_shards=10 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 serial_dedicated_ms=1656770 serial_dedicated_budget_ms=2280000 herdr=16
+exit=0
+
+$ (disposable copy, host hint=2280001 ms) LC_ALL=C bin/fm-test-run.sh --check-coverage
+fm-test-run: coverage guard: dedicated portable serial shard packs 2280001ms above the 2280000ms ceiling
+fm-test-run: speed up or split tests/fm-supervision-host.test.sh; do not raise the job timeout further: docs/fm-test-portable-shards.md
+exit=1
+
+$ (disposable copy, host hint=1500000 ms) LC_ALL=C bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=261 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=221 serial_shards=10 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 serial_dedicated_ms=1500000 serial_dedicated_budget_ms=2280000 herdr=16
+exit=0
+
+# CI workflow tests-portable-serial matrix (parsed with python3 yaml.safe_load)
+timeout-minutes expr: ${{ matrix.timeout }}
+matrix keys besides include: []
+ shard 1 timeout 30
+ shard 2 timeout 30
+ shard 3 timeout 30
+ shard 4 timeout 30
+ shard 5 timeout 30
+ shard 6 timeout 30
+ shard 7 timeout 30
+ shard 8 timeout 30
+ shard 9 timeout 30
+ shard 10 timeout 45
+lane expressions in steps: ['portable-serial-${FM_SERIAL_SHARD}.json']
+runner --list-lanes serial shards: ['portable-serial-1of10', 'portable-serial-2of10', 'portable-serial-3of10', 'portable-serial-4of10', 'portable-serial-5of10', 'portable-serial-6of10', 'portable-serial-7of10', 'portable-serial-8of10', 'portable-serial-9of10', 'portable-serial-10of10']
+MATRIX OK: 10 shards, 1-9 @30min, 10 @45min

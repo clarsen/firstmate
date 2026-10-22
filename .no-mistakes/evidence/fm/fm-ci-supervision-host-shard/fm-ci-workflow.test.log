@@ -1,1 +1,41 @@
-not ok - ruby is required to parse .github/workflows/ci.yml as YAML
+Unable to find image 'ruby:3.3' locally
+3.3: Pulling from library/ruby
+aa0d606e2f08: Pulling fs layer
+7046f4e749f0: Pulling fs layer
+992d9e06c2e8: Pulling fs layer
+978ec552e972: Pulling fs layer
+3a5ae4c7f0c6: Pulling fs layer
+8d0037029946: Pulling fs layer
+63040bd9752a: Pulling fs layer
+978ec552e972: Download complete
+aa0d606e2f08: Download complete
+63040bd9752a: Download complete
+3a5ae4c7f0c6: Download complete
+7046f4e749f0: Download complete
+8d0037029946: Download complete
+30289dd473d8: Download complete
+1a1cda0fbf82: Download complete
+992d9e06c2e8: Download complete
+8d0037029946: Pull complete
+63040bd9752a: Pull complete
+7046f4e749f0: Pull complete
+978ec552e972: Pull complete
+992d9e06c2e8: Pull complete
+aa0d606e2f08: Pull complete
+3a5ae4c7f0c6: Pull complete
+Digest: sha256:970ea5fc5c5bf430c590604d3e9368282500a555cd3692d3c63ca6199a3fc82a
+Status: Downloaded newer image for ruby:3.3
+ok - CI matrices cover every executable serial lane and canonical lint root exactly once
+ok - every ci.yml job runner is a repository-variable override with its hosted default
+ok - fork PRs stay hosted while same-repo PRs and main pushes follow the runner variable
+ok - every npm global install runs under a job-scoped prefix
+ok - every self-hostable job provisions Node and jq before its first run step
+ok - a newer push to one PR supersedes that PR's in-flight CI
+ok - distinct PRs get distinct concurrency groups
+ok - every main push keeps its own group and is never cancelled
+ok - every ci.yml job carries a finite timeout
+ok - every ci.yml job belongs to one of the three timeout tiers
+ok - fast tier jobs share one 5 minute tripwire
+ok - normal tier jobs share one 30 minute budget
+ok - Herdr keeps a 20 minute step tripwire under a 75 minute job backstop
+ok - only the dedicated supervision-host shard carries the 45 minute budget

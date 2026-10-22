@@ -1,0 +1,20 @@
+$ (hint for tests/fm-supervision-host.test.sh set to 2280000 ms) LC_ALL=C bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=261 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=221 serial_shards=10 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 serial_dedicated_ms=2280000 serial_dedicated_budget_ms=2280000 herdr=16
+exit=0
+$ LC_ALL=C bin/fm-test-run.sh --list --lane portable-serial-10of10
+tests/fm-supervision-host.test.sh
+
+$ (hint for tests/fm-supervision-host.test.sh set to 2280001 ms) LC_ALL=C bin/fm-test-run.sh --check-coverage
+fm-test-run: coverage guard: dedicated portable serial shard packs 2280001ms above the 2280000ms ceiling
+fm-test-run: speed up or split tests/fm-supervision-host.test.sh; do not raise the job timeout further: docs/fm-test-portable-shards.md
+exit=1
+$ LC_ALL=C bin/fm-test-run.sh --list --lane portable-serial-10of10
+tests/fm-supervision-host.test.sh
+
+$ (hint for tests/fm-supervision-host.test.sh set to 2700000 ms) LC_ALL=C bin/fm-test-run.sh --check-coverage
+fm-test-run: coverage guard: dedicated portable serial shard packs 2700000ms above the 2280000ms ceiling
+fm-test-run: speed up or split tests/fm-supervision-host.test.sh; do not raise the job timeout further: docs/fm-test-portable-shards.md
+exit=1
+$ LC_ALL=C bin/fm-test-run.sh --list --lane portable-serial-10of10
+tests/fm-supervision-host.test.sh
+

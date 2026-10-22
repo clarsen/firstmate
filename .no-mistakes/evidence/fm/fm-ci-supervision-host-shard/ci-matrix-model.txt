@@ -1,0 +1,26 @@
+job name template: Behavior portable serial ${{ matrix.shard }}
+timeout-minutes expr: ${{ matrix.timeout }}
+Behavior portable serial 1       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 2       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 3       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 4       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 5       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 6       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 7       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 8       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 9       timeout=30 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+Behavior portable serial 10      timeout=45 lane=['portable-serial-${FM_SERIAL_SHARD}.json"'] lane_known=False
+other jobs timeout-minutes: {'lint': 30, 'test-coverage': 5, 'tests-portable-parallel-1': 30, 'tests-portable-parallel-2': 30, 'tests-herdr': 75, 'tests-timing-aggregate': 5, 'macos-stock-bash': 30, 'invariants': 5}
+ASSERTIONS OK
+
+Lane wiring: FM_SERIAL_LANE=portable-serial-${matrix.shard}of${strategy.job-total}; job-total = 10 matrix entries
+portable-serial-1of10 -> 1
+portable-serial-2of10 -> 27
+portable-serial-3of10 -> 26
+portable-serial-4of10 -> 27
+portable-serial-5of10 -> 27
+portable-serial-6of10 -> 27
+portable-serial-7of10 -> 28
+portable-serial-8of10 -> 28
+portable-serial-9of10 -> 29
+portable-serial-10of10 -> 1

@@ -31,8 +31,8 @@ ok - serial packing accepts the exact budget and refuses one millisecond above i
 ok - the dedicated serial shard accepts its exact ceiling and refuses one millisecond above it
 ok - portable serial shard lanes refuse mismatched, out-of-range, and countless names
 ok - --jobs refuses non-proven / stateful selections
-not ok - --jobs on a proven family must be admitted, got 1:  FM_TEST_BEGIN 2026-10-21T04:12:20Z tests/fm-session-lock-ancestry.test.sh family=watcher-wake-lock expected_gate_skip=none
-FM_TEST_BEGIN 2026-10-21T04:12:20Z tests/fm-supervision-events.test.sh family=watcher-wake-lock expected_gate_skip=none
+not ok - --jobs on a proven family must be admitted, got 1:  FM_TEST_BEGIN 2026-10-22T01:05:56Z tests/fm-session-lock-ancestry.test.sh family=watcher-wake-lock expected_gate_skip=none
+FM_TEST_BEGIN 2026-10-22T01:05:56Z tests/fm-supervision-events.test.sh family=watcher-wake-lock expected_gate_skip=none
 ok - handle_push_transition: a blocked crew enqueues a stale wake naming its window and wakes the supervisor
 ok - handle_push_transition: enqueue failure cannot commit the Herdr dedupe marker
 ok - handle_push_transition: a declared-pause crew is absorbed (no fast wake), left to the poll loop's long cadence
@@ -42,7 +42,7 @@ ok - event_wait_or_sleep: one cached capability probe owns validation across bou
 ok - event_wait_or_sleep: a home with no push-capable window is inert (sleeps POLL, never touches the event path)
 ok - event_wait_or_sleep: consecutive event-path failures disable the fast-path and revert to pure polling (fail-closed)
 # fm-supervision-events.test.sh: all assertions passed
-FM_TEST_END 2026-10-21T04:12:21Z tests/fm-supervision-events.test.sh exit=0 duration_ms=751 gate_skip=false
+FM_TEST_END 2026-10-22T01:05:57Z tests/fm-supervision-events.test.sh exit=0 duration_ms=980 gate_skip=false
 ok - session-lock: a version-named Claude Code session is identified from its install path and argv[0]
 ok - session-lock: a harness that is pid 1 of its own namespace is examined, not skipped
 ok - session-lock: ordinary script paths under a harness directory are not harness processes
@@ -55,8 +55,9 @@ ok - session-lock e2e: a version-named session claims the home and arms supervis
 ok - session-lock e2e: a session parented by a harness-named daemon claims the home and arms supervision
 ok - session-lock e2e: a version-named session under a harness-named daemon keeps its own lock
 not ok - the pty-host was not reparented to init after the daemon ended
-FM_TEST_END 2026-10-21T04:13:45Z tests/fm-session-lock-ancestry.test.sh exit=1 duration_ms=84918 gate_skip=false
-FM_TEST_SUMMARY total=2 failed=1 skipped_gate=0 duration_ms=85046
-FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=85669 failed=1
-FM_TEST_SLOWEST rank=1 script=tests/fm-session-lock-ancestry.test.sh duration_ms=84918
-FM_TEST_SLOWEST rank=2 script=tests/fm-supervision-events.test.sh duration_ms=751
+FM_TEST_END 2026-10-22T01:07:27Z tests/fm-session-lock-ancestry.test.sh exit=1 duration_ms=91379 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=1 skipped_gate=0 duration_ms=91517
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=92359 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-session-lock-ancestry.test.sh duration_ms=91379
+FM_TEST_SLOWEST rank=2 script=tests/fm-supervision-events.test.sh duration_ms=980
+LC_ALL=C bash tests/fm-test-run.test.sh  92.17s user 111.88s system 85% cpu 3:57.75 total
