@@ -145,12 +145,12 @@ while IFS= read -r meta <&3; do
                (.headRefOid | test("^[0-9a-f]{40}$") | not) or
                (.statusCheckRollup | type) != "array"
             then error("invalid PR checks")
-            else {
+            else [.statusCheckRollup[] | select(.status == "COMPLETED" and (.completedAt // "") != "")] as $done
+            | {
               provider:"github",
               head:.headRefOid,
-              completed_count:([.statusCheckRollup[] | select((.completedAt // "") != "")] | length),
-              latest_completed_at:([.statusCheckRollup[] | select((.completedAt // "") != "") |
-                (.completedAt | fromdateiso8601)] | max // null)
+              completed_count:($done | length),
+              latest_completed_at:([$done[].completedAt | fromdateiso8601] | max // null)
             } end' 2>/dev/null) || ci_snapshot=null
           fi
         elif [ "$FM_PR_PROVIDER" = gitlab ]; then

@@ -121,13 +121,16 @@ gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" ci-progress)
 "$ROOT/bin/fm-busy-event.sh" apply "$home/state" ci-progress idle --gen "$gen" \
   --source claude-hook --event stop
 cat > "$home/ci-snapshot" <<'JSON'
-{"headRefOid":"0000000000000000000000000000000000000001","statusCheckRollup":[{"__typename":"CheckRun","name":"linux-a","status":"COMPLETED","completedAt":"1970-01-01T04:36:40Z"}]}
+{"headRefOid":"0000000000000000000000000000000000000001","statusCheckRollup":[{"__typename":"CheckRun","name":"linux-a","status":"COMPLETED","completedAt":"1970-01-01T04:36:40Z"},{"__typename":"CheckRun","name":"linux-q1","status":"QUEUED","completedAt":"0001-01-01T00:00:00Z"}]}
 JSON
 out=$(tick 16800) || fail 'CI completion baseline failed'
 assert_equals '' "$out" 'recent PR job completion prevents a stale wait alarm'
 jq -e '.crew[] | select(.id == "ci-progress") |
   .ci_progress.completed_count == 1 and .ci_progress.progress_at == 16600 and .alert == null' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'PR completion was not recorded'
+cat > "$home/ci-snapshot" <<'JSON'
+{"headRefOid":"0000000000000000000000000000000000000001","statusCheckRollup":[{"__typename":"CheckRun","name":"linux-a","status":"COMPLETED","completedAt":"1970-01-01T04:36:40Z"},{"__typename":"CheckRun","name":"linux-q1","status":"QUEUED","completedAt":"0001-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"linux-q2","status":"QUEUED","completedAt":"0001-01-01T00:00:00Z"}]}
+JSON
 out=$(tick 17501) || fail 'CI job stall tick failed'
 assert_contains "$out" 'ci-progress declared-wait-no-ci-progress' \
   'no new PR completion past the bound wakes firstmate'
@@ -136,7 +139,7 @@ assert_contains "$out" 'completed-checks=1; last-completion=16600' \
 out=$(tick 17502) || fail 'repeat CI job stall tick failed'
 assert_equals '' "$out" 'same queued CI condition does not repeat'
 cat > "$home/ci-snapshot" <<'JSON'
-{"headRefOid":"0000000000000000000000000000000000000001","statusCheckRollup":[{"__typename":"CheckRun","name":"linux-a","status":"COMPLETED","completedAt":"1970-01-01T04:36:40Z"},{"__typename":"CheckRun","name":"linux-b","status":"COMPLETED","completedAt":"1970-01-01T04:51:40Z"}]}
+{"headRefOid":"0000000000000000000000000000000000000001","statusCheckRollup":[{"__typename":"CheckRun","name":"linux-a","status":"COMPLETED","completedAt":"1970-01-01T04:36:40Z"},{"__typename":"CheckRun","name":"linux-b","status":"COMPLETED","completedAt":"1970-01-01T04:51:40Z"},{"__typename":"CheckRun","name":"linux-q2","status":"QUEUED","completedAt":"0001-01-01T00:00:00Z"}]}
 JSON
 out=$(tick 17503) || fail 'new PR completion tick failed'
 assert_equals '' "$out" 'a completed PR job clears the stale condition'
