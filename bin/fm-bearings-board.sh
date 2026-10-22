@@ -86,6 +86,9 @@
 #   title       non-empty string: the page <title> and header
 #   eyebrow     optional string: the small label above the title
 #   lead        optional string: intro copy under the title
+#   generated   optional string: shown after the schema as provenance; never
+#               validated, so only an explicit ISO-8601 instant converts to
+#               the display timezone below and anything else shows verbatim
 #   project     optional slug, 1-128 chars of [A-Za-z0-9._-]: the project the
 #               page is about. When present the built page carries
 #               `<meta name="lavish-project" content="<project>">` in its
@@ -251,6 +254,9 @@
 # (tests only).
 # Both built pages bake in the host's IANA timezone from TZ, /etc/localtime,
 # or /etc/timezone; when none resolves, display falls back to labeled UTC.
+# Only explicit ISO-8601 instants (Z or +/-HH:MM offset) are converted to that
+# zone for display; every other time string is shown verbatim, and payload
+# values themselves are never rewritten.
 # FM_BEARINGS_ZONEINFO_ROOT, FM_BEARINGS_LOCALTIME, and
 # FM_BEARINGS_TIMEZONE_FILE override those system paths for tests only.
 set -eu
