@@ -122,18 +122,20 @@ The workflow retains per-PR supersession without cancelling main pushes or chang
 Every job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) reads its runner from a repository variable through `fromJSON`, and falls back to the GitHub-hosted runner it always used when the variable is unset.
 A fork or template user who sets nothing is unaffected.
 Set a variable under the repository's Actions variables, never in the workflow file.
-Pull requests from forks ignore both variables and always run on the hosted fallback, so code from outside the repository never reaches a self-hosted runner.
+Pull requests from forks ignore every variable and always run on the hosted fallback, so code from outside the repository never reaches a self-hosted runner.
 Pushes to `main` and pull requests from branches of this repository follow the variables.
 
 | Variable | Jobs | Hosted fallback |
 |---|---|---|
-| `FIRSTMATE_CI_RUNNER` | lint, coverage guard, portable parallel 1 and 2, timing aggregate, repo invariants, stock macOS Bash | `ubuntu-latest`, and `macos-latest` for stock macOS Bash |
+| `FIRSTMATE_CI_RUNNER` | lint, coverage guard, portable parallel 1 and 2, timing aggregate, repo invariants | `ubuntu-latest` |
 | `FIRSTMATE_CI_LINUX_RUNNER` | portable serial shards, Herdr | `ubuntu-latest` |
+| `FIRSTMATE_CI_MACOS_RUNNER` | stock macOS Bash | `macos-latest` |
 
 The value is a JSON runner label or label array.
 The captain's laptop (macOS arm64, three runner instances as the standard user `ghrunner`) uses `["self-hosted","macOS","ARM64","mac-laptop-arm64"]`.
 The runners are declared in the separate nix-config repository, not here.
-Stock macOS Bash follows `FIRSTMATE_CI_RUNNER`, so on the laptop it stops billing at the hosted macOS rate.
+The homelab Proxmox runner scale set `firstmate-linux-x64` (an Ubuntu noble runner template) is supported for `FIRSTMATE_CI_LINUX_RUNNER` as `["firstmate-linux-x64"]`.
+Stock macOS Bash follows its own `FIRSTMATE_CI_MACOS_RUNNER`, so it can stay on a macOS runner such as the laptop (which stops billing at the hosted macOS rate) while `FIRSTMATE_CI_RUNNER` moves to Linux runners.
 
 The serial shards and Herdr have their own variable because they were not proven on macOS.
 Running the lanes on an Apple-silicon Mac on 2026-10-09 passed lint, the coverage guard, both parallel lanes, and serial shards 1, 2, 4, and 8.
@@ -142,10 +144,19 @@ Two were genuine Linux-only constructs in tests (GNU-only `sed -i` and the util-
 Others depended on the runner's tools: a Node major that prints a typeless-module warning (the Pi extension tests assert silent output), a Git whose handling of an unknown `~user` hooks path differs from the hosted one, and live-harness guards that run wherever a real harness CLI is installed.
 A few watcher and listener scripts also timed out or failed on the laptop and have not been shown green there.
 Real Herdr was not run locally because its default-session tripwire would collide with a live fleet.
-Point `FIRSTMATE_CI_LINUX_RUNNER` at the laptop only after a trial run of those shards is green there, and keep the runner's Node, Git, and installed harnesses aligned with what the hosted image provides.
+Point `FIRSTMATE_CI_LINUX_RUNNER` at the laptop only after a trial run of those shards is green there, and keep the runner's Git and installed harnesses aligned with what the hosted image provides.
 Serial shards also assume no other stateful shard shares the machine, so give each runner instance its own home and temporary directory before running several at once.
 
-The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin` and `/opt/homebrew/bin`, so `npm` and `jq` must be installed in one of them on a self-hosted runner.
+Jobs self-provision their toolchain rather than relying on the hosted image, so a minimal self-hosted runner can serve them.
+Every job on `FIRSTMATE_CI_RUNNER` or `FIRSTMATE_CI_LINUX_RUNNER` sets up Node 22, the hosted `ubuntu-latest` default, with `actions/setup-node` and runs its "Install pinned jq" step before any run step other than checkout, the pinned-tool provisioning steps, and "Require runner tools".
+Jobs pin ShellCheck, actionlint, jq, Ruby, Herdr, and Treehouse through their `bin/fm-install-*.sh` installers, and the jobs that run the Pi typecheck install a pinned TypeScript into the job-scoped npm prefix.
+A job cannot install a system package without root, so the runner image must provide `git`, `curl`, `tar`, `xz`, `python3`, and, for the serial shards, `tmux`.
+The "Require runner tools" steps name a missing `python3` (and `tmux` in the serial shards), and the Herdr job's tool check also covers `curl` and `tar`; any other missing tool fails inside the installer that needs it.
+Remote-job commands run under the product's operator `PATH`, not the job's, so the serial shards link the provisioned Node and jq into the runner account's `~/.local/bin`, replacing any symlink another job left but never a regular file, and when the job ends remove each link that still points at this job's tool.
+Ruby comes from Homebrew's relocatable portable build, because `ruby/setup-ruby`'s prebuilt Rubies need a hosted tool cache path that a runner user without root cannot write.
+`tests/fm-ci-workflow.test.sh` checks only that structural ordering of the setup-node and "Install pinned jq" steps; the real proof that no job relies on the hosted image is the jobs passing on the Proxmox runner.
+
+The stock macOS Bash job pins `PATH` to system directories plus `/usr/local/bin`, `/opt/homebrew/bin`, and its provisioned Node, so `jq` must be installed in one of those system directories on a self-hosted runner.
 
 Self-hosted hygiene:
 

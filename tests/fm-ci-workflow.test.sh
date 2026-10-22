@@ -191,7 +191,7 @@ RUBY
 job_runner() {
   local job=$1 fallback var found=
   fallback=$(resolve_runner "$job" push "$REPOSITORY") || return 1
-  for var in FIRSTMATE_CI_RUNNER FIRSTMATE_CI_LINUX_RUNNER; do
+  for var in FIRSTMATE_CI_RUNNER FIRSTMATE_CI_LINUX_RUNNER FIRSTMATE_CI_MACOS_RUNNER; do
     if [ "$(resolve_runner "$job" push "$REPOSITORY" "$var=$LAPTOP_RUNNER")" = "$LAPTOP_RUNNER" ]; then
       [ -z "$found" ] || { echo "$job follows both $found and $var" >&2; return 1; }
       found=$var
@@ -359,7 +359,8 @@ RUBY
 # Runner contract: docs/fm-test-portable-shards.md "Runner override" owns it.
 # Unset variables keep every job on the GitHub-hosted runner it always used, so
 # forks that never set a variable are unaffected. Only the jobs not yet proven
-# on macOS (serial shards and real Herdr) sit behind the separate Linux variable.
+# on macOS (serial shards and real Herdr) sit behind the separate Linux variable,
+# and stock macOS Bash has its own variable so the others can move to Linux.
 test_every_job_runner_is_overridable_with_hosted_defaults() {
   local job got
   for job in $(workflow_jobs); do
@@ -369,8 +370,8 @@ test_every_job_runner_is_overridable_with_hosted_defaults() {
         [ "$got" = "$(printf 'FIRSTMATE_CI_LINUX_RUNNER\tubuntu-latest')" ] \
           || fail "$job must use FIRSTMATE_CI_LINUX_RUNNER with an ubuntu-latest fallback, got $got" ;;
       macos-stock-bash)
-        [ "$got" = "$(printf 'FIRSTMATE_CI_RUNNER\tmacos-latest')" ] \
-          || fail "$job must use FIRSTMATE_CI_RUNNER with a macos-latest fallback, got $got" ;;
+        [ "$got" = "$(printf 'FIRSTMATE_CI_MACOS_RUNNER\tmacos-latest')" ] \
+          || fail "$job must use FIRSTMATE_CI_MACOS_RUNNER with a macos-latest fallback, got $got" ;;
       *)
         [ "$got" = "$(printf 'FIRSTMATE_CI_RUNNER\tubuntu-latest')" ] \
           || fail "$job must use FIRSTMATE_CI_RUNNER with an ubuntu-latest fallback, got $got" ;;
@@ -380,7 +381,7 @@ test_every_job_runner_is_overridable_with_hosted_defaults() {
 }
 
 # Fork rule: a fork pull request never reaches a self-hosted runner, even with
-# both variables set, while a same-repository pull request and a main push
+# every variable set, while a same-repository pull request and a main push
 # follow the variable.
 test_fork_pull_requests_always_use_the_hosted_runner() {
   local job runner var fallback got
@@ -389,7 +390,7 @@ test_fork_pull_requests_always_use_the_hosted_runner() {
     var=$(printf '%s\n' "$runner" | cut -f1)
     fallback=$(printf '%s\n' "$runner" | cut -f2)
     got=$(resolve_runner "$job" pull_request someone/firstmate \
-      "FIRSTMATE_CI_RUNNER=$LAPTOP_RUNNER" "FIRSTMATE_CI_LINUX_RUNNER=$LAPTOP_RUNNER") || fail "$job: could not resolve a fork PR runner"
+      "FIRSTMATE_CI_RUNNER=$LAPTOP_RUNNER" "FIRSTMATE_CI_LINUX_RUNNER=$LAPTOP_RUNNER" "FIRSTMATE_CI_MACOS_RUNNER=$LAPTOP_RUNNER") || fail "$job: could not resolve a fork PR runner"
     [ "$got" = "\"$fallback\"" ] || fail "$job must run fork PRs on $fallback, got $got"
     got=$(resolve_runner "$job" pull_request "$REPOSITORY" "$var=$LAPTOP_RUNNER") || fail "$job: could not resolve a same-repo PR runner"
     [ "$got" = "$LAPTOP_RUNNER" ] || fail "$job must run same-repo PRs on $var, got $got"
@@ -415,10 +416,38 @@ end
   pass "every npm global install runs under a job-scoped prefix"
 }
 
+# Self-hosted runners: every job on FIRSTMATE_CI_RUNNER or
+# FIRSTMATE_CI_LINUX_RUNNER sets up Node and installs the pinned jq before its
+# first run step that is not checkout, a pinned-tool provisioning step, or the
+# runner-tool check, rather than relying on what the hosted image ships.
+test_jobs_provision_node_and_jq_before_use() {
+  local job runner missing reported=
+  for job in $(workflow_jobs); do
+    runner=$(job_runner "$job") || fail "$job runs-on: could not resolve the runner"
+    case "$(printf '%s\n' "$runner" | cut -f1)" in
+      FIRSTMATE_CI_RUNNER|FIRSTMATE_CI_LINUX_RUNNER) ;;
+      *) continue ;;
+    esac
+    missing=$(ruby -ryaml -e '
+steps = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("steps")
+provisioning = ->(s) { s["name"].to_s.match?(/\A(Install|Set up) pinned /) || s["name"] == "Require runner tools" }
+first = steps.index { |s| s.key?("run") && !provisioning.call(s) } || steps.length
+setup = steps.index { |s| s["uses"].to_s.start_with?("actions/setup-node@") }
+jq = steps.index { |s| s["name"] == "Install pinned jq" }
+puts "#{ARGV[1]}: Node is not set up before its first run step" if setup.nil? || setup > first
+puts "#{ARGV[1]}: jq is not installed before its first run step" if jq.nil? || jq > first
+' "$CI_WORKFLOW" "$job") || fail "could not read $job steps"
+    [ -z "$missing" ] || reported+="$missing"$'\n'
+  done
+  [ -z "$reported" ] || fail "these jobs rely on the runner image for Node or jq:"$'\n'"$reported"
+  pass "every self-hostable job provisions Node and jq before its first run step"
+}
+
 test_ci_matrices_match_executable_partitions
 test_every_job_runner_is_overridable_with_hosted_defaults
 test_fork_pull_requests_always_use_the_hosted_runner
 test_npm_global_installs_use_a_job_scoped_prefix
+test_jobs_provision_node_and_jq_before_use
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled
