@@ -1,0 +1,14 @@
+# Adversarial: host-suite hint raised to 2,300,000 ms (above 2,280,000 ms / 38 min ceiling) in a disposable copy
+881:tests/fm-supervision-host.test.sh 2300000
+fm-test-run: coverage guard: dedicated portable serial shard packs 2300000ms above the 2280000ms ceiling
+fm-test-run: speed up or split tests/fm-supervision-host.test.sh; do not raise the job timeout further: docs/fm-test-portable-shards.md
+exit=1
+
+# Boundary: hint exactly at ceiling 2,280,000 ms
+FM_TEST_COVERAGE ok total=262 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=222 serial_shards=10 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 serial_dedicated_ms=2280000 serial_dedicated_budget_ms=2280000 herdr=16
+exit=0
+
+# Adversarial: a second script forced into the dedicated shard (dedicated script renamed to a different path)
+fm-test-run: lane 'portable-serial-10of10' selected no tests
+fm-test-run: lane 'portable-serial-10of10' selected no tests
+exit=2

@@ -1,0 +1,38 @@
+$ actionlint .github/workflows/ci.yml
+exit=0
+# Parsed tests-portable-serial job (PyYAML)
+timeout-minutes expr: ${{ matrix.timeout }}
+  shard 1: timeout 30 min
+  shard 2: timeout 30 min
+  shard 3: timeout 30 min
+  shard 4: timeout 30 min
+  shard 5: timeout 30 min
+  shard 6: timeout 30 min
+  shard 7: timeout 30 min
+  shard 8: timeout 30 min
+  shard 9: timeout 30 min
+  shard 10: timeout 45 min
+runner step(s):
+  set -eu
+  mkdir -p "$RUNNER_TEMP/fm-test"
+  # The Pi package is installed above and CI provides npm and tsc, so
+  # any missing typecheck prerequisite is a broken lane, not a valid skip.
+  bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
+    --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
+    --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
+OK: shards 1-9 = 30 min, shard 10 = 45 min
+$ bin/fm-test-run.sh --list-lanes
+portable-parallel-1
+portable-parallel-2
+portable-serial
+portable-serial-1of10
+portable-serial-2of10
+portable-serial-3of10
+portable-serial-4of10
+portable-serial-5of10
+portable-serial-6of10
+portable-serial-7of10
+portable-serial-8of10
+portable-serial-9of10
+portable-serial-10of10
+real-herdr-gated
