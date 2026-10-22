@@ -37,7 +37,7 @@ import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-HOME = Path(os.environ.get("FM_HOME", ROOT))
+HOME = Path(os.environ.get("FM_HOME") or ROOT)
 RECORD = HOME / "data" / "captain-questions.json"
 SCHEMA = "fm-captain-questions.v1"
 ID_RE = re.compile(r"^q-[0-9]{8}-[0-9a-f]{8}$")

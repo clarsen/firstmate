@@ -76,3 +76,16 @@ FM_HOME="$home" "$QUESTION" list --all | jq -e --arg id "$board_id" '
     and .closed_by_captain.source == "board" and .closed_by_captain.words == "close")
 ' >/dev/null || fail "the board close lacks provenance"
 pass "captain questions keep exact words, status, links, and guarded close history"
+
+fake_root="$TMP_ROOT/root"
+work="$TMP_ROOT/work"
+mkdir -p "$fake_root/bin" "$work"
+cp "$QUESTION" "$fake_root/bin/fm-captain-question.py"
+(cd "$work" && FM_HOME='' "$fake_root/bin/fm-captain-question.py" open --question-file "$home/question.txt" >/dev/null) \
+  || fail "an empty FM_HOME refused to open a question"
+[ ! -e "$work/data/captain-questions.json" ] || fail "an empty FM_HOME wrote the record under the current directory"
+(cd "$work" && FM_HOME='' "$fake_root/bin/fm-captain-question.py" list) | jq -e 'length == 1' >/dev/null \
+  || fail "an empty FM_HOME did not resolve to the repository root record"
+jq -e '.questions | length == 1' "$fake_root/data/captain-questions.json" >/dev/null 2>&1 \
+  || fail "an empty FM_HOME did not store the record under the repository root"
+pass "an empty FM_HOME resolves to the repository root like the shell owners"
