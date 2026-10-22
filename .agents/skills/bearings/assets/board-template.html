@@ -321,6 +321,7 @@ __FM_DECISION_CARD_JS__
 <script>
 (function () {
   "use strict";
+  var displayTimeZone = __FM_BEARINGS_TIME_ZONE__;
 
   /* Fail closed: a board with unreadable or wrong-schema data says so plainly
      instead of rendering an empty page that looks like an empty fleet. */
@@ -397,7 +398,8 @@ __FM_DECISION_CARD_JS__
       buttonLabel: "Close",
       context: [
         ctxRow("status", item.status),
-        ctxRow("updated", item.last_updated + (item.stale ? " · status stale" : ""))
+        ctxRow("updated", window.FMDecisionCard.displayTime(item.last_updated, displayTimeZone) +
+          (item.stale ? " · status stale" : ""))
       ],
       alwaysShowContext: true
     });
@@ -430,7 +432,8 @@ __FM_DECISION_CARD_JS__
   var chartedMoreQueued = data.charted_more || 0;
   var chartedMoreWarnings = data.charted_warning_more || 0;
 
-  document.getElementById("bb-provenance").textContent = data.schema + " · " + data.generated;
+  document.getElementById("bb-provenance").textContent = data.schema + " · " +
+    window.FMDecisionCard.displayTime(data.generated, displayTimeZone);
 
   /* stat strip */
   var callTotal = data.captains_call.length;

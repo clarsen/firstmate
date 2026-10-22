@@ -25,15 +25,18 @@ command -v node >/dev/null 2>&1 || { echo "skip: node not found"; exit 0; }
 # real template (the same slot-injection bin/fm-bearings-board.sh page uses)
 # and print what the render-check harness reports for it.
 render() {  # <home> <payload-json> [template]
-  local home=$1 payload=$2 template=${3:-$TEMPLATE} page="$1/page.html" json css js
+  local home=$1 payload=$2 template=${3:-$TEMPLATE} page="$1/page.html" json css js zone_json
   json=$(jq -c . <<< "$payload")
   json=${json//</\\u003c}
   css=$(cat "$CARD_CSS")
   js=$(cat "$CARD_JS")
+  zone_json=$(jq -Rn --arg zone "${FM_TEST_DISPLAY_ZONE:-UTC}" '$zone')
   FM_DECISION_PAGE_JSON="$json" perl -pe 's/^\Q__FM_DECISION_PAGE_DATA__\E$/$ENV{FM_DECISION_PAGE_JSON}/' \
     "$template" \
     | FM_SHARED_CSS="$css" perl -pe 's/^\Q__FM_DECISION_CARD_CSS__\E$/$ENV{FM_SHARED_CSS}/' \
-    | FM_SHARED_JS="$js" perl -pe 's/^\Q__FM_DECISION_CARD_JS__\E$/$ENV{FM_SHARED_JS}/' \
+    | FM_SHARED_JS="$js" FM_DISPLAY_ZONE_JSON="$zone_json" perl -pe '
+        s/^\Q__FM_DECISION_CARD_JS__\E$/$ENV{FM_SHARED_JS}/;
+        s/^  var displayTimeZone = __FM_BEARINGS_TIME_ZONE__;$/  var displayTimeZone = $ENV{FM_DISPLAY_ZONE_JSON};/' \
     > "$page"
   node "$HARNESS" "$page" || fail "the built page could not be rendered"
 }

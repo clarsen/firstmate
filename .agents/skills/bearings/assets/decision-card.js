@@ -25,6 +25,20 @@ window.FMDecisionCard = (function () {
     row.appendChild(el("span", "bb-ctx__v", v));
     return row;
   }
+  function displayTime(value, zone) {
+    var instant = new Date(value);
+    if (isNaN(instant.getTime())) return "time unavailable";
+    var options = {
+      year: "numeric", month: "short", day: "numeric", hour: "numeric",
+      minute: "2-digit", timeZoneName: "short", timeZone: zone || "UTC"
+    };
+    try {
+      return new Intl.DateTimeFormat("en-US", options).format(instant);
+    } catch (e) {
+      options.timeZone = "UTC";
+      return new Intl.DateTimeFormat("en-US", options).format(instant);
+    }
+  }
   function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
   var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
@@ -196,5 +210,6 @@ window.FMDecisionCard = (function () {
     return card;
   }
 
-  return { el: el, badge: badge, ctxRow: ctxRow, utf8ByteLength: utf8ByteLength, CHECK_SVG: CHECK_SVG, build: build };
+  return { el: el, badge: badge, ctxRow: ctxRow, displayTime: displayTime,
+    utf8ByteLength: utf8ByteLength, CHECK_SVG: CHECK_SVG, build: build };
 })();

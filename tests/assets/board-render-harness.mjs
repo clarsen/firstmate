@@ -218,4 +218,6 @@ const questionSection = {
 };
 
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, questions, questionSection, empty, more, projects, dispatch, error: errorText }) + "\n");
+  JSON.stringify({ provenance: byId.get("bb-provenance")?.textContent ?? "",
+    stats, underway, charted, questions, questionSection, empty, more, projects, dispatch,
+    error: errorText }) + "\n");

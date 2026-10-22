@@ -214,4 +214,5 @@ const errorText = [...byId.entries()]
   .join(" ");
 
 process.stdout.write(
-  JSON.stringify({ title: document.title, questions, error: errorText }) + "\n");
+  JSON.stringify({ title: document.title,
+    provenance: byId.get("dp-provenance")?.textContent ?? "", questions, error: errorText }) + "\n");
