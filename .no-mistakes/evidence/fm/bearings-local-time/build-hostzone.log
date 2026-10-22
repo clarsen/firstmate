@@ -1,0 +1,25 @@
+--- build (TZ=<unset>)
+  board: /home/ctlarsen/tmp/fm-lab.K0bolp/.lavish/bearings-board.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.K0bolp/.lavish/bearings-board.html
+  bound: lavish-a3b2e345664e6169
+  armed: lavish-a3b2e345664e6169
+--- page
+  page: /home/ctlarsen/tmp/fm-lab.K0bolp/data/tzcheck/decision-page.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.K0bolp/data/tzcheck/decision-page.html
+  bound: lavish-1e7dd60d9a20c0d6
+  armed: lavish-1e7dd60d9a20c0d6
+--- page raw
+  page: /home/ctlarsen/tmp/fm-lab.K0bolp/data/tzraw/decision-page.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.K0bolp/data/tzraw/decision-page.html
+  bound: lavish-53b8ba50e2fe3d13
+  armed: lavish-53b8ba50e2fe3d13
+lab removed: /home/ctlarsen/tmp/fm-lab.K0bolp

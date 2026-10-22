@@ -1,0 +1,25 @@
+--- build (TZ=../../etc/passwd)
+  board: /home/ctlarsen/tmp/fm-lab.goFMeE/.lavish/bearings-board.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.goFMeE/.lavish/bearings-board.html
+  bound: lavish-7296cb7aa5ea8ebe
+  armed: lavish-7296cb7aa5ea8ebe
+--- page
+  page: /home/ctlarsen/tmp/fm-lab.goFMeE/data/tzcheck/decision-page.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.goFMeE/data/tzcheck/decision-page.html
+  bound: lavish-1ea48960b377eedd
+  armed: lavish-1ea48960b377eedd
+--- page raw
+  page: /home/ctlarsen/tmp/fm-lab.goFMeE/data/tzraw/decision-page.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.goFMeE/data/tzraw/decision-page.html
+  bound: lavish-82fdd5f908e2d1dc
+  armed: lavish-82fdd5f908e2d1dc
+lab removed: /home/ctlarsen/tmp/fm-lab.goFMeE

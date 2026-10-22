@@ -1,0 +1,25 @@
+--- build (TZ=Europe/Berlin)
+  board: /home/ctlarsen/tmp/fm-lab.Sg58JM/.lavish/bearings-board.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.Sg58JM/.lavish/bearings-board.html
+  bound: lavish-121fbf4384e71a9f
+  armed: lavish-121fbf4384e71a9f
+--- page
+  page: /home/ctlarsen/tmp/fm-lab.Sg58JM/data/tzcheck/decision-page.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.Sg58JM/data/tzcheck/decision-page.html
+  bound: lavish-f0ca9fb45f9fc0e7
+  armed: lavish-f0ca9fb45f9fc0e7
+--- page raw
+  page: /home/ctlarsen/tmp/fm-lab.Sg58JM/data/tzraw/decision-page.html
+  session:
+    status: opened
+  session: live
+  served: /home/ctlarsen/tmp/fm-lab.Sg58JM/data/tzraw/decision-page.html
+  bound: lavish-770ab78e9ca788c5
+  armed: lavish-770ab78e9ca788c5
+lab removed: /home/ctlarsen/tmp/fm-lab.Sg58JM
