@@ -415,6 +415,14 @@ test_open_captain_questions_render_separately_with_close_control() {
   out=$(render "$home" '[]')
   printf '%s' "$out" | jq -e '.questions == [] and .error == ""' >/dev/null \
     || fail "a captain-closed question remained on the board: $out"
+  printf '{"schema":"fm-captain-questions.v0","questions":[]}\n' > "$home/data/captain-questions.json"
+  out=$(render "$home" '[{"id":"next-task","repo":"sample","title":"Next task","reason":"queued","dispatchable":true}]')
+  printf '%s' "$out" | jq -e '
+    .error == "" and .questions == []
+    and .questionSection.sub == "unavailable"
+    and (.questionSection.empty | length == 1 and (.[0] | contains("unavailable")))
+    and (.charted | length) == 1
+  ' >/dev/null || fail "an invalid question record did not leave the rest of the board available: $out"
   pass "open captain questions render in their own section with status, link, and Close"
 }
 

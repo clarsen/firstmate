@@ -232,7 +232,8 @@
 # across both sections, queued by either dispatch button. A payload without
 # `projects` renders exactly as it did before the field existed.
 # Incoming `captain_questions` is optional for compatibility; build replaces it
-# with the open rows from bin/fm-captain-question.py before publishing.
+# with the open rows from bin/fm-captain-question-list.sh before publishing, or
+# with null when that record is invalid so only that section reads unavailable.
 #
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
 # re-invocation rebuilds the same file in place, which keeps the same Lavish
@@ -403,7 +404,7 @@ validate_payload() {  # <data.json>
     and (.home | nonempty_string)
     and (.generated | nonempty_string)
     and (.prs_live | type == "boolean")
-    and ((has("captain_questions") | not)
+    and ((has("captain_questions") | not) or .captain_questions == null
       or ((.captain_questions | type == "array")
         and ([.captain_questions[] | captain_question] | all)
         and (([.captain_questions[].id] | unique | length) == (.captain_questions | length))))
@@ -922,8 +923,7 @@ command_build() {
     rm -f -- "$effective"
     fail "cannot reconcile the board payload against landed work"
   fi
-  questions=$("$SCRIPT_DIR/fm-captain-question.py" list) \
-    || { rm -f -- "$effective"; fail "cannot read open captain questions"; }
+  questions=$("$SCRIPT_DIR/fm-captain-question-list.sh") || questions=null
   json=$(jq -c --argjson questions "$questions" '.captain_questions = $questions' "$effective") \
     || { rm -f -- "$effective"; fail "cannot compact the board data"; }
   printf '%s\n' "$json" > "$effective"

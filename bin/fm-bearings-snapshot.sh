@@ -23,7 +23,9 @@
 # This wrapper consumes canonical status decisions plus canonically normalized
 # backlog roles, unresolved blockers, and captain actionability.
 # Open captain questions come from the separate home-local record owned by
-# bin/fm-captain-question.py. They are unbounded and never enter decision buckets.
+# bin/fm-captain-question.py, read through bin/fm-captain-question-list.sh.
+# They are unbounded and never enter decision buckets. An invalid record makes
+# only captain_questions null, disclosed in omitted[].
 # Contributions project cached coverage and required actors from fm-contributions.sh;
 # only captain rows are exposed, with counts for the other actors and unmeasured homes. It never infers
 # decisions from report or visual-review prose or reimplements snapshot semantics.
@@ -168,7 +170,8 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner},
-  captain_questions{id,question,status,opened,last_updated,links,state,stale},
+  captain_questions{id,question,status,opened,last_updated,links,state,stale}
+    (null, disclosed in omitted, when the question record is invalid),
   landed{id,what,what_full,artifact,owner},
   gates{id,title,title_full,blocked_by,reason,owner,filed,repo,kind,body,pr_url,report_path,links},
   reports{id,path}, recorded_prs{id,url},
@@ -878,10 +881,15 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $include_prs == 1 then empty else {surface:"live PR discovery + checks", reveal:"--include-prs"} end) ]) }
 ') || { echo "fm-bearings-snapshot: projection failed" >&2; exit 1; }
 
-QUESTIONS=$("$SCRIPT_DIR/fm-captain-question.py" list) \
-  || { echo "fm-bearings-snapshot: captain questions unavailable" >&2; exit 1; }
-MODEL=$(printf '%s\n' "$MODEL" | jq --argjson questions "$QUESTIONS" '. + {captain_questions:$questions}') \
-  || { echo "fm-bearings-snapshot: captain question projection failed" >&2; exit 1; }
+if QUESTIONS=$("$SCRIPT_DIR/fm-captain-question-list.sh"); then
+  MODEL=$(printf '%s\n' "$MODEL" | jq --argjson questions "$QUESTIONS" '. + {captain_questions:$questions}') \
+    || { echo "fm-bearings-snapshot: captain question projection failed" >&2; exit 1; }
+else
+  echo "fm-bearings-snapshot: captain questions unavailable" >&2
+  MODEL=$(printf '%s\n' "$MODEL" | jq '. + {captain_questions:null}
+    | .omitted += [{surface:"captain questions unavailable: invalid data/captain-questions.json", reveal:"repair the record owned by bin/fm-captain-question.py"}]') \
+    || { echo "fm-bearings-snapshot: captain question projection failed" >&2; exit 1; }
+fi
 
 if [ "$FORMAT" = json ]; then
   printf '%s\n' "$MODEL"

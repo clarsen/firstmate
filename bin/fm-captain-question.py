@@ -4,7 +4,6 @@
 Usage: fm-captain-question.py open --question-file FILE [--status-file FILE]
        fm-captain-question.py status ID --status-file FILE [--link LABEL=HTTPS_URL ...] [--clear-links]
        fm-captain-question.py close ID (--captain-words-file FILE | --board-result FILE)
-       fm-captain-question.py list [--all]
 
 The data/captain-questions.json record has schema fm-captain-questions.v1 and a
 questions array. Each row has an immutable q-YYYYMMDD-xxxxxxxx id, the exact
@@ -17,16 +16,16 @@ separate from backlog tasks and captain holds.
 Only an explicit captain close, preserved verbatim or captured by the Bearings
 board answer adapter, can change state to closed. Status updates never close a
 row. A status update retains earlier links unless --link or --clear-links is
-passed. List excludes closed rows unless --all and marks open rows stale after
-24 hours without a status update. Opening the exact text of an existing open
-question returns its id without creating a duplicate. A missing record means
-zero questions.
+passed. Opening the exact text of an existing open question returns its id
+without creating a duplicate; a --status-file passed with that repeat refreshes
+its status and last_updated. A missing record means zero questions.
+bin/fm-captain-question-list.sh reads the open rows, marking each stale after
+24 hours without a status update, with jq alone so Bearings needs no python3.
 """
 
 import argparse
 import contextlib
 import datetime as dt
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -134,6 +133,7 @@ def save(doc):
 
 @contextlib.contextmanager
 def locked():
+    import fcntl
     RECORD.parent.mkdir(parents=True, exist_ok=True)
     lock = RECORD.with_suffix(".lock")
     if lock.is_symlink():
@@ -178,17 +178,7 @@ def main():
     provenance = closed.add_mutually_exclusive_group(required=True)
     provenance.add_argument("--captain-words-file")
     provenance.add_argument("--board-result")
-    listed = sub.add_parser("list", help="print open questions as JSON, with stale status")
-    listed.add_argument("--all", action="store_true")
     args = parser.parse_args()
-    if args.command == "list":
-        doc = load()
-        rows = doc["questions"] if args.all else [r for r in doc["questions"] if r["state"] == "open"]
-        current = now()
-        print(json.dumps([dict(row, stale=(row["state"] == "open" and
-            current - dt.datetime.fromisoformat(row["last_updated"].replace("Z", "+00:00")) >= dt.timedelta(hours=24)))
-            for row in rows], ensure_ascii=False))
-        return
     with locked():
         doc = load()
         if args.command == "open":
@@ -196,6 +186,10 @@ def main():
             existing = next((row for row in doc["questions"]
                 if row["state"] == "open" and row["question"] == question), None)
             if existing:
+                if args.status_file:
+                    existing["status"] = read_text(args.status_file)
+                    existing["last_updated"] = stamp(now())
+                    save(doc)
                 print(existing["id"])
                 return
             summary = read_text(args.status_file) if args.status_file else "Investigation pending."

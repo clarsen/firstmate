@@ -212,5 +212,10 @@ const questions = questionContainer.children.filter((node) => node.className.inc
   };
 });
 
+const questionSection = {
+  sub: byId.get("bb-captain-questions-sub")?.textContent ?? "",
+  empty: questionContainer.children.filter((node) => node.className.includes("bb-empty")).map((node) => node.textContent),
+};
+
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, questions, empty, more, projects, dispatch, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, questions, questionSection, empty, more, projects, dispatch, error: errorText }) + "\n");

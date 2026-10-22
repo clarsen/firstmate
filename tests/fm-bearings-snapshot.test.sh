@@ -1090,6 +1090,13 @@ test_open_captain_questions_project_separately_from_decisions() {
     and .captain_questions[0].question == "What is the rollout status?\n"
     and ([.decisions_open[].id] | index($id) == null)
   ' >/dev/null || fail "open captain questions did not remain separate from decisions: $json"
+  printf 'not json\n' > "$home/data/captain-questions.json"
+  json=$(run "$home" "$fakebin" --json 2>/dev/null) || fail "an invalid question record made the snapshot unavailable"
+  printf '%s' "$json" | jq -e '
+    .captain_questions == null
+    and (.omitted | any(.surface | test("captain questions unavailable")))
+    and (.in_flight | length) > 0
+  ' >/dev/null || fail "an invalid question record was not isolated to its section: $json"
   pass "the snapshot includes every open captain question outside Captain's Call"
 }
 
@@ -1491,7 +1498,7 @@ test_perl_fallback_bounds_github_call() {
   fakebin=$(make_fakebin "$home")
   toolbin="$home/toolbin"
   mkdir -p "$toolbin"
-  for cmd in bash dirname basename jq date sed git grep tail cut tr head sort wc perl python3 sleep cat find mktemp rm mkdir chmod mv cp awk; do
+  for cmd in bash dirname basename jq date sed git grep tail cut tr head sort wc perl sleep cat find mktemp rm mkdir chmod mv cp awk; do
     ln -s "$(command -v "$cmd")" "$toolbin/$cmd"
   done
   for cmd in shasum sha256sum; do

@@ -354,7 +354,8 @@ __FM_DECISION_CARD_JS__
     renderBoardError("Unsupported board data schema: " + (data && data.schema ? data.schema : "(none)"));
     return;
   }
-  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted, data.captain_questions];
+  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted,
+    data.captain_questions === null ? [] : data.captain_questions];
   var callItemsValid = Array.isArray(data.captains_call) && data.captains_call.every(function (item) {
     return item && typeof item === "object" &&
       typeof item.key === "string" && item.key.length > 0 &&
@@ -376,12 +377,16 @@ __FM_DECISION_CARD_JS__
   var ctxRow = window.FMDecisionCard.ctxRow;
   var utf8ByteLength = window.FMDecisionCard.utf8ByteLength;
   var questions = document.getElementById("bb-captain-questions");
+  var openQuestions = data.captain_questions || [];
   document.getElementById("bb-captain-questions-sub").textContent =
-    data.captain_questions.length + " open";
-  if (!data.captain_questions.length) {
+    data.captain_questions ? openQuestions.length + " open" : "unavailable";
+  if (!data.captain_questions) {
+    questions.appendChild(el("div", "bb-empty",
+      "Captain questions unavailable: data/captain-questions.json is invalid."));
+  } else if (!openQuestions.length) {
     questions.appendChild(el("div", "bb-empty", "No open questions from the captain."));
   }
-  data.captain_questions.forEach(function (item) {
+  openQuestions.forEach(function (item) {
     var card = window.FMDecisionCard.build({
       key: "captain-question." + item.id,
       title: item.question,

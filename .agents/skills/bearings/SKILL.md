@@ -37,16 +37,16 @@ Board answers are acted on later under the normal authority rules; this skill's 
 ## What it does
 
 For a contribution wake or linked-issue filing, go directly to Contribution follow-up; the digest procedure below applies to Bearings invocations.
-When the captain opens a question that warrants ongoing investigation, check the open-question list and record new exact words immediately with `bin/fm-captain-question.py open --question-file <file>`; a repeat of an already open question refreshes its status instead of creating a duplicate.
+When the captain opens a question that warrants ongoing investigation, check the open-question list and record new exact words immediately with `bin/fm-captain-question.py open --question-file <file>`; a repeat of an already open question returns its id instead of creating a duplicate, and refreshes its status when `--status-file` is passed.
 Rebuild an already open Bearings board after recording the new question.
 Keep the question in that record until the captain explicitly closes it; an answer, finished investigation, landed fix, or firstmate judgment is status evidence rather than closure authority.
 When the captain closes one in chat, preserve those exact words with the script's `close --captain-words-file` path and rebuild an already open Bearings board so the item disappears there.
 The script header and help own the record format and exact commands, and this record never becomes a captain hold or Captain's Call card.
 
 1. **Refresh open captain questions, then gather live fleet state with one deterministic command.**
-   Before every periodic or on-demand Bearings rendering, list the open questions with `bin/fm-captain-question.py list`, investigate each against current task, report, rollout, and deployment evidence, and refresh its status timestamp through that script after each check, retaining evidence links when none have changed.
+   Before every periodic or on-demand Bearings rendering, list the open questions with `bin/fm-captain-question-list.sh`, investigate each against current task, report, rollout, and deployment evidence, and refresh its status timestamp through that script after each check, retaining evidence links when none have changed.
    When current evidence cannot be verified, write that limitation into the refreshed status rather than presenting old findings as current.
-   A status older than 24 hours is marked stale by the script and remains visible until refreshed.
+   A status older than 24 hours is marked stale by the list and remains visible until refreshed.
    Run `snapshot=$(bin/fm-bearings-snapshot.sh --json)` at invocation time and read that compact output.
    It is the single bounded, deterministic fleet-state source for Bearings.
    Do not create or consult a second fleet-state reader, parser contract, status-event-tail interpretation, visible-session recap, ad-hoc project probe, or ad-hoc `gh-axi`/`gh` query for fleet composition; targeted evidence checks for open captain questions precede the snapshot.
@@ -193,6 +193,7 @@ Every `/bearings` chat response renders EXACTLY these five sections, in THIS ord
    When the section is empty but coverage is incomplete, say that no decision is recorded and give the checked/known count; a missing coverage field is also unverified.
 2. **Open Questions from the Captain** - every captain-opened question still open in `captain_questions`, with its current status and last-updated date; mark `stale` when the snapshot says so and link available evidence.
    Empty-state: "No open questions from the captain."
+   When `captain_questions` is null, say the question record is invalid and unavailable rather than claiming none are open.
 3. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
    Empty-state: "No recent completions are in the current baseline."
 4. **Underway** - live work progressing on its own, one line of current state per direct report.
