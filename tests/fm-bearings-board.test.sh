@@ -345,13 +345,13 @@ test_build_injects_binds_then_arms() {
   assert_contains "$out" "armed: " "the first build did not arm the board source: $out"
   assert_present "$board" "build reported success without a board"
 
-  # Round-trip: apart from the reconcile choice the build adds to every
+  # Round-trip: apart from the reconcile choice and the durable question set the build adds to every
   # decision card, the payload extracted from the built page is the same JSON
   # document, and the escaped </script> string can no longer terminate the
   # data block.
   extract_payload "$board" | jq -S . > "$home/extracted.json" \
     || fail "the built board does not carry parseable payload JSON"
-  jq -S '.captains_call = [.captains_call[]
+  jq -S 'del(.captain_questions) | .captains_call = [.captains_call[]
       | .options = [.options[] | select(.value != "reconcile")]]' \
     "$home/extracted.json" > "$home/stripped.json"
   jq -S '.captains_call = [.captains_call[]
@@ -797,6 +797,20 @@ test_build_refuses_a_nondecision_reconcile_value() {
   pass "build reserves reconcile across non-decision cards"
 }
 
+test_build_refuses_malformed_captain_question_payload() {
+  local home data
+  home=$(make_home invalid-captain-questions)
+  data="$home/payload.json"
+  write_valid_payload "$data"
+  jq '.captain_questions = [{"id":"wrong","question":"Q?","status":"Pending"}]' \
+    "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  if run_board "$home" build "$data" >/dev/null 2>&1; then
+    fail "an invalid captain-question row passed payload validation"
+  fi
+  assert_absent "$home/.lavish/bearings-board.html" "an invalid captain-question row published a board"
+  pass "the board refuses malformed captain-question payloads before publication"
+}
+
 test_path_is_stable_and_home_scoped
 test_build_refuses_malformed_payloads_before_touching_the_board
 test_charted_kind_is_optional_and_accepts_both_values
@@ -815,3 +829,4 @@ test_build_fails_when_reconcile_cannot_establish_a_listener
 test_every_decision_card_carries_the_reconcile_choice
 test_build_refuses_a_payload_that_occupies_the_reconcile_value
 test_build_refuses_a_nondecision_reconcile_value
+test_build_refuses_malformed_captain_question_payload

@@ -141,7 +141,7 @@ window.FMDecisionCard = (function () {
     }
 
     var foot = el("div", "bb-decision__foot");
-    var btn = el("button", "fm-btn fm-btn--sm " + (opts.buttonClass || "fm-btn--primary"), "Queue answer");
+    var btn = el("button", "fm-btn fm-btn--sm " + (opts.buttonClass || "fm-btn--primary"), opts.buttonLabel || "Queue answer");
     btn.type = "submit";
     foot.appendChild(btn);
     var q = el("span", "bb-queued");

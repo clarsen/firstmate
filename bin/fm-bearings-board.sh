@@ -20,8 +20,9 @@
 #   fm-bearings-board.sh page <data.json> --label <label>
 #   fm-bearings-board.sh page-path --label <label>
 #
-# build      Validate the payload, drop the Captain's Call cards whose subject
-#            already landed, give every surviving decision card the standard
+# build      Validate the payload, inject every open captain question from the
+#            active home's private record, drop the Captain's Call cards whose
+#            subject already landed, give every surviving decision card the standard
 #            reconcile choice, and inject the result (plus the shared
 #            decision-card CSS/JS) into a fresh copy of the shipped template at
 #            the stable board path. Establish the Lavish session on that board
@@ -230,6 +231,9 @@
 # `dispatch.charted` picker as Charted Next: one selection, deduplicated by id
 # across both sections, queued by either dispatch button. A payload without
 # `projects` renders exactly as it did before the field existed.
+# Incoming `captain_questions` is optional for compatibility; build replaces it
+# with the open rows from bin/fm-captain-question-list.sh before publishing, or
+# with null when that record is invalid so only that section reads unavailable.
 #
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
 # re-invocation rebuilds the same file in place, which keeps the same Lavish
@@ -387,11 +391,23 @@ validate_payload() {  # <data.json>
       and (.underway | type == "array") and ([.underway[] | project_underway] | all)
       and (.next | type == "array") and ([.next[] | project_next] | all)
       and ((has("more") | not) or (.more | nonneg_int));
+    def captain_question:
+      type == "object" and (.id | type == "string" and test("^q-[0-9]{8}-[0-9a-f]{8}$"))
+      and (.question | nonempty_string) and (.status | nonempty_string)
+      and (.opened | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+      and (.last_updated | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+      and (.links | type == "array" and ([.[] | link_item] | all))
+      and .state == "open" and .closed_by_captain == null
+      and (.stale | type == "boolean");
     type == "object"
     and (.schema == $schema)
     and (.home | nonempty_string)
     and (.generated | nonempty_string)
     and (.prs_live | type == "boolean")
+    and ((has("captain_questions") | not) or .captain_questions == null
+      or ((.captain_questions | type == "array")
+        and ([.captain_questions[] | captain_question] | all)
+        and (([.captain_questions[].id] | unique | length) == (.captain_questions | length))))
     and ((has("projects") | not)
       or ((.projects | type == "array") and ([.projects[] | project_item] | all)))
     and (.captains_call | type == "array")
@@ -891,7 +907,7 @@ verify_render() {  # <data.json> <built-page>
 }
 
 command_build() {
-  local data=${1-} board json effective stage1 tmp sid extracted owner version pre_reopen_owner
+  local data=${1-} board json effective stage1 tmp sid extracted owner version pre_reopen_owner questions
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$data" ] || fail "board data does not exist: $data"
@@ -907,7 +923,14 @@ command_build() {
     rm -f -- "$effective"
     fail "cannot reconcile the board payload against landed work"
   fi
-  json=$(jq -c . "$effective") || { rm -f -- "$effective"; fail "cannot compact the board data"; }
+  questions=$("$SCRIPT_DIR/fm-captain-question-list.sh") || questions=null
+  json=$(jq -c --argjson questions "$questions" '.captain_questions = $questions' "$effective") \
+    || { rm -f -- "$effective"; fail "cannot compact the board data"; }
+  printf '%s\n' "$json" > "$effective"
+  # Incoming cards were validated before reconcile was injected; that reserved
+  # builder-owned option is stripped only for this final question validation.
+  validate_payload <(jq '.captains_call = []' "$effective") \
+    || { rm -f -- "$effective"; fail "the durable captain questions violate $BOARD_SCHEMA"; }
   rm -f -- "$effective"
   # `<` never appears in JSON syntax outside strings, so escaping every
   # occurrence keeps the payload valid JSON while making </script> inert.

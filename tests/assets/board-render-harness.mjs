@@ -197,6 +197,25 @@ const dispatch = ["bb-dispatch", "bb-proj-dispatch"].map((id) => ({
   hidden: byId.has(id) ? byId.get(id).hidden : true,
   count: byId.get(id + "-count")?.textContent ?? "",
 }));
+const questionContainer = byId.get("bb-captain-questions") || new Node("div");
+const descendants = (node) => [node, ...node.children.flatMap(descendants)];
+const questions = questionContainer.children.filter((node) => node.className.includes("bb-decision")).map((card) => {
+  const all = descendants(card);
+  const form = all.find((node) => node.tagName === "form");
+  return {
+    text: all.find((node) => node.className.includes("bb-decision__title"))?.textContent || "",
+    status: all.find((node) => node.className.includes("bb-ctx"))?.textContent || "",
+    key: form?.attributes["data-lavish-question"] || "",
+    options: all.filter((node) => node.tagName === "input" && node.type === "radio").map((node) => node.value),
+    close: all.some((node) => node.tagName === "button" && node.textContent === "Close"),
+    links: all.filter((node) => node.tagName === "a").map((node) => ({ label: node.textContent, url: node.href })),
+  };
+});
+
+const questionSection = {
+  sub: byId.get("bb-captain-questions-sub")?.textContent ?? "",
+  empty: questionContainer.children.filter((node) => node.className.includes("bb-empty")).map((node) => node.textContent),
+};
 
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, projects, dispatch, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, questions, questionSection, empty, more, projects, dispatch, error: errorText }) + "\n");

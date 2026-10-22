@@ -83,8 +83,10 @@
 # identically no matter which channel the answer arrived on. The key IS the
 # task id - no identity arithmetic. The optional fourth field selects the close:
 # empty or `done` completes the task, `release` lifts the hold so held work
-# resumes; anything else is skipped. A key that names no task, a task that is
-# not held for the captain, or a task already closed is reported as `skipped:`
+# resumes; anything else is skipped. `captain-question.q-*` is reserved for
+# bin/fm-captain-question.py and always skips here, even if a task happens to
+# carry that id. A key that names no task, a task that is not held for the
+# captain, or a task already closed is reported as `skipped:`
 # and feeds nothing. A replayed delivery whose answer digest and requested
 # close mode both match the newest record is reported `closed:` and is a no-op;
 # a mode mismatch is skipped. The command exits nonzero when any key was
@@ -1349,6 +1351,13 @@ command_answers() {
     [ -n "${key:-}" ] || continue
     case "$key" in *[!A-Za-z0-9._-]*) continue ;; esac
     [ "${#key}" -le 128 ] || continue
+    case "$key" in
+      captain-question.q-*)
+        printf 'skipped: %s (captain question is owned by fm-captain-question.py)\n' "$key"
+        skipped=$((skipped + 1))
+        continue
+        ;;
+    esac
     answer=$(sanitize_field "${answer:-}")
     [ -n "$answer" ] || continue
     label=$(sanitize_field "${label:-}")

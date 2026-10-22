@@ -1077,6 +1077,29 @@ test_default_is_bounded_and_local_only() {
   pass "default output is bounded, local-only, and marks omitted surfaces"
 }
 
+test_open_captain_questions_project_separately_from_decisions() {
+  local home fakebin id json
+  home=$(make_home captain-question-projection); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  printf 'What is the rollout status?\n' > "$home/question.txt"
+  id=$(FM_HOME="$home" "$ROOT/bin/fm-captain-question.py" open --question-file "$home/question.txt")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e --arg id "$id" '
+    (.captain_questions | length) == 1
+    and .captain_questions[0].id == $id
+    and .captain_questions[0].question == "What is the rollout status?\n"
+    and ([.decisions_open[].id] | index($id) == null)
+  ' >/dev/null || fail "open captain questions did not remain separate from decisions: $json"
+  printf 'not json\n' > "$home/data/captain-questions.json"
+  json=$(run "$home" "$fakebin" --json 2>/dev/null) || fail "an invalid question record made the snapshot unavailable"
+  printf '%s' "$json" | jq -e '
+    .captain_questions == null
+    and (.omitted | any(.surface | test("captain questions unavailable")))
+    and (.in_flight | length) > 0
+  ' >/dev/null || fail "an invalid question record was not isolated to its section: $json"
+  pass "the snapshot includes every open captain question outside Captain's Call"
+}
+
 test_toon_json_parity() {
   local home fakebin toon json keys k
   home=$(make_home parity); write_fixture "$home"
@@ -3558,6 +3581,7 @@ test_nonprogressing_child_states_are_explicit
 test_registry_unavailability_and_bounds_are_explicit
 test_current_landed_baseline_is_repeatable_and_prior_report_independent
 test_default_is_bounded_and_local_only
+test_open_captain_questions_project_separately_from_decisions
 test_toon_json_parity
 test_landed_includes_secondmate_home_merges
 test_landed_accepts_only_kind_owned_delivery_artifacts
