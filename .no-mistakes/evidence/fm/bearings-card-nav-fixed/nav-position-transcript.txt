@@ -1,0 +1,20 @@
+== new: initial
+{"count":"card 1 of 3","title":"Short card","nextTop":216,"nextLeft":908,"prevTop":216,"cardTop":262,"cardH":336,"atOriginalNextPoint":"bb-stack-next"}
+== new: after Next
+{"count":"card 2 of 3","title":"Short card","nextTop":216,"nextLeft":908,"prevTop":216,"cardTop":262,"cardH":750,"atOriginalNextPoint":"bb-stack-next"}
+== new: after Next
+{"count":"card 3 of 3","title":"Short card","nextTop":216,"nextLeft":908,"prevTop":216,"cardTop":262,"cardH":304,"atOriginalNextPoint":"bb-stack-next"}
+== new: after Prev
+{"count":"card 2 of 3","title":"Short card","nextTop":216,"nextLeft":908,"prevTop":216,"cardTop":262,"cardH":750,"atOriginalNextPoint":"bb-stack-next"}
+== new: after Prev
+{"count":"card 1 of 3","title":"Short card","nextTop":216,"nextLeft":908,"prevTop":216,"cardTop":262,"cardH":336,"atOriginalNextPoint":"bb-stack-next"}
+== base: initial
+{"count":"card 1 of 3","title":"Short card","nextTop":571,"nextLeft":908,"prevTop":571,"cardTop":216,"cardH":336,"atOriginalNextPoint":"bb-stack-next"}
+== base: after Next
+{"count":"card 2 of 3","title":"Short card","nextTop":985,"nextLeft":908,"prevTop":985,"cardTop":216,"cardH":750,"atOriginalNextPoint":"DIV.bb-decision__pad"}
+== base: after Next
+{"count":"card 3 of 3","title":"Short card","nextTop":538,"nextLeft":908,"prevTop":538,"cardTop":216,"cardH":304,"atOriginalNextPoint":"MAIN.bb-main"}
+== base: after Prev
+{"count":"card 2 of 3","title":"Short card","nextTop":985,"nextLeft":908,"prevTop":985,"cardTop":216,"cardH":750,"atOriginalNextPoint":"DIV.bb-decision__pad"}
+== base: after Prev
+{"count":"card 1 of 3","title":"Short card","nextTop":571,"nextLeft":908,"prevTop":571,"cardTop":216,"cardH":336,"atOriginalNextPoint":"bb-stack-next"}

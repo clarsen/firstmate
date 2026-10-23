@@ -1,0 +1,10 @@
+== new@600px: initial
+{"count":"card 1 of 3","title":"Short card","nextTop":302,"nextLeft":538,"prevTop":302,"cardTop":348,"cardH":354,"atOriginalNextPoint":"bb-stack-next"}
+== new@600px: after Next
+{"count":"card 2 of 3","title":"Short card","nextTop":302,"nextLeft":538,"prevTop":302,"cardTop":348,"cardH":768,"atOriginalNextPoint":"bb-stack-next"}
+== new@600px: after Next
+{"count":"card 3 of 3","title":"Short card","nextTop":302,"nextLeft":538,"prevTop":302,"cardTop":348,"cardH":304,"atOriginalNextPoint":"bb-stack-next"}
+== new@600px: after Prev
+{"count":"card 2 of 3","title":"Short card","nextTop":302,"nextLeft":538,"prevTop":302,"cardTop":348,"cardH":768,"atOriginalNextPoint":"bb-stack-next"}
+== new@600px: after Prev
+{"count":"card 1 of 3","title":"Short card","nextTop":302,"nextLeft":538,"prevTop":302,"cardTop":348,"cardH":354,"atOriginalNextPoint":"bb-stack-next"}
