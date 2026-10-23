@@ -194,6 +194,22 @@ test_page_path_is_label_scoped() {
   pass "page-path prints the stable label-scoped page location"
 }
 
+test_page_generated_time_uses_the_build_hosts_zone() {
+  local home data page out
+  home=$(make_home local-time)
+  data="$home/payload.json"
+  page="$home/data/$LABEL/decision-page.html"
+  write_valid_payload "$data"
+  jq '.generated = "2026-11-01T09:30:00Z"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  out=$(TZ=America/Los_Angeles run_page "$home" "$data" --label "$LABEL") \
+    || fail "the locally timed page did not build: $out"
+  out=$(TZ=UTC node "$ROOT/bin/fm-bearings-page-render.mjs" "$page") \
+    || fail "the built page did not render: $out"
+  jq -e '.provenance | contains("Nov 1, 2026, 1:30 AM PST")' <<< "$out" >/dev/null \
+    || fail "the page used the viewer zone rather than its build host zone: $out"
+  pass "page generated time uses the build host zone across the fall DST boundary"
+}
+
 test_page_refuses_malformed_payloads_before_touching_the_page() {
   local home data page rc out
   home=$(make_home refusal)
@@ -670,6 +686,7 @@ test_page_refuses_an_oversized_video_file() {
 }
 
 test_page_path_is_label_scoped
+test_page_generated_time_uses_the_build_hosts_zone
 test_page_writes_the_project_meta_tag_only_when_given
 test_page_refuses_malformed_payloads_before_touching_the_page
 test_page_refuses_a_page_that_does_not_render_its_controls

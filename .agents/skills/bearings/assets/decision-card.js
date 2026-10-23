@@ -25,6 +25,27 @@ window.FMDecisionCard = (function () {
     row.appendChild(el("span", "bb-ctx__v", v));
     return row;
   }
+  var ISO_INSTANT = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+  function displayTime(value, zone) {
+    var m = typeof value === "string" ? ISO_INSTANT.exec(value) : null;
+    if (!m) return String(value);
+    var instant = new Date(value);
+    var offset = m[2] ? (m[2] === "-" ? -1 : 1) * (Number(m[3]) * 60 + Number(m[4])) : 0;
+    if (isNaN(instant.getTime())
+        || new Date(instant.getTime() + offset * 60000).toISOString().slice(0, 16) !== m[1]) {
+      return String(value);
+    }
+    var options = {
+      year: "numeric", month: "short", day: "numeric", hour: "numeric",
+      minute: "2-digit", timeZoneName: "short", timeZone: zone || "UTC"
+    };
+    try {
+      return new Intl.DateTimeFormat("en-US", options).format(instant);
+    } catch (e) {
+      options.timeZone = "UTC";
+      return new Intl.DateTimeFormat("en-US", options).format(instant);
+    }
+  }
   function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
   var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
@@ -196,5 +217,6 @@ window.FMDecisionCard = (function () {
     return card;
   }
 
-  return { el: el, badge: badge, ctxRow: ctxRow, utf8ByteLength: utf8ByteLength, CHECK_SVG: CHECK_SVG, build: build };
+  return { el: el, badge: badge, ctxRow: ctxRow, displayTime: displayTime,
+    utf8ByteLength: utf8ByteLength, CHECK_SVG: CHECK_SVG, build: build };
 })();

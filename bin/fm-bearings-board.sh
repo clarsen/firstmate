@@ -86,6 +86,9 @@
 #   title       non-empty string: the page <title> and header
 #   eyebrow     optional string: the small label above the title
 #   lead        optional string: intro copy under the title
+#   generated   optional string: shown after the schema as provenance; never
+#               validated, so only an explicit ISO-8601 instant converts to
+#               the display timezone below and anything else shows verbatim
 #   project     optional slug, 1-128 chars of [A-Za-z0-9._-]: the project the
 #               page is about. When present the built page carries
 #               `<meta name="lavish-project" content="<project>">` in its
@@ -249,6 +252,13 @@
 # harness path (tests only). FM_BEARINGS_DECISION_CARD_CSS and
 # FM_BEARINGS_DECISION_CARD_JS override the shared decision-card asset paths
 # (tests only).
+# Both built pages bake in the host's IANA timezone from TZ, /etc/localtime,
+# or /etc/timezone; when none resolves, display falls back to labeled UTC.
+# Only explicit ISO-8601 instants (Z or +/-HH:MM offset) are converted to that
+# zone for display; every other time string is shown verbatim, and payload
+# values themselves are never rewritten.
+# FM_BEARINGS_ZONEINFO_ROOT, FM_BEARINGS_LOCALTIME, and
+# FM_BEARINGS_TIMEZONE_FILE override those system paths for tests only.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -271,6 +281,36 @@ DECISION_CARD_CSS="${FM_BEARINGS_DECISION_CARD_CSS:-$SCRIPT_DIR/../.agents/skill
 DECISION_CARD_JS="${FM_BEARINGS_DECISION_CARD_JS:-$SCRIPT_DIR/../.agents/skills/bearings/assets/decision-card.js}"
 CSS_PLACEHOLDER='__FM_DECISION_CARD_CSS__'
 JS_PLACEHOLDER='__FM_DECISION_CARD_JS__'
+DISPLAY_ZONE_PLACEHOLDER='var displayTimeZone = __FM_BEARINGS_TIME_ZONE__;'
+
+# The zone is presentation metadata baked into each page at build time, so a
+# remote viewer's browser cannot silently substitute its own local timezone.
+# The override paths let tests prove the no-system-zone fallback.
+display_zone_valid() {  # <zone>
+  local zone=$1
+  [[ "$zone" =~ ^[A-Za-z0-9_+.-]+(/[A-Za-z0-9_+.-]+)*$ ]] || return 1
+  case "/$zone/" in */../*|*/./*) return 1 ;; esac
+  [ -f "${FM_BEARINGS_ZONEINFO_ROOT:-/usr/share/zoneinfo}/$zone" ]
+}
+
+display_zone() {
+  local zone='' target='' localtime=${FM_BEARINGS_LOCALTIME:-/etc/localtime}
+  if [ -n "${TZ:-}" ]; then
+    zone=${TZ#:}
+    if display_zone_valid "$zone"; then printf '%s\n' "$zone"; return; fi
+  fi
+  target=$(readlink "$localtime" 2>/dev/null || true)
+  case "$target" in */zoneinfo/*)
+    zone=${target##*/zoneinfo/}
+    if display_zone_valid "$zone"; then printf '%s\n' "$zone"; return; fi
+    ;;
+  esac
+  if [ -f "${FM_BEARINGS_TIMEZONE_FILE:-/etc/timezone}" ]; then
+    IFS= read -r zone < "${FM_BEARINGS_TIMEZONE_FILE:-/etc/timezone}" || true
+    if display_zone_valid "$zone"; then printf '%s\n' "$zone"; return; fi
+  fi
+  printf 'UTC\n'
+}
 
 usage() {
   awk '
@@ -469,13 +509,16 @@ validate_page_payload() {  # <data.json>
 # has lost either slot refuses rather than publishing a page or board with a
 # broken card.
 inject_shared_assets() {  # <in> <out>
-  local in=$1 out=$2 mid css js
+  local in=$1 out=$2 mid css js zone_json
   [ -f "$DECISION_CARD_CSS" ] || { printf 'shared decision-card CSS is missing: %s\n' "$DECISION_CARD_CSS" >&2; return 1; }
   [ -f "$DECISION_CARD_JS" ] || { printf 'shared decision-card JS is missing: %s\n' "$DECISION_CARD_JS" >&2; return 1; }
   [ "$(grep -cxF "$CSS_PLACEHOLDER" "$in")" -eq 1 ] \
     || { printf 'template does not carry exactly one decision-card CSS slot: %s\n' "$in" >&2; return 1; }
   [ "$(grep -cxF "$JS_PLACEHOLDER" "$in")" -eq 1 ] \
     || { printf 'template does not carry exactly one decision-card JS slot: %s\n' "$in" >&2; return 1; }
+  [ "$(grep -cxF "  $DISPLAY_ZONE_PLACEHOLDER" "$in")" -eq 1 ] \
+    || { printf 'template does not carry exactly one display timezone slot: %s\n' "$in" >&2; return 1; }
+  zone_json=$(jq -Rn --arg zone "$(display_zone)" '$zone') || return 1
   css=$(cat "$DECISION_CARD_CSS") || return 1
   js=$(cat "$DECISION_CARD_JS") || return 1
   mid=$(umask 077; mktemp "${out%/*}/.assets-mid.XXXXXX") || return 1
@@ -483,7 +526,10 @@ inject_shared_assets() {  # <in> <out>
     rm -f -- "$mid"
     return 1
   fi
-  if ! FM_SHARED_JS="$js" perl -pe "s/^\\Q$JS_PLACEHOLDER\\E\$/\$ENV{FM_SHARED_JS}/" "$mid" > "$out"; then
+  if ! FM_SHARED_JS="$js" FM_DISPLAY_ZONE_JSON="$zone_json" perl -pe '
+      s/^__FM_DECISION_CARD_JS__$/$ENV{FM_SHARED_JS}/;
+      s/^  var displayTimeZone = __FM_BEARINGS_TIME_ZONE__;$/  var displayTimeZone = $ENV{FM_DISPLAY_ZONE_JSON};/
+    ' "$mid" > "$out"; then
     rm -f -- "$mid"
     return 1
   fi

@@ -96,6 +96,7 @@ __FM_DECISION_CARD_JS__
 <script>
 (function () {
   "use strict";
+  var displayTimeZone = __FM_BEARINGS_TIME_ZONE__;
 
   /* Fail closed: a page with unreadable or wrong-schema data says so plainly
      instead of rendering an empty page that looks like an empty question
@@ -144,7 +145,8 @@ __FM_DECISION_CARD_JS__
 
   try {
     document.title = data.title;
-    document.getElementById("dp-provenance").textContent = data.schema + " · " + (data.generated || "");
+    document.getElementById("dp-provenance").textContent = data.schema + " · " +
+      (data.generated ? window.FMDecisionCard.displayTime(data.generated, displayTimeZone) : "");
     var eyebrow = document.getElementById("dp-eyebrow");
     if (data.eyebrow) { eyebrow.textContent = data.eyebrow; } else { eyebrow.hidden = true; }
     document.getElementById("dp-title").textContent = data.title;

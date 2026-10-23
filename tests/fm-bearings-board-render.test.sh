@@ -426,6 +426,36 @@ test_open_captain_questions_render_separately_with_close_control() {
   pass "open captain questions render in their own section with status, link, and Close"
 }
 
+test_host_zone_formats_question_updates_across_dst() {
+  local home out
+  home=$(make_home local-time-dst)
+  jq -n '{schema:"fm-captain-questions.v1",questions:[
+    {id:"q-20260308-00000001",state:"open",question:"Before spring shift?",status:"Open",
+     opened:"2026-03-08T09:30:00Z",last_updated:"2026-03-08T09:30:00Z",links:[],closed_by_captain:null},
+    {id:"q-20260308-00000002",state:"open",question:"After spring shift?",status:"Open",
+     opened:"2026-03-08T10:30:00Z",last_updated:"2026-03-08T10:30:00Z",links:[],closed_by_captain:null}
+  ]}' > "$home/data/captain-questions.json"
+  out=$(TZ=America/Los_Angeles render "$home" '[]')
+  jq -e '
+    (.provenance | contains("Aug 25, 2026, 5:00 PM PDT"))
+    and (.questions | length) == 2
+    and (.questions[0].status | contains("Mar 8, 2026, 1:30 AM PST"))
+    and (.questions[1].status | contains("Mar 8, 2026, 3:30 AM PDT"))
+  ' <<< "$out" >/dev/null || fail "the host zone was not used across DST: $out"
+  pass "board renders host-local generated and question update times across DST"
+}
+
+test_missing_host_zone_falls_back_to_labeled_utc() {
+  local home out
+  home=$(make_home local-time-fallback)
+  out=$(unset TZ; FM_BEARINGS_ZONEINFO_ROOT="$home/missing-zoneinfo" \
+    FM_BEARINGS_LOCALTIME="$home/missing-localtime" \
+    FM_BEARINGS_TIMEZONE_FILE="$home/missing-timezone" render "$home" '[]')
+  jq -e '.provenance | contains("Aug 26, 2026, 12:00 AM UTC")' <<< "$out" >/dev/null \
+    || fail "a host without a known zone did not show UTC: $out"
+  pass "board labels UTC when the host zone cannot be determined"
+}
+
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first
@@ -440,3 +470,5 @@ test_a_charted_row_without_detail_renders_unchanged
 test_the_project_drilldown_renders_ranked_cards_and_quiet_projects
 test_a_board_without_projects_keeps_the_drilldown_hidden
 test_open_captain_questions_render_separately_with_close_control
+test_host_zone_formats_question_updates_across_dst
+test_missing_host_zone_falls_back_to_labeled_utc
