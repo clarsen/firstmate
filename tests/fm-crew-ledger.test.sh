@@ -160,6 +160,24 @@ assert_equals '' "$out" 'a completed PR job clears the stale condition'
 out=$(tick 18401) || fail 'second CI job stall tick failed'
 assert_contains "$out" 'ci-progress declared-wait-no-ci-progress' \
   'a later unchanged PR check set may trigger one new alarm'
+cp "$home/ci-snapshot" "$home/ci-snapshot.good"
+: > "$home/ci-snapshot"
+out=$(tick 18500 2>/dev/null) || fail 'repeated CI read failure tick failed'
+assert_equals '' "$out" 'recent CI evidence carries over a failed read'
+out=$(tick 19302 2>/dev/null) || fail 'stale CI evidence tick failed'
+assert_contains "$out" 'ci-progress declared-wait-ci-unverified' \
+  'CI evidence older than the bound is reported unverified'
+assert_contains "$out" 'CI evidence unavailable' 'unverified CI wake does not cite stale checks'
+out=$(tick 19362 2>/dev/null) || fail 'repeated stale CI evidence tick failed'
+assert_equals '' "$out" 'an unchanged CI read failure wakes only once'
+mv "$home/ci-snapshot.good" "$home/ci-snapshot"
+out=$(tick 19400) || fail 'CI read recovery tick failed'
+assert_contains "$out" 'ci-progress declared-wait-no-ci-progress' \
+  'recovered CI evidence reports the real stall once'
+jq -e '.crew[] | select(.id == "ci-progress") | .ci_progress.observed_at == 19400' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'recovered CI read was not recorded as observed'
+out=$(tick 19460) || fail 'recovered CI repeat tick failed'
+assert_equals '' "$out" 'recovered CI stall does not repeat'
 printf 'done [at=18402]: delivered\n' > "$home/state/ci-progress.status"
 fm_write_meta "$home/state/mr-skipped.meta" \
   'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-mr-skipped' \
@@ -368,4 +386,14 @@ slow_tick 30460 >/dev/null || fail 'second budgeted tick failed'
 jq -e '[.crew[] | {id,checked_at}] ==
   [{id:"budget-new",checked_at:30400},{id:"committed-idle",checked_at:30460}]' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'budgeted tick did not read the oldest row first'
+# A crew-state verdict is carried over a failed read only within the bound.
+: > "$home/crew-state-fail"
+tick 30500 >/dev/null 2>&1 || fail 'failed crew-state tick failed'
+jq -e '.crew[] | select(.id == "committed-idle") | .current_state.observed_at == 30460' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'recent crew-state verdict was not carried'
+tick 31400 >/dev/null 2>&1 || fail 'stale crew-state tick failed'
+jq -e '.crew[] | select(.id == "committed-idle") |
+  .current_state.state == "unknown" and .current_state.observed_at == null and .checked_at == 31400' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'stale crew-state verdict was reported as fresh'
+rm -f "$home/crew-state-fail"
 pass 'crew ledger flags the observed paused and idle CI stall once per unchanged episode'

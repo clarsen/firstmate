@@ -21,8 +21,9 @@
 # GitHub CI waits use completed checks on the PR's current head, selected by
 # status because gh reports a 0001-01-01 completedAt on queued checks; GitLab waits
 # use finished jobs on the MR's head pipeline and surface a skipped head immediately.
-# An unreadable crew-state verdict or CI read keeps the previous observation, so
-# a transient failure cannot start a new alert episode.
+# An unreadable crew-state verdict or CI read keeps the previous observation for
+# up to FM_CREW_LEDGER_WAIT_SECS after its last successful read, so a transient
+# failure cannot start a new alert episode; older evidence is reported unverified.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,7 +105,7 @@ while IFS= read -r meta <&3; do
   state_line=$(printf '%s\n' "$state_output" | head -1)
   step_label=$(printf '%s\n' "$state_output" | sed -n 's/^run-step: //p' | head -1)
   run_pr=$(printf '%s\n' "$state_output" | sed -n 's/^run-pr: //p' | head -1)
-  state=unknown source=none detail=
+  state=unknown source=none detail="" state_observed_at=$NOW
   case "$state_line" in
     state:\ *' · source: '*)
       rest=${state_line#state: }
@@ -114,13 +115,18 @@ while IFS= read -r meta <&3; do
       [ "$source" != "$rest" ] && detail=${rest#*' · '} || detail=
       ;;
     *)
-      if [ "$previous" != '{}' ]; then
+      state_observed_at=null
+      if jq -e --argjson now "$NOW" --argjson wait "$WAIT_SECS" \
+        '$now - (.current_state.observed_at // 0) < $wait' <<< "$previous" >/dev/null 2>&1; then
         echo "fm-crew-ledger.sh:$LINENO: crew-state unreadable for $id; keeping previous observation" >&2
         state=$(jq -r '.current_state.state // "unknown"' <<< "$previous")
         source=$(jq -r '.current_state.source // "none"' <<< "$previous")
         detail=$(jq -r '.current_state.detail // ""' <<< "$previous")
         step_label=$(jq -r 'if .current_state.source == "run-step" then .run_step.state // "" else "" end' <<< "$previous")
         run_pr=$(jq -r '.run_step.pr_url // ""' <<< "$previous")
+        state_observed_at=$(jq -r '.current_state.observed_at' <<< "$previous")
+      else
+        echo "fm-crew-ledger.sh:$LINENO: crew-state unreadable for $id; no recent observation" >&2
       fi
       ;;
   esac
@@ -206,7 +212,7 @@ while IFS= read -r meta <&3; do
           fi
         fi
         [ "$ci_snapshot" != null ] ||
-          echo "fm-crew-ledger.sh:$LINENO: CI evidence unavailable for $id; keeping previous CI progress" >&2
+          echo "fm-crew-ledger.sh:$LINENO: CI evidence unavailable for $id" >&2
         ;;
     esac
   fi
@@ -216,14 +222,15 @@ while IFS= read -r meta <&3; do
     --arg generation "$generation" --arg status_raw "$status_raw" \
     --arg status_verb "$status_verb" --argjson status_at "$status_at" \
     --arg wait_raw "$wait_raw" --arg wait_class "$wait_class" --argjson wait_at "$wait_at" \
-    --arg state "$state" --arg source "$source" --arg detail "$detail" --arg step_label "$step_label" \
+    --arg state "$state" --argjson state_observed_at "$state_observed_at" --arg source "$source" --arg detail "$detail" --arg step_label "$step_label" \
     --arg run_pr "$run_pr" --argjson ci "$ci_snapshot" --argjson ci_candidate "$ci_candidate" \
     --arg harness "$harness" --arg harness_source "$harness_source" \
     --argjson now "$NOW" --argjson idle_seconds "$IDLE_SECS" \
     --argjson wait_seconds "$WAIT_SECS" '
     ($previous // {}) as $old
-    | (if $ci != null then $ci
-       elif $ci_candidate and $old.ci_progress != null and $old.ci_progress.pr_url == $run_pr
+    | (if $ci != null then $ci + {observed_at:$now}
+       elif $ci_candidate and $old.ci_progress != null and $old.ci_progress.pr_url == $run_pr and
+            $now - ($old.ci_progress.observed_at // 0) < $wait_seconds
        then $old.ci_progress | del(.pr_url, .progress_at)
        else null end) as $ci
     | (if $harness == $old.harness.state then ($old.harness.since // $now) else $now end) as $harness_since
@@ -286,7 +293,7 @@ while IFS= read -r meta <&3; do
         harness:{state:$harness,source:$harness_source,since:$harness_since},
         last_status:{state:$status_verb,raw:$status_raw,at:$status_at},
         declared_wait:{class:$wait_class,raw:$wait_raw,at:$wait_at,since:$wait_since},
-        current_state:{state:$state,source:$source,detail:$detail},
+        current_state:{state:$state,source:$source,detail:$detail,observed_at:$state_observed_at},
         run_step:{state:$step,changed_at:(if $step == null then null else $step_changed end),
           pr_url:(if $run_pr == "" then null else $run_pr end)},
         ci_progress:(if $ci == null then null else ($ci + {pr_url:$run_pr,progress_at:$ci_progress_at}) end),
