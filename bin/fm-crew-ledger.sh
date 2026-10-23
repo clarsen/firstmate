@@ -23,7 +23,8 @@
 # use finished jobs on the MR's head pipeline and surface a skipped head immediately.
 # An unreadable crew-state verdict or CI read keeps the previous observation for
 # up to FM_CREW_LEDGER_WAIT_SECS after its last successful read, so a transient
-# failure cannot start a new alert episode; older evidence is reported unverified.
+# failure cannot start a new alert episode; older evidence is reported unverified,
+# and current_state.observed_at keeps the last successful crew-state read.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -115,7 +116,7 @@ while IFS= read -r meta <&3; do
       [ "$source" != "$rest" ] && detail=${rest#*' · '} || detail=
       ;;
     *)
-      state_observed_at=null
+      state_observed_at=$(jq -c '.current_state.observed_at // null' <<< "$previous")
       if jq -e --argjson now "$NOW" --argjson wait "$WAIT_SECS" \
         '$now - (.current_state.observed_at // 0) < $wait' <<< "$previous" >/dev/null 2>&1; then
         echo "fm-crew-ledger.sh:$LINENO: crew-state unreadable for $id; keeping previous observation" >&2
@@ -124,7 +125,6 @@ while IFS= read -r meta <&3; do
         detail=$(jq -r '.current_state.detail // ""' <<< "$previous")
         step_label=$(jq -r 'if .current_state.source == "run-step" then .run_step.state // "" else "" end' <<< "$previous")
         run_pr=$(jq -r '.run_step.pr_url // ""' <<< "$previous")
-        state_observed_at=$(jq -r '.current_state.observed_at' <<< "$previous")
       else
         echo "fm-crew-ledger.sh:$LINENO: crew-state unreadable for $id; no recent observation" >&2
       fi
@@ -265,6 +265,9 @@ while IFS= read -r meta <&3; do
     | (if $kind == "secondmate" or $harness != "idle" or $wait_class == "captain-held" or
           ([$state] | any(. == "done" or . == "blocked" or . == "failed" or . == "parked"))
        then null
+       elif $state_observed_at == null or $now - $state_observed_at >= $wait_seconds
+       then (if $now - ($state_observed_at // $harness_since) >= $wait_seconds
+             then "crew-state-unverified" else null end)
        elif $ci.provider == "gitlab" and $ci.pipeline_status == "skipped"
        then "ci-head-skipped"
        elif $ci != null and $now - $ci_progress_at >= $wait_seconds
@@ -283,7 +286,8 @@ while IFS= read -r meta <&3; do
        else null end) as $condition
     | (if $condition == null then null
        else [$condition,(if $wait_class == "paused" then $wait_raw else $status_raw end),($step // ""),
-             (if $condition == "idle-without-terminal-status" then $harness_since
+             (if $condition == "crew-state-unverified" then ($state_observed_at // $harness_since)
+              elif $condition == "idle-without-terminal-status" then $harness_since
               elif $ci != null then $ci_progress_at
               elif $wait_class == "paused" then $wait_progress_at else $step_changed end),
              ($ci.head // ""),($ci.pipeline_id // 0),($ci.pipeline_status // ""),
@@ -309,7 +313,10 @@ while IFS= read -r meta <&3; do
   if jq -e --argjson old "$previous" '.alert != null and .alert.signature != $old.alert.signature' <<< "$row" >/dev/null; then
     condition=$(jq -r '.alert.condition' <<< "$row")
     step=$(jq -r '.run_step.state // "none"' <<< "$row")
-    ci_detail=$(jq -r 'if .run_step.state == null then
+    ci_detail=$(jq -r 'if .alert.condition == "crew-state-unverified" then
+      "crew-state unreadable since " + ((.current_state.observed_at // "never") | tostring) +
+      "; inspect worker and fm-crew-state"
+      elif .run_step.state == null then
       "no attributed validation run; inspect commit and worker status"
       elif .ci_progress == null then
       "PR=" + (.run_step.pr_url // "unknown") + "; CI evidence unavailable" else

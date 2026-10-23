@@ -391,9 +391,22 @@ jq -e '[.crew[] | {id,checked_at}] ==
 tick 30500 >/dev/null 2>&1 || fail 'failed crew-state tick failed'
 jq -e '.crew[] | select(.id == "committed-idle") | .current_state.observed_at == 30460' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'recent crew-state verdict was not carried'
-tick 31400 >/dev/null 2>&1 || fail 'stale crew-state tick failed'
+out=$(tick 31400 2>/dev/null) || fail 'stale crew-state tick failed'
+assert_contains "$out" 'committed-idle crew-state-unverified' \
+  'a crew-state verdict unreadable past the bound wakes as unverified'
+assert_contains "$out" 'crew-state unreadable since 30460' \
+  'the unverified wake names the last successful crew-state read'
 jq -e '.crew[] | select(.id == "committed-idle") |
-  .current_state.state == "unknown" and .current_state.observed_at == null and .checked_at == 31400' \
+  .current_state.state == "unknown" and .current_state.observed_at == 30460 and .checked_at == 31400' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'stale crew-state verdict was reported as fresh'
+out=$(tick 31460 2>/dev/null) || fail 'repeated stale crew-state tick failed'
+assert_equals '' "$out" 'an unchanged crew-state failure wakes only once'
 rm -f "$home/crew-state-fail"
+out=$(tick 31500) || fail 'crew-state recovery tick failed'
+assert_contains "$out" 'committed-idle idle-without-terminal-status' \
+  'a recovered crew-state verdict reports the real condition once'
+jq -e '.crew[] | select(.id == "committed-idle") | .current_state.observed_at == 31500' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'recovered crew-state read was not recorded'
+out=$(tick 31560) || fail 'recovered crew-state repeat tick failed'
+assert_equals '' "$out" 'a recovered crew-state condition does not repeat'
 pass 'crew ledger flags the observed paused and idle CI stall once per unchanged episode'
