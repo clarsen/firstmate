@@ -1,0 +1,211 @@
+{
+  "schema": "fm-crew-ledger.v1",
+  "checked_at": 1792747668,
+  "crew": [
+    {
+      "id": "bearings-card-nav-fixed",
+      "kind": "ship",
+      "generation": "lab1",
+      "checked_at": 1792747668,
+      "harness": {
+        "state": "idle",
+        "source": "claude-hook",
+        "since": 1792747632
+      },
+      "last_status": {
+        "state": "done",
+        "raw": "done [at=1792747668]: PR https://github.com/clarsen/firstmate/pull/35 checks green",
+        "at": 1792747668
+      },
+      "declared_wait": {
+        "class": "none",
+        "raw": "",
+        "at": null,
+        "since": null
+      },
+      "current_state": {
+        "state": "done",
+        "source": "status-log",
+        "detail": "PR https://github.com/clarsen/firstmate/pull/35 checks green · run still monitoring PR",
+        "observed_at": 1792747668
+      },
+      "run_step": {
+        "state": null,
+        "changed_at": null,
+        "pr_url": null
+      },
+      "ci_progress": null,
+      "alert": null
+    },
+    {
+      "id": "busy-worker",
+      "kind": "ship",
+      "generation": "lab1",
+      "checked_at": 1792747668,
+      "harness": {
+        "state": "idle",
+        "source": "claude-hook",
+        "since": 1792747664
+      },
+      "last_status": {
+        "state": "paused",
+        "raw": "paused [at=1792741630]: CI monitor still running; resume on final CI result",
+        "at": 1792741630
+      },
+      "declared_wait": {
+        "class": "paused",
+        "raw": "paused [at=1792741630]: CI monitor still running; resume on final CI result",
+        "at": 1792741630,
+        "since": 1792741630
+      },
+      "current_state": {
+        "state": "working",
+        "source": "run-step",
+        "detail": "validating (running)",
+        "observed_at": 1792747668
+      },
+      "run_step": {
+        "state": "running/running/unknown",
+        "changed_at": 1792741630,
+        "pr_url": "https://github.com/clarsen/firstmate/pull/35"
+      },
+      "ci_progress": {
+        "provider": "github",
+        "head": "376125eb2261c420793c4f0817edac1039009d09",
+        "completed_count": 4,
+        "latest_completed_at": 1792740285,
+        "observed_at": 1792747668,
+        "pr_url": "https://github.com/clarsen/firstmate/pull/35",
+        "progress_at": 1792741630
+      },
+      "alert": {
+        "condition": "declared-wait-no-ci-progress",
+        "signature": "[\"declared-wait-no-ci-progress\",\"paused [at=1792741630]: CI monitor still running; resume on final CI result\",\"running/running/unknown\",1792741630,\"376125eb2261c420793c4f0817edac1039009d09\",0,\"\",4,1792740285]",
+        "reported_at": 1792747664
+      }
+    },
+    {
+      "id": "committed-idle",
+      "kind": "ship",
+      "generation": "lab1",
+      "checked_at": 1792747668,
+      "harness": {
+        "state": "idle",
+        "source": "claude-hook",
+        "since": 1792747632
+      },
+      "last_status": {
+        "state": "working",
+        "raw": "working [at=1792747570]: implementation committed",
+        "at": 1792747570
+      },
+      "declared_wait": {
+        "class": "none",
+        "raw": "",
+        "at": null,
+        "since": null
+      },
+      "current_state": {
+        "state": "working",
+        "source": "status-log",
+        "detail": "implementation committed",
+        "observed_at": 1792747668
+      },
+      "run_step": {
+        "state": null,
+        "changed_at": null,
+        "pr_url": null
+      },
+      "ci_progress": null,
+      "alert": {
+        "condition": "idle-without-terminal-status",
+        "signature": "[\"idle-without-terminal-status\",\"working [at=1792747570]: implementation committed\",\"\",1792747632,\"\",0,\"\",0,0]",
+        "reported_at": 1792747660
+      }
+    },
+    {
+      "id": "done-worker",
+      "kind": "ship",
+      "generation": "lab1",
+      "checked_at": 1792747668,
+      "harness": {
+        "state": "idle",
+        "source": "claude-hook",
+        "since": 1792747632
+      },
+      "last_status": {
+        "state": "done",
+        "raw": "done [at=1792747570]: delivered PR https://github.com/clarsen/firstmate/pull/35",
+        "at": 1792747570
+      },
+      "declared_wait": {
+        "class": "none",
+        "raw": "",
+        "at": null,
+        "since": null
+      },
+      "current_state": {
+        "state": "done",
+        "source": "status-log",
+        "detail": "delivered PR https://github.com/clarsen/firstmate/pull/35",
+        "observed_at": 1792747668
+      },
+      "run_step": {
+        "state": null,
+        "changed_at": null,
+        "pr_url": null
+      },
+      "ci_progress": null,
+      "alert": null
+    },
+    {
+      "id": "lagmon-uv-cache-guard",
+      "kind": "ship",
+      "generation": "lab1",
+      "checked_at": 1792747668,
+      "harness": {
+        "state": "idle",
+        "source": "claude-hook",
+        "since": 1792747632
+      },
+      "last_status": {
+        "state": "paused",
+        "raw": "paused [at=1792747510]: bounded CI wait elapsed; monitor reattached",
+        "at": 1792747510
+      },
+      "declared_wait": {
+        "class": "paused",
+        "raw": "paused [at=1792747510]: bounded CI wait elapsed; monitor reattached",
+        "at": 1792747510,
+        "since": 1792747510
+      },
+      "current_state": {
+        "state": "working",
+        "source": "run-step",
+        "detail": "validating (running)",
+        "observed_at": 1792747668
+      },
+      "run_step": {
+        "state": "running/running/unknown",
+        "changed_at": 1792747510,
+        "pr_url": "https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416"
+      },
+      "ci_progress": {
+        "provider": "gitlab",
+        "head": "81e820008575fbcb218280b9398ff3d59fb23cf2",
+        "pipeline_id": 837391,
+        "pipeline_status": "skipped",
+        "completed_count": 0,
+        "latest_completed_at": null,
+        "observed_at": 1792747668,
+        "pr_url": "https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416",
+        "progress_at": 1792747510
+      },
+      "alert": {
+        "condition": "ci-head-skipped",
+        "signature": "[\"ci-head-skipped\",\"paused [at=1792747510]: bounded CI wait elapsed; monitor reattached\",\"running/running/unknown\",1792747510,\"81e820008575fbcb218280b9398ff3d59fb23cf2\",837391,\"skipped\",0,0]",
+        "reported_at": 1792747632
+      }
+    }
+  ]
+}

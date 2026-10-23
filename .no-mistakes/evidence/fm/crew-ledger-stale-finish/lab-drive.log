@@ -1,0 +1,65 @@
+
+===== S0 real fm-crew-state verdicts (the reported blind spot) =====
+bearings-card-nav-fixed: state: working · source: run-step · validating (running)
+lagmon-uv-cache-guard: state: working · source: run-step · validating (running)
+committed-idle: state: working · source: status-log · implementation committed
+busy-worker: state: working · source: run-step · validating (running)
+done-worker: state: done · source: status-log · delivered PR https://github.com/clarsen/firstmate/pull/35
+bearings-card-nav-fixed pane: ● Worked for 13m 58s|> |
+committed-idle pane: ● Worked for 13m 58s|> |
+busy-worker pane: ● Worked for 13m 58s|> |
+
+===== S1 tick #1 at 1792747632 (real gh PR 35, real glab MR 12416) =====
+check: crew-ledger bearings-card-nav-fixed declared-wait-no-ci-progress; pane=idle; status=paused; run-step=running/running/unknown; PR=https://github.com/clarsen/firstmate/pull/35; pipeline=unknown; completed-checks=4; last-completion=1792740285; last-checked=1792747632; inspect worker and validation
+check: crew-ledger lagmon-uv-cache-guard ci-head-skipped; pane=idle; status=paused; run-step=running/running/unknown; PR=https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416; pipeline=skipped; completed-checks=0; last-completion=none; last-checked=1792747632; inspect worker and validation
+exit=0
+{"id":"bearings-card-nav-fixed","harness":"idle","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":{"provider":"github","head":"376125eb2261c420793c4f0817edac1039009d09","completed_count":4,"latest_completed_at":1792740285,"pipeline_status":null,"progress_at":1792741630},"alert":"declared-wait-no-ci-progress"}
+{"id":"busy-worker","harness":"running","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":null,"alert":null}
+{"id":"committed-idle","harness":"idle","status":"working","state":"working","source":"status-log","run_step":null,"ci":null,"alert":null}
+{"id":"done-worker","harness":"idle","status":"done","state":"done","source":"status-log","run_step":null,"ci":null,"alert":null}
+{"id":"lagmon-uv-cache-guard","harness":"idle","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":{"provider":"gitlab","head":"81e820008575fbcb218280b9398ff3d59fb23cf2","completed_count":0,"latest_completed_at":null,"pipeline_status":"skipped","progress_at":1792747510},"alert":"ci-head-skipped"}
+
+===== S2 tick #2 immediately - unchanged evidence must not re-alert =====
+output=[] exit=0
+
+===== wake queue after ticks =====
+1792747634	1	check	crew-ledger	check: crew-ledger bearings-card-nav-fixed declared-wait-no-ci-progress; pane=idle; status=paused; run-step=running/running/unknown; PR=https://github.com/clarsen/firstmate/pull/35; pipeline=unknown; completed-checks=4; last-completion=1792740285; last-checked=1792747632; inspect worker and validation
+1792747634	2	check	crew-ledger	check: crew-ledger lagmon-uv-cache-guard ci-head-skipped; pane=idle; status=paused; run-step=running/running/unknown; PR=https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416; pipeline=skipped; completed-checks=0; last-completion=none; last-checked=1792747632; inspect worker and validation
+
+===== S3 real fm-watch.sh in lab: committed-idle crew past FM_CREW_LEDGER_IDLE_SECS=20 =====
+watcher exit=0
+--- watcher stdout
+check: crew-ledger committed-idle idle-without-terminal-status; pane=idle; status=working; run-step=none; no attributed validation run; inspect commit and worker status; last-checked=1792747660; inspect worker and validation
+--- watcher stderr (tail)
+--- wake queue
+1792747634	1	check	crew-ledger	check: crew-ledger bearings-card-nav-fixed declared-wait-no-ci-progress; pane=idle; status=paused; run-step=running/running/unknown; PR=https://github.com/clarsen/firstmate/pull/35; pipeline=unknown; completed-checks=4; last-completion=1792740285; last-checked=1792747632; inspect worker and validation
+1792747634	2	check	crew-ledger	check: crew-ledger lagmon-uv-cache-guard ci-head-skipped; pane=idle; status=paused; run-step=running/running/unknown; PR=https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416; pipeline=skipped; completed-checks=0; last-completion=none; last-checked=1792747632; inspect worker and validation
+1792747662	3	check	crew-ledger	check: crew-ledger committed-idle idle-without-terminal-status; pane=idle; status=working; run-step=none; no attributed validation run; inspect commit and worker status; last-checked=1792747660; inspect worker and validation
+{"id":"bearings-card-nav-fixed","harness":"idle","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":{"provider":"github","head":"376125eb2261c420793c4f0817edac1039009d09","completed_count":4,"latest_completed_at":1792740285,"pipeline_status":null,"progress_at":1792741630},"alert":"declared-wait-no-ci-progress"}
+{"id":"busy-worker","harness":"running","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":null,"alert":null}
+{"id":"committed-idle","harness":"idle","status":"working","state":"working","source":"status-log","run_step":null,"ci":null,"alert":"idle-without-terminal-status"}
+{"id":"done-worker","harness":"idle","status":"done","state":"done","source":"status-log","run_step":null,"ci":null,"alert":null}
+{"id":"lagmon-uv-cache-guard","harness":"idle","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":{"provider":"gitlab","head":"81e820008575fbcb218280b9398ff3d59fb23cf2","completed_count":0,"latest_completed_at":null,"pipeline_status":"skipped","progress_at":1792747510},"alert":"ci-head-skipped"}
+
+===== S4 fleet view Crew Ledger table + Bearings crew_alerts =====
+## Crew Ledger
+| ID | Harness | Last status / epoch | Run step / changed epoch | CI jobs / progress epoch | Checked epoch | Alert |
+| --- | --- | --- | --- | --- | --- | --- |
+| bearings-card-nav-fixed | idle / claude-hook | paused / 1792741630 | running/running/unknown / 1792741630 | 4 / 1792741630 | 1792747660 | declared-wait-no-ci-progress |
+| busy-worker | running / fm-spawn | paused / 1792741630 | running/running/unknown / 1792741630 | - / - | 1792747660 | - |
+| committed-idle | idle / claude-hook | working / 1792747570 | - / - | - / - | 1792747660 | idle-without-terminal-status |
+| done-worker | idle / claude-hook | done / 1792747570 | - / - | - / - | 1792747660 | - |
+| lagmon-uv-cache-guard | idle / claude-hook | paused / 1792747510 | running/running/unknown / 1792747510 | 0 / 1792747510 | 1792747660 | ci-head-skipped |
+
+[{"id":"bearings-card-nav-fixed","condition":"declared-wait-no-ci-progress","checked_at":1792747660},{"id":"committed-idle","condition":"idle-without-terminal-status","checked_at":1792747660},{"id":"lagmon-uv-cache-guard","condition":"ci-head-skipped","checked_at":1792747660}]
+
+===== S5 adversarial: busy-worker suppressed only while busy; now its turn ends =====
+check: crew-ledger busy-worker declared-wait-no-ci-progress; pane=idle; status=paused; run-step=running/running/unknown; PR=https://github.com/clarsen/firstmate/pull/35; pipeline=unknown; completed-checks=4; last-completion=1792740285; last-checked=1792747664; inspect worker and validation
+{"id":"busy-worker","harness":"idle","status":"paused","state":"working","source":"run-step","run_step":"running/running/unknown","ci":{"provider":"github","head":"376125eb2261c420793c4f0817edac1039009d09","completed_count":4,"latest_completed_at":1792740285,"pipeline_status":null,"progress_at":1792741630},"alert":"declared-wait-no-ci-progress"}
+{"id":"done-worker","harness":"idle","status":"done","state":"done","source":"status-log","run_step":null,"ci":null,"alert":null}
+
+===== S6 bearings-card-nav-fixed reports done -> alert clears, no new wake =====
+output=[]
+{"id":"bearings-card-nav-fixed","harness":"idle","status":"done","state":"done","source":"status-log","run_step":null,"ci":null,"alert":null}
+
+===== teardown =====
