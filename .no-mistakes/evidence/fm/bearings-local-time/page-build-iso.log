@@ -1,0 +1,10 @@
+page: /home/ctlarsen/tmp/fmlt-page.8upNKP/iso/data/lt-iso/decision-page.html
+session:
+  file: /home/ctlarsen/tmp/fmlt-page.8upNKP/iso/data/lt-iso/decision-page.html
+  url: "http://127.0.0.1:4387/session/0123456789abcdef"
+  status: opened
+session: live
+link: http://127.0.0.1:4387/session/0123456789abcdef
+served: /home/ctlarsen/tmp/fmlt-page.8upNKP/iso/data/lt-iso/decision-page.html
+bound: lavish-e6f7dbc94f582f47
+armed: lavish-e6f7dbc94f582f47

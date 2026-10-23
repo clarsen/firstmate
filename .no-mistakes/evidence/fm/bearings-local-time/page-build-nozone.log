@@ -1,0 +1,10 @@
+page: /home/ctlarsen/tmp/fmlt-page.8upNKP/nozone/data/lt-nozone/decision-page.html
+session:
+  file: /home/ctlarsen/tmp/fmlt-page.8upNKP/nozone/data/lt-nozone/decision-page.html
+  url: "http://127.0.0.1:4387/session/0123456789abcdef"
+  status: opened
+session: live
+link: http://127.0.0.1:4387/session/0123456789abcdef
+served: /home/ctlarsen/tmp/fmlt-page.8upNKP/nozone/data/lt-nozone/decision-page.html
+bound: lavish-e9b8f2a2523ae46a
+armed: lavish-e9b8f2a2523ae46a

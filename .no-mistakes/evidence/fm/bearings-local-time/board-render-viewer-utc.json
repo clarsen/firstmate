@@ -1,0 +1,25 @@
+{
+  "provenance": "fm-bearings-board.v1 · Oct 23, 2026, 10:05 AM PDT",
+  "questions": [
+    {
+      "text": "Ship the Bearings local-time change?",
+      "status": "statusAwaiting captainupdatedOct 22, 2026, 2:00 PM PDT",
+      "key": "captain-question.q-20261022-00000001",
+      "options": [
+        "close"
+      ],
+      "close": true,
+      "links": []
+    },
+    {
+      "text": "Question updated after fall DST shift",
+      "status": "statusOpenupdatedNov 1, 2026, 1:30 AM PST",
+      "key": "captain-question.q-20261101-00000002",
+      "options": [
+        "close"
+      ],
+      "close": true,
+      "links": []
+    }
+  ]
+}

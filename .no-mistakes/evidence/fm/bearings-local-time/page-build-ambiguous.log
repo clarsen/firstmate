@@ -1,0 +1,10 @@
+page: /home/ctlarsen/tmp/fmlt-page.8upNKP/ambiguous/data/lt-ambiguous/decision-page.html
+session:
+  file: /home/ctlarsen/tmp/fmlt-page.8upNKP/ambiguous/data/lt-ambiguous/decision-page.html
+  url: "http://127.0.0.1:4387/session/0123456789abcdef"
+  status: opened
+session: live
+link: http://127.0.0.1:4387/session/0123456789abcdef
+served: /home/ctlarsen/tmp/fmlt-page.8upNKP/ambiguous/data/lt-ambiguous/decision-page.html
+bound: lavish-c6340ec2e5b4e723
+armed: lavish-c6340ec2e5b4e723
