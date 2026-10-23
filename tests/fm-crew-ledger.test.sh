@@ -18,6 +18,7 @@ esac
 SH
 cat > "$home/fakebin/crew-state" <<'SH'
 #!/usr/bin/env bash
+[ ! -e "$FM_HOME/crew-state-fail" ] || exit 124
 if tail -1 "$FM_HOME/state/$1.status" 2>/dev/null | grep -q '^done '; then
   printf 'state: done · source: status-log · delivered\n'
   exit 0
@@ -138,6 +139,19 @@ assert_contains "$out" 'completed-checks=1; last-completion=16600' \
   'CI wake names the actual progress evidence'
 out=$(tick 17502) || fail 'repeat CI job stall tick failed'
 assert_equals '' "$out" 'same queued CI condition does not repeat'
+cp "$home/ci-snapshot" "$home/ci-snapshot.good"
+: > "$home/ci-snapshot"
+out=$(tick 17502 2>/dev/null) || fail 'failed CI read tick failed'
+assert_equals '' "$out" 'a failed CI read does not start a new alert episode'
+mv "$home/ci-snapshot.good" "$home/ci-snapshot"
+out=$(tick 17502) || fail 'recovered CI read tick failed'
+assert_equals '' "$out" 'a recovered CI read does not repeat the alert'
+: > "$home/crew-state-fail"
+out=$(tick 17502 2>/dev/null) || fail 'failed crew-state tick failed'
+assert_equals '' "$out" 'an unreadable crew-state verdict does not start a new alert episode'
+rm -f "$home/crew-state-fail"
+out=$(tick 17502) || fail 'recovered crew-state tick failed'
+assert_equals '' "$out" 'a recovered crew-state verdict does not repeat the alert'
 cat > "$home/ci-snapshot" <<'JSON'
 {"headRefOid":"0000000000000000000000000000000000000001","statusCheckRollup":[{"__typename":"CheckRun","name":"linux-a","status":"COMPLETED","completedAt":"1970-01-01T04:36:40Z"},{"__typename":"CheckRun","name":"linux-b","status":"COMPLETED","completedAt":"1970-01-01T04:51:40Z"},{"__typename":"CheckRun","name":"linux-q2","status":"QUEUED","completedAt":"0001-01-01T00:00:00Z"}]}
 JSON

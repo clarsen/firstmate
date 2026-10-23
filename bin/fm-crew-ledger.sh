@@ -21,6 +21,8 @@
 # GitHub CI waits use completed checks on the PR's current head, selected by
 # status because gh reports a 0001-01-01 completedAt on queued checks; GitLab waits
 # use finished jobs on the MR's head pipeline and surface a skipped head immediately.
+# An unreadable crew-state verdict or CI read keeps the previous observation, so
+# a transient failure cannot start a new alert episode.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,6 +113,16 @@ while IFS= read -r meta <&3; do
       source=${rest%%' · '*}
       [ "$source" != "$rest" ] && detail=${rest#*' · '} || detail=
       ;;
+    *)
+      if [ "$previous" != '{}' ]; then
+        echo "fm-crew-ledger.sh:$LINENO: crew-state unreadable for $id; keeping previous observation" >&2
+        state=$(jq -r '.current_state.state // "unknown"' <<< "$previous")
+        source=$(jq -r '.current_state.source // "none"' <<< "$previous")
+        detail=$(jq -r '.current_state.detail // ""' <<< "$previous")
+        step_label=$(jq -r 'if .current_state.source == "run-step" then .run_step.state // "" else "" end' <<< "$previous")
+        run_pr=$(jq -r '.run_step.pr_url // ""' <<< "$previous")
+      fi
+      ;;
   esac
 
   harness=unknown harness_source=unavailable
@@ -193,6 +205,8 @@ while IFS= read -r meta <&3; do
             fi
           fi
         fi
+        [ "$ci_snapshot" != null ] ||
+          echo "fm-crew-ledger.sh:$LINENO: CI evidence unavailable for $id; keeping previous CI progress" >&2
         ;;
     esac
   fi
@@ -208,6 +222,10 @@ while IFS= read -r meta <&3; do
     --argjson now "$NOW" --argjson idle_seconds "$IDLE_SECS" \
     --argjson wait_seconds "$WAIT_SECS" '
     ($previous // {}) as $old
+    | (if $ci != null then $ci
+       elif $ci_candidate and $old.ci_progress != null and $old.ci_progress.pr_url == $run_pr
+       then $old.ci_progress | del(.pr_url, .progress_at)
+       else null end) as $ci
     | (if $harness == $old.harness.state then ($old.harness.since // $now) else $now end) as $harness_since
     | (if $source == "run-step" then
          (if $step_label != "" then $step_label else ($state + " / " + $detail) end)
