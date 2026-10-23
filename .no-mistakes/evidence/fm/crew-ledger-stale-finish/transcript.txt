@@ -1,0 +1,66 @@
+herdr pane for mr-skipped: fm-lab-crewledger-271088-24600:w1:p1
+herdr pane for gh-wait: fm-lab-crewledger-271088-24600:w2:p1
+herdr pane for committed-idle: fm-lab-crewledger-271088-24600:w3:p1
+
+===== real provider state (read-only) =====
+{"head":"7be81aa339d1d4320d7808ae5274d0670d689fb8","total":19,"by_status":{"COMPLETED":12,"IN_PROGRESS":3,"QUEUED":4},"queued_completedAt":["0001-01-01T00:00:00Z"]}
+{"sha":"81e820008575fbcb218280b9398ff3d59fb23cf2","head_pipeline":{"id":837391,"status":"skipped","sha":"81e820008575fbcb218280b9398ff3d59fb23cf2"}}
+
+===== real crew-state for committed-idle (no validation run) =====
+state: working · source: status-log · implementation committed
+[crew-state exit=0 in 0s]
+
+===== tick 1 at now=1792714048 =====
+check: crew-ledger mr-skipped ci-head-skipped; pane=idle; status=working; run-step=running/running; PR=https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416; pipeline=skipped; completed-checks=0; last-completion=none; last-checked=1792714048; inspect worker and validation
+[tick exit=0]
+{"id":"committed-idle","harness":"idle","status":"working","state":{"state":"working","source":"status-log","detail":"implementation committed"},"step":null,"ci":null,"alert":null}
+{"id":"gh-wait","harness":"idle","status":"paused","state":{"state":"working","source":"run-step","detail":"validating (ci)"},"step":"ci/running","ci":{"provider":"github","head":"7be81aa339d1d4320d7808ae5274d0670d689fb8","pipeline_id":null,"pipeline_status":null,"completed_count":12,"latest_completed_at":1792713888,"progress_at":1792713988},"alert":null}
+{"id":"mr-skipped","harness":"idle","status":"working","state":{"state":"working","source":"run-step","detail":"validating (running)"},"step":"running/running","ci":{"provider":"gitlab","head":"81e820008575fbcb218280b9398ff3d59fb23cf2","pipeline_id":837391,"pipeline_status":"skipped","completed_count":0,"latest_completed_at":null,"progress_at":1792714048},"alert":"ci-head-skipped"}
+
+===== tick 2 at now+60 (unchanged evidence must not repeat) =====
+[tick exit=0]
+
+===== tick 3 at now+4000 (past FM_CREW_LEDGER_WAIT_SECS=1800 / IDLE 300) =====
+check: crew-ledger committed-idle idle-without-terminal-status; pane=idle; status=working; run-step=none; no attributed validation run; inspect commit and worker status; last-checked=1792718048; inspect worker and validation
+check: crew-ledger gh-wait declared-wait-no-ci-progress; pane=idle; status=paused; run-step=ci/running; PR=https://github.com/clarsen/firstmate/pull/37; pipeline=unknown; completed-checks=12; last-completion=1792713888; last-checked=1792718048; inspect worker and validation
+[tick exit=0]
+{"id":"committed-idle","alert":"idle-without-terminal-status","checked":1792718048,"ci_count":null}
+{"id":"gh-wait","alert":"declared-wait-no-ci-progress","checked":1792718048,"ci_count":12}
+{"id":"mr-skipped","alert":"ci-head-skipped","checked":1792718048,"ci_count":0}
+
+===== tick 4 at now+4060 (no repeat) =====
+[tick exit=0]
+
+===== fleet view (Crew Ledger table) =====
+## Crew Ledger
+| ID | Harness | Last status / epoch | Run step / changed epoch | CI jobs / progress epoch | Checked epoch | Alert |
+| --- | --- | --- | --- | --- | --- | --- |
+| committed-idle | idle / claude-hook | working / 1792713988 | - / - | - / - | 1792718108 | idle-without-terminal-status |
+| gh-wait | idle / claude-hook | paused / 1792713988 | ci/running / 1792713988 | 12 / 1792713988 | 1792718108 | declared-wait-no-ci-progress |
+| mr-skipped | idle / claude-hook | working / 1792713988 | running/running / 1792714048 | 0 / 1792714048 | 1792718108 | ci-head-skipped |
+
+## Queued
+
+===== bearings snapshot crew_alerts =====
+{"crew_alerts":[{"id":"committed-idle","condition":"idle-without-terminal-status","checked_at":1792718108},{"id":"gh-wait","condition":"declared-wait-no-ci-progress","checked_at":1792718108},{"id":"mr-skipped","condition":"ci-head-skipped","checked_at":1792718108}],"has_full_ledger":false}
+bearings --fields crew-ledger exit=0 (opt-in removed)
+
+===== adversarial: busy harness and terminal done suppress alerts =====
+[tick exit=0]
+{"id":"committed-idle","harness":"idle","status":"done","state":"done","alert":null}
+{"id":"gh-wait","harness":"running","status":"paused","state":"working","alert":null}
+{"id":"mr-skipped","harness":"idle","status":"working","state":"working","alert":"ci-head-skipped"}
+
+===== watcher end-to-end: fresh ledger, real fm-watch.sh surfaces the stalled crew =====
+watcher exit=0
+--- watcher stdout:
+check: crew-ledger mr-skipped ci-head-skipped; pane=idle; status=working; run-step=running/running; PR=https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416; pipeline=skipped; completed-checks=0; last-completion=none; last-checked=1792714061; inspect worker and validation
+--- wake queue:
+1792714062	4	check	crew-ledger	check: crew-ledger mr-skipped ci-head-skipped; pane=idle; status=working; run-step=running/running; PR=https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416; pipeline=skipped; completed-checks=0; last-completion=none; last-checked=1792714061; inspect worker and validation
+
+===== watcher restart: unchanged evidence must not re-wake =====
+watcher exit=0 (124 = still blocking, no wake)
+--- watcher stdout:
+check: rearm-resurface
+{"checked_at":1792714063,"crew":[{"id":"committed-idle","checked_at":1792714063,"alert":null},{"id":"gh-wait","checked_at":1792714063,"alert":null},{"id":"mr-skipped","checked_at":1792714063,"alert":"ci-head-skipped"}]}
+DRIVER-DONE
