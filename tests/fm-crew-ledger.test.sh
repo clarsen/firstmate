@@ -19,6 +19,7 @@ SH
 cat > "$home/fakebin/crew-state" <<'SH'
 #!/usr/bin/env bash
 [ ! -e "$FM_HOME/crew-state-fail" ] || exit 124
+[ "$1" != never-read ] || exit 124
 if tail -1 "$FM_HOME/state/$1.status" 2>/dev/null | grep -q '^done '; then
   printf 'state: done · source: status-log · delivered\n'
   exit 0
@@ -409,4 +410,21 @@ jq -e '.crew[] | select(.id == "committed-idle") | .current_state.observed_at ==
   "$home/state/crew-ledger.json" >/dev/null || fail 'recovered crew-state read was not recorded'
 out=$(tick 31560) || fail 'recovered crew-state repeat tick failed'
 assert_equals '' "$out" 'a recovered crew-state condition does not repeat'
+# A crew whose crew-state was never read keeps the ordinary idle bound.
+fm_write_meta "$home/state/never-read.meta" \
+  'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-never-read' \
+  "worktree=$home/projects/task" 'spawn_gen=one'
+printf 'working [at=32000]: implementation committed\n' > "$home/state/never-read.status"
+gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" never-read)
+"$ROOT/bin/fm-busy-event.sh" apply "$home/state" never-read idle --gen "$gen" \
+  --source claude-hook --event stop
+out=$(tick 32000 2>/dev/null) || fail 'never-read baseline failed'
+assert_not_contains "$out" 'never-read' 'a never-read crew gets the idle grace'
+out=$(tick 32301 2>/dev/null) || fail 'never-read idle threshold failed'
+assert_contains "$out" 'never-read idle-without-terminal-status' \
+  'a crew with no successful crew-state read wakes after the idle bound'
+jq -e '.crew[] | select(.id == "never-read") | .current_state.observed_at == null' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'never-read crew recorded an observation'
+out=$(tick 32361 2>/dev/null) || fail 'never-read repeat failed'
+assert_not_contains "$out" 'never-read' 'an unchanged never-read crew wakes only once'
 pass 'crew ledger flags the observed paused and idle CI stall once per unchanged episode'

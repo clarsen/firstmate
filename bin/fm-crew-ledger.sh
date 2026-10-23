@@ -265,9 +265,8 @@ while IFS= read -r meta <&3; do
     | (if $kind == "secondmate" or $harness != "idle" or $wait_class == "captain-held" or
           ([$state] | any(. == "done" or . == "blocked" or . == "failed" or . == "parked"))
        then null
-       elif $state_observed_at == null or $now - $state_observed_at >= $wait_seconds
-       then (if $now - ($state_observed_at // $harness_since) >= $wait_seconds
-             then "crew-state-unverified" else null end)
+       elif $state_observed_at != null and $now - $state_observed_at >= $wait_seconds
+       then "crew-state-unverified"
        elif $ci.provider == "gitlab" and $ci.pipeline_status == "skipped"
        then "ci-head-skipped"
        elif $ci != null and $now - $ci_progress_at >= $wait_seconds
@@ -286,7 +285,7 @@ while IFS= read -r meta <&3; do
        else null end) as $condition
     | (if $condition == null then null
        else [$condition,(if $wait_class == "paused" then $wait_raw else $status_raw end),($step // ""),
-             (if $condition == "crew-state-unverified" then ($state_observed_at // $harness_since)
+             (if $condition == "crew-state-unverified" then $state_observed_at
               elif $condition == "idle-without-terminal-status" then $harness_since
               elif $ci != null then $ci_progress_at
               elif $wait_class == "paused" then $wait_progress_at else $step_changed end),
@@ -314,7 +313,7 @@ while IFS= read -r meta <&3; do
     condition=$(jq -r '.alert.condition' <<< "$row")
     step=$(jq -r '.run_step.state // "none"' <<< "$row")
     ci_detail=$(jq -r 'if .alert.condition == "crew-state-unverified" then
-      "crew-state unreadable since " + ((.current_state.observed_at // "never") | tostring) +
+      "crew-state unreadable since " + (.current_state.observed_at | tostring) +
       "; inspect worker and fm-crew-state"
       elif .run_step.state == null then
       "no attributed validation run; inspect commit and worker status"
