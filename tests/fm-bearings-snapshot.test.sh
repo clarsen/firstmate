@@ -3359,8 +3359,9 @@ SH
     run "$home" "$fakebin" --json > "$parallel_file" &
   snapshot_pid=$!
   i=0
-  while [ ! -e "$home/nm-started" ] && [ "$i" -lt 100 ]; do
-    sleep 0.05
+  while [ ! -e "$home/nm-started" ] && [ "$i" -lt 120 ]; do
+    kill -0 "$snapshot_pid" 2>/dev/null || break
+    sleep 1
     i=$((i + 1))
   done
   if [ ! -e "$home/nm-started" ]; then
