@@ -1117,6 +1117,9 @@ test_portable_serial_shards_partition_the_serial_lane() {
   [ "$count" -ge 2 ] || fail "expected at least two portable serial shard lanes, got $count"
   printf '%s\n' "$lanes" | grep -q "^portable-serial-1of${count}\$" \
     || fail "shard lane names must carry the shard count ${count}: $lanes"
+  [ "$("$RUNNER" --list --lane "portable-serial-${count}of${count}")" = \
+    tests/fm-supervision-host.test.sh ] \
+    || fail "final portable serial shard must contain only the supervision-host suite"
 
   serial=$("$RUNNER" --list --lane portable-serial | LC_ALL=C sort)
   union=""
@@ -1228,6 +1231,46 @@ PY
     fi
   done
   pass "serial packing accepts the exact budget and refuses one millisecond above it"
+}
+
+test_portable_serial_dedicated_ceiling_boundary() {
+  local tmp repo script weight out rc
+  tmp=$(fm_test_tmproot fm-test-run-dedicated-ceiling)
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  # Same fixture as the packing boundary: only the host suite's measured timing
+  # input changes, so the dedicated shard's ceiling is the variable under test.
+  while IFS= read -r script; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/$script"
+  done < <("$RUNNER" --list --all)
+
+  for weight in 2280000 2280001; do
+    cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+    python3 - "$repo/bin/fm-test-run.sh" "$weight" <<'PY' \
+      || fail "could not seed the fixture's measured timing input"
+from pathlib import Path
+import re, sys
+runner = Path(sys.argv[1])
+runner.write_text(re.sub(
+    r"(?m)^tests/fm-supervision-host\.test\.sh [0-9]+$",
+    f"tests/fm-supervision-host.test.sh {sys.argv[2]}",
+    runner.read_text(),
+))
+PY
+    out=$(bash "$repo/bin/fm-test-run.sh" --check-coverage 2>&1) && rc=0 || rc=$?
+    if [ "$weight" -eq 2280000 ]; then
+      expect_code 0 "$rc" "a host suite exactly at the dedicated ceiling must be accepted"
+      assert_contains "$out" "FM_TEST_COVERAGE ok" "dedicated ceiling coverage did not pass"
+      assert_contains "$out" "serial_dedicated_ms=2280000" "fixture did not pack exactly at the ceiling"
+      assert_contains "$out" "serial_dedicated_budget_ms=2280000" "fixture changed the dedicated ceiling"
+    else
+      expect_code 1 "$rc" "a host suite one millisecond above the dedicated ceiling must be refused"
+      assert_contains "$out" "dedicated portable serial shard packs 2280001ms above the 2280000ms ceiling" \
+        "over-ceiling refusal did not explain the modeled excess"
+      assert_not_contains "$out" "FM_TEST_COVERAGE ok" "over-ceiling host suite reported success"
+    fi
+  done
+  pass "the dedicated serial shard accepts its exact ceiling and refuses one millisecond above it"
 }
 
 test_portable_serial_shard_lane_refusals() {
@@ -1855,6 +1898,7 @@ test_portable_parallel_lanes_stay_duration_balanced
 test_portable_serial_shards_partition_the_serial_lane
 test_portable_serial_hint_coverage_is_reported_and_bounded
 test_portable_serial_packing_budget_boundary
+test_portable_serial_dedicated_ceiling_boundary
 test_portable_serial_shard_lane_refusals
 test_jobs_requires_proven_isolated
 test_jobs_admits_a_concurrent_safe_family

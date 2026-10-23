@@ -290,13 +290,25 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.FIRSTMATE_CI_LINUX_RUNNER || '"ubuntu-latest"') || 'ubuntu-latest' }}
-    # Normal tier (see the timeout policy above).
-    timeout-minutes: 30
+    # Normal tier (see the timeout policy above), except the final shard: it
+    # holds only the supervision-host suite and carries the policy's single
+    # dedicated-shard exception.
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        include:
+          - { shard: 1, timeout: 30 }
+          - { shard: 2, timeout: 30 }
+          - { shard: 3, timeout: 30 }
+          - { shard: 4, timeout: 30 }
+          - { shard: 5, timeout: 30 }
+          - { shard: 6, timeout: 30 }
+          - { shard: 7, timeout: 30 }
+          - { shard: 8, timeout: 30 }
+          - { shard: 9, timeout: 30 }
+          - { shard: 10, timeout: 45 }
     steps:
       - uses: actions/checkout@v6
         with:

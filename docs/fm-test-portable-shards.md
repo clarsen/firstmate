@@ -21,8 +21,9 @@ A failed script's duration is excluded even when its lane uploaded an artifact.
 In particular, run 36664663190's serial 5 finished in 22m15s with an assertion failure, not a timeout; treating that as a healthy whole-lane sample would hide the failure.
 Collect successful per-script measurements for every member before calculating a split.
 
-`tests/fm-supervision-host.test.sh` uses 789123 ms from run 36669175457, after the merged [host runtime fix](https://github.com/kunchenguid/firstmate/pull/6179), rather than its pre-fix maximum of 1065298 ms.
-That post-fix value has only one sample in this baseline, so further green runs must establish its variance.
+`tests/fm-supervision-host.test.sh` uses 1656770 ms, its passing duration in [PR 32 run 39527358680](https://github.com/clarsen/firstmate/actions/runs/39527358680), where it ran in serial shard 2 before that job was cancelled at its 30-minute cap.
+Two recent main runs measured it at 1507 and 1528 seconds, so the hint is the largest of these three samples.
+The earlier 789123 ms sample from run 36669175457, after the merged [host runtime fix](https://github.com/kunchenguid/firstmate/pull/6179), no longer represents the suite.
 The native-Windows-only `tests/fm-pi-windows-shell-invocation.test.sh` retains its separate 5121 ms measurement from 2026-09-06T21:02Z instead of a portable capability skip.
 `tests/fm-captain-question.test.sh` postdates that baseline and uses its successful 1116 ms sample from run [39518822414](https://github.com/clarsen/firstmate/actions/runs/39518822414), so the unmeasured default no longer changes the serial packing.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
@@ -55,8 +56,14 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 
 `bin/fm-test-run.sh` owns `n` and refuses any lane whose `of<n>` disagrees with it.
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
+The tenth shard contains only `tests/fm-supervision-host.test.sh` because recent successful runs measured 1507 and 1528 seconds on main and 1657 seconds on [PR 32](https://github.com/clarsen/firstmate/pull/32).
+Its long runtime leaves too little of a 30-minute job for other scripts.
+The other nine shards use the 20-minute modeled packing target.
+The dedicated shard is checked for singleton membership and runs under the 45-minute dedicated-shard exception in [Timeouts](#timeouts).
+`--check-coverage` reports its hint as `serial_dedicated_ms=` and refuses one above the 38-minute `PORTABLE_SERIAL_DEDICATED_MAX_WEIGHT_MS` ceiling (`serial_dedicated_budget_ms=`), which leaves seven minutes for setup and variance.
+Past that ceiling, speed up or split the host suite instead of raising the timeout again.
 
-Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
+Assignment for the other nine shards is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
 [Verification inputs](#verification-inputs) owns the measurement provenance and exceptions.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
@@ -67,8 +74,8 @@ Refresh the hints whenever a serial member grows materially or the lane gains sc
 
 `bin/fm-test-run.sh` owns the per-shard packing, so its `--check-coverage` output is the current account of lane size and coverage rather than a copied inventory.
 Its header and `--help` own the modeled-budget check and output fields; read the current estimates from `--check-coverage` instead of retaining copied lane sums here.
-[`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh), in `test_portable_serial_packing_budget_boundary`, verifies acceptance exactly at the budget and refusal one millisecond above it through the executable runner.
-The longest script, `tests/fm-watch-triage.test.sh`, is the indivisible floor for this layout.
+[`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh), in `test_portable_serial_packing_budget_boundary`, verifies acceptance exactly at the budget and refusal one millisecond above it through the executable runner, and `test_portable_serial_dedicated_ceiling_boundary` does the same for the dedicated shard's ceiling.
+The longest shared-shard script, `tests/fm-watch-triage.test.sh`, is the indivisible floor for the other nine shards.
 The estimates use per-file maxima from different runs, not measured rebalanced jobs or an end-to-end latency guarantee.
 The baseline watch-triage samples range from 944375 to 1074843 ms, while each observed completed portable job adds at most 30 seconds beyond its summed scripts in these runs.
 Even so, maxima from five runs do not establish a P95 or guarantee future headroom.
@@ -112,9 +119,9 @@ Its `--list-files` interface exposes partition membership; `tests/fm-lint.test.s
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
 No fast mode, path skips, or paid runner provisioning is part of this layout.
 
-The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the current watch-triage floor alone exceeds that objective.
+The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the supervision-host suite and the watch-triage floor each exceed that objective alone.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses fourteen long-lived Linux jobs (nine serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses fifteen long-lived Linux jobs (ten serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 
@@ -178,13 +185,15 @@ Follow-ups outside this change: reduce the matrix itself, and skip CI for docume
 CI job timeouts follow one three-tier policy, so the workflow reads as a policy rather than as a collection of per-job numbers.
 Every tier is a hang tripwire with headroom above the healthy duration, never a packing estimate or a runtime target.
 A lane that reaches its tier bound needs investigation and a distribution or runtime fix, not a larger timeout to fit the same work.
+The one deliberate exception is the dedicated supervision-host serial shard, whose single indivisible suite measured 1507-1657 seconds and cannot be redistributed; the captain raised that shard alone to 45 minutes, guarded by the 38-minute modeled ceiling in [Portable serial CI shards](#portable-serial-ci-shards).
 
 | Tier | Jobs | Bound | Rationale |
 |---|---|---|---|
 | Fast | coverage guard, repo invariants, timing aggregate | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
-| Normal | lint partitions, portable parallel shards, portable serial shards, macOS stock Bash | 30 minutes, one value shared by every job in the tier | One shared hang tripwire keeps every ordinary test and lint lane on the same policy instead of allowing per-lane packing estimates or one-off caps to set the bound. |
+| Normal | lint partitions, portable parallel shards, portable serial shards except the dedicated one, macOS stock Bash | 30 minutes, one value shared by every job in the tier | One shared hang tripwire keeps every ordinary test and lint lane on the same policy instead of allowing per-lane packing estimates or one-off caps to set the bound. |
+| Dedicated exception | final portable serial shard (supervision-host suite only) | 45 minutes | The suite alone measured up to about 28 minutes, too close to the normal bound; the modeled ceiling fails coverage before it nears this one. |
 | Heavy | Herdr | family-run step 20 minutes under a 75-minute job-level last-resort backstop | Healthy runs finish in about 7-10 minutes, so the step tripwire fails a wedged suite while the `always()` cleanup and timing upload still run, and the job cap only catches a hang outside that step. |
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) holds the executable values and names each job's tier beside its `timeout-minutes`.
-[`tests/fm-ci-workflow.test.sh`](../tests/fm-ci-workflow.test.sh) holds the policy against the parsed workflow: every job belongs to exactly one tier, the workflow carries exactly three distinct job-level values, the fast tier stays within 5-10 minutes, the normal jobs share one 30-minute budget, and the Herdr family-run step is the 20-minute tripwire below its job backstop with an `always()` teardown after it.
+[`tests/fm-ci-workflow.test.sh`](../tests/fm-ci-workflow.test.sh) holds the policy against the parsed workflow: every job belongs to exactly one tier, the workflow carries exactly three distinct tier values besides the dedicated exception, the fast tier stays within 5-10 minutes, the normal jobs share one 30-minute budget, only the final serial shard carries the 45-minute exception and contains only the supervision-host suite, and the Herdr family-run step is the 20-minute tripwire below its job backstop with an `always()` teardown after it.
 A passing coverage guard does not establish a healthy job duration; refresh the healthy figures above from the lanes' uploaded timing artifacts.
