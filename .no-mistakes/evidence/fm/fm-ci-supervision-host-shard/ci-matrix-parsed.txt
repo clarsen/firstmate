@@ -1,0 +1,27 @@
+# Parsed .github/workflows/ci.yml (PyYAML) - tests-portable-serial job matrix
+timeout-minutes: ${{ matrix.timeout }}
+job-total: 10
+  shard 1: timeout 30 min -> lane portable-serial-1of10
+  shard 2: timeout 30 min -> lane portable-serial-2of10
+  shard 3: timeout 30 min -> lane portable-serial-3of10
+  shard 4: timeout 30 min -> lane portable-serial-4of10
+  shard 5: timeout 30 min -> lane portable-serial-5of10
+  shard 6: timeout 30 min -> lane portable-serial-6of10
+  shard 7: timeout 30 min -> lane portable-serial-7of10
+  shard 8: timeout 30 min -> lane portable-serial-8of10
+  shard 9: timeout 30 min -> lane portable-serial-9of10
+  shard 10: timeout 45 min -> lane portable-serial-10of10
+fail-fast: False
+OK: shards 1-9 at 30 min, only shard 10 at 45 min
+
+# Each matrix lane name is accepted by the runner
+portable-serial-1of10 -> accepted
+portable-serial-2of10 -> accepted
+portable-serial-3of10 -> accepted
+portable-serial-4of10 -> accepted
+portable-serial-5of10 -> accepted
+portable-serial-6of10 -> accepted
+portable-serial-7of10 -> accepted
+portable-serial-8of10 -> accepted
+portable-serial-9of10 -> accepted
+portable-serial-10of10 -> accepted

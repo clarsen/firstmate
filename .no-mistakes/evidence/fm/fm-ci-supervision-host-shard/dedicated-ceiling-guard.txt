@@ -1,0 +1,32 @@
+$ LC_ALL=C bin/fm-test-run.sh --check-coverage   (target commit)
+FM_TEST_COVERAGE ok total=262 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=222 serial_shards=10 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 serial_dedicated_ms=1656770 serial_dedicated_budget_ms=2280000 herdr=16
+exit=0
+
+# Adversarial: disposable copy with host-suite hint raised to 2280001 ms (1 ms over 38-min ceiling)
+881:tests/fm-supervision-host.test.sh 2280001
+fm-test-run: coverage guard: dedicated portable serial shard packs 2280001ms above the 2280000ms ceiling
+fm-test-run: speed up or split tests/fm-supervision-host.test.sh; do not raise the job timeout further: docs/fm-test-portable-shards.md
+exit=1
+
+# Boundary: hint exactly at ceiling 2280000 ms
+FM_TEST_COVERAGE ok total=262 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=222 serial_shards=10 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 serial_dedicated_ms=2280000 serial_dedicated_budget_ms=2280000 herdr=16
+exit=0
+
+# Adversarial: shared shards stay under the 20-min target even with a huge host hint (host suite never packed into shards 1-9)
+      9 0
+
+$ bin/fm-test-run.sh --list-lanes
+portable-parallel-1
+portable-parallel-2
+portable-serial
+portable-serial-1of10
+portable-serial-2of10
+portable-serial-3of10
+portable-serial-4of10
+portable-serial-5of10
+portable-serial-6of10
+portable-serial-7of10
+portable-serial-8of10
+portable-serial-9of10
+portable-serial-10of10
+real-herdr-gated
