@@ -18,7 +18,8 @@
 # are visited least-recently-checked first so every report is eventually read.
 # CI progress is the latest of the run-step or wait change, the newest finished
 # job on the current head, and the retained progress for that same head.
-# GitHub CI waits use completed checks on the PR's current head; GitLab waits
+# GitHub CI waits use completed checks on the PR's current head, selected by
+# status because gh reports a 0001-01-01 completedAt on queued checks; GitLab waits
 # use finished jobs on the MR's head pipeline and surface a skipped head immediately.
 set -u
 
