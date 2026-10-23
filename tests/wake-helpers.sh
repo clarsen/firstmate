@@ -58,6 +58,7 @@ make_case() {
   dir="$TMP_ROOT/$name"
   fakebin="$dir/fakebin"
   mkdir -p "$dir/state" "$fakebin"
+  printf '{"schema":"fm-crew-ledger.v1","checked_at":null,"crew":[]}\n' > "$dir/state/crew-ledger.json"
   fm_test_track_watcher_state "$dir/state"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash

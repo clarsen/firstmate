@@ -167,6 +167,7 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 --include-prs additionally performs live GitHub discovery and checks.
 
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,name_full,doing},
+  crew_alerts{id,condition,checked_at},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner},
@@ -721,6 +722,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            captain_omitted:([$measured[].captain_omitted] | add // 0),
            captain:[$measured[] as $h | $h.captain[]? | . + {owner:$h.owner}]}),
       in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end | map(del(._owner))),
+      crew_alerts:[ ($snap.crew_ledger.crew // [])[] | select(.alert != null)
+        | {id,condition:.alert.condition,checked_at} ],
       secondmates: (if $all_secondmates == 1 then $secondmates_all else $secondmates_all[:$secondmates_n] end),
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)

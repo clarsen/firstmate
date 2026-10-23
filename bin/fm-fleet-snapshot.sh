@@ -68,6 +68,10 @@
 #     endpoint.agent_alive is populated for local secondmates only, where it is
 #     useful return-channel supervision data; remote secondmates use "unknown"
 #     without a probe, and other tasks use "not_checked".
+#   crew_ledger: last watcher observation of this home's direct reports from
+#     state/crew-ledger.json. Each row keeps harness activity, last status event,
+#     run-step state and change time, and the last check time. It is observational
+#     history and never overrides tasks[].current_state.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json
@@ -2013,6 +2017,7 @@ MAIN_INVENTORY_JSON_FILE="$JSON_TRANSPORT_DIR/main-inventory.json"
 SCOUT_REPORTS_JSON_FILE="$JSON_TRANSPORT_DIR/scout-reports.json"
 SECONDMATE_CURRENT_JSON_FILE="$JSON_TRANSPORT_DIR/secondmate-current.json"
 SECONDMATE_LANDED_JSON_FILE="$JSON_TRANSPORT_DIR/secondmate-landed.json"
+CREW_LEDGER_JSON_FILE="$JSON_TRANSPORT_DIR/crew-ledger.json"
 printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary backlog file write failed" >&2; exit 1; }
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
@@ -2043,6 +2048,13 @@ secondmate_current_json "$TASKS_JSON_FILE" "$SECONDMATE_CURRENT_JSON_FILE" \
   || { echo "fm-fleet-snapshot: registered secondmate aggregation failed" >&2; exit 1; }
 secondmate_landed_from_current_json "$SECONDMATE_CURRENT_JSON_FILE" "$SECONDMATE_LANDED_JSON_FILE" \
   || { echo "fm-fleet-snapshot: secondmate landed projection failed" >&2; exit 1; }
+if [ -f "$STATE/crew-ledger.json" ] && jq -e \
+  '.schema == "fm-crew-ledger.v1" and (.crew | type == "array")' \
+  "$STATE/crew-ledger.json" >/dev/null 2>&1; then
+  cp -- "$STATE/crew-ledger.json" "$CREW_LEDGER_JSON_FILE" || exit 1
+else
+  printf '{"schema":"fm-crew-ledger.v1","checked_at":null,"crew":[]}\n' > "$CREW_LEDGER_JSON_FILE"
+fi
 
 jq -n \
   --arg generated "$SNAPSHOT_NOW" \
@@ -2059,6 +2071,7 @@ jq -n \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
   --slurpfile secondmate_current "$SECONDMATE_CURRENT_JSON_FILE" \
   --slurpfile secondmate_landed "$SECONDMATE_LANDED_JSON_FILE" \
+  --slurpfile crew_ledger "$CREW_LEDGER_JSON_FILE" \
   '($backlog[0]) as $backlog
    | ($tasks[0]) as $tasks
    | ($main_inventory[0]) as $main_inventory
@@ -2075,6 +2088,7 @@ jq -n \
      roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
+     crew_ledger:$crew_ledger[0],
      main_inventory:$main_inventory,
      contributions:$contributions[0],
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),

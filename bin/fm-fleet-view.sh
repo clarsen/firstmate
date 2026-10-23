@@ -52,6 +52,8 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     else $t.actions.watch end;
   def task_row($t):
     "| \($t.id) | \($t.current_state.state) / \($t.current_state.source) | \($t.kind) | \(dash($t.backlog.repo // $t.project)) | \($t.backend) | \(endpoint_of($t)) | \(artifact($t)) | \(path_of($t)) | \(action_of($t)) |";
+  def ledger_row($r):
+    "| \($r.id) | \($r.harness.state) / \($r.harness.source) | \(dash($r.last_status.state)) / \(dash($r.last_status.at)) | \(dash($r.run_step.state)) / \(dash($r.run_step.changed_at)) | \(dash($r.ci_progress.completed_count)) / \(dash($r.ci_progress.progress_at)) | \($r.checked_at) | \(dash($r.alert.condition)) |";
   def blocker($r):
     if ($r.blocked_by // "") == "" then "-"
     elif ($r.blocked_reason // "") == "" then $r.blocked_by
@@ -71,6 +73,15 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     "| ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     (.tasks[] | task_row(.))
+   end),
+  "",
+  "## Crew Ledger",
+  (if (.crew_ledger.crew | length) == 0 then
+    "No crew observations recorded yet."
+   else
+    "| ID | Harness | Last status / epoch | Run step / changed epoch | CI jobs / progress epoch | Checked epoch | Alert |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    (.crew_ledger.crew[] | ledger_row(.))
    end),
   "",
   "## Queued",

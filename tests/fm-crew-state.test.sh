@@ -806,10 +806,16 @@ test_active_run_is_authoritative() {
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-a.meta" "window=fm:fm-feat-a" "worktree=$d/wt" "kind=ship"
   FM_FAKE_AXI_STATUS="$(run_running fm/feat-a)"
-  local out; out=$(run_crew_state "$d" feat-a)
+  local out ledger_out; out=$(run_crew_state "$d" feat-a)
   assert_contains "$out" "state: working" "active run -> working"
   assert_contains "$out" "source: run-step" "active run -> run-step source"
   assert_contains "$out" "validating (running)" "active run reports the step"
+  ledger_out=$(FM_CREW_STATE_LEDGER=1 run_crew_state "$d" feat-a)
+  assert_contains "$ledger_out" $'\nrun-step: running' "ledger mode exposes a stable run-step label"
+  FM_FAKE_AXI_STATUS=$(run_running fm/feat-a | sed 's#pr: ""#pr: "https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416"#')
+  ledger_out=$(FM_CREW_STATE_LEDGER=1 run_crew_state "$d" feat-a)
+  assert_contains "$ledger_out" $'\nrun-pr: https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416' \
+    'ledger mode exposes the attributed forge change'
   pass "active run-step is authoritative"
 }
 

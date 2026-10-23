@@ -84,6 +84,7 @@ Each effective `FM_HOME` contains private operational directories.
 `state/` holds runtime records:
 
 - Task metadata, append-only status events, and endpoint signals.
+- The watcher-owned direct-report observation at `state/crew-ledger.json` (`bin/fm-crew-ledger.sh`).
 - Watcher and wake-queue coordination, away-mode state, and generated Relay artifacts.
 - Inactive terminal-outcome receipts under `state/terminal-outcomes/`.
 - Enabled extension working namespaces under `state/extensions/`.
@@ -2395,6 +2396,12 @@ FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=14  # floored elapsed-day threshold at which a
 FM_RECONCILE_REQUEST_MAX_BYTES=1048576   # maximum captured Bearings or fleet snapshot accepted for durable reconcile-notify request publication
 FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartbeats are absorbed while idle
 FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
+FM_CREW_LEDGER_CHECK_SECS=60  # watcher cadence for refreshing the direct-report observation
+FM_CREW_LEDGER_IDLE_SECS=300  # idle crew without a current terminal or decision state before one check wake
+FM_CREW_LEDGER_WAIT_SECS=1800  # idle declared wait or active run-step without progress before one check wake
+FM_CREW_LEDGER_STATE_TIMEOUT=12  # bound for each canonical crew-state read during a ledger check
+FM_CREW_LEDGER_CI_TIMEOUT=8  # bound for each GitHub PR or GitLab MR CI progress query on a declared wait
+FM_CREW_LEDGER_BUDGET_SECS=20  # per-check deadline after which unread crew keep their previous rows; least-recently-checked crew go first
 FM_INACTIVE_RECONCILE_SECS=900  # 60..1800-second watcher cadence and inactivity threshold; locked session start also requests an immediate scan in the deferred worker
 FM_INACTIVE_RECONCILE_BUDGET_SECS=10  # 1..30-second scan deadline; wedged-scan kill backstop follows one second later
 FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or Relay dispatch)

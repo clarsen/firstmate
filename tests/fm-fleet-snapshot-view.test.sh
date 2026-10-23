@@ -1152,6 +1152,26 @@ EOF
   pass "home-summary excludes kind=secondmate from unowned_current and terminal_in_flight"
 }
 
+test_crew_ledger_is_visible() {
+  local home fakebin out view
+  home=$(make_home crew-ledger-view)
+  fakebin=$(make_fakebin "$home")
+  write_fixture "$home"
+  cat > "$home/state/crew-ledger.json" <<'EOF'
+{"schema":"fm-crew-ledger.v1","checked_at":10000,"crew":[{"id":"ship-task","harness":{"state":"idle","source":"claude-hook","since":9000},"last_status":{"state":"paused","raw":"paused [at=8000]: CI waiting","at":8000},"run_step":{"state":"ci/running","changed_at":8000},"checked_at":10000,"alert":{"condition":"declared-wait-no-run-progress"}}]}
+EOF
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json) || fail 'ledger snapshot failed'
+  printf '%s' "$out" | jq -e '.crew_ledger.crew[0] |
+    .id == "ship-task" and .harness.state == "idle" and
+    .last_status.at == 8000 and .run_step.changed_at == 8000 and
+    .checked_at == 10000 and .alert.condition == "declared-wait-no-run-progress"' \
+    >/dev/null || fail 'structured view lost crew ledger evidence'
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW") || fail 'ledger view failed'
+  assert_contains "$view" '| ship-task | idle / claude-hook | paused / 8000 | ci/running / 8000 | - / - | 10000 | declared-wait-no-run-progress |' \
+    'human fleet view omitted the ledger row'
+  pass 'fleet snapshot and view expose the durable crew ledger'
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_home_summary_excludes_secondmate_from_child_inventory
@@ -1170,3 +1190,4 @@ test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
+test_crew_ledger_is_visible

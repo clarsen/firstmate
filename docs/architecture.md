@@ -100,6 +100,15 @@ The pause path still never reads a secondmate's endpoint liveness - dead-or-miss
 Its initial normal-mode status signal still surfaces through the no-verb path, while a daemon-backed away posture self-handles that routine signal and owns later external-wait rechecks.
 Fresh stale panes use the same current-state read before trusting the status log, so an active run or a proven busy worker outranks an old captain-relevant status-log line left behind before validation.
 No-change heartbeats are also benign.
+The watcher independently refreshes `state/crew-ledger.json` on `FM_CREW_LEDGER_CHECK_SECS`, using the harness busy classifier and `bin/fm-crew-state.sh` as separate observations of each direct report in this home.
+The record retains each worker's running or idle verdict, last status event and emission time, run-step label and last change time, forge CI progress when available, and the last check time; an unreadable harness remains unknown rather than becoming idle.
+An idle ordinary crew without a current terminal or decision state wakes firstmate after `FM_CREW_LEDGER_IDLE_SECS`.
+An idle crew on a GitHub CI step uses completed checks on the PR's current head as progress, while a GitLab CI step uses finished jobs on the merge request's head pipeline.
+Both wake after `FM_CREW_LEDGER_WAIT_SECS` without a new completion; a skipped GitLab head pipeline wakes immediately because the CI monitor cannot turn it green.
+Other waits use the run-step or harness transition, and an unreadable PR or merge request query is recorded as unverified evidence and gets its own actionable reason after that bound.
+A failed `bin/fm-crew-state.sh` read keeps the last successful verdict for `FM_CREW_LEDGER_WAIT_SECS`, then wakes once as `crew-state-unverified`; a crew with no successful read is judged as unknown state, so the idle bound still applies.
+The alert signature stays in that same durable record and prevents another wake for the unchanged condition across watcher restarts; a new wait declaration, run-step transition, PR check completion, or busy turn starts a new episode, while an unrelated resolution leaves the wait intact.
+This cross-check is independent of pane-hash staleness, declared-pause resurface timing, and heartbeat backoff, and its check wake asks firstmate to inspect the worker and external dependency.
 Separately from heartbeat backoff and wedge handling, the watcher poll runs `bin/fm-inactive-reconcile.sh` on its own bounded cadence, while locked session start sends the same bounded local scan through `bin/fm-startup-network.sh`'s deferred worker so current-state reads never block the digest.
 In each home the scan considers only that home's long-inactive direct ordinary crewmates, excludes captain-held work, and accepts only `done` or `failed` from `bin/fm-crew-state.sh`.
 A secondmate retains a durable receipt for its idempotent report through the established parent route, and main-home captain presentation retains a separate receipt; neither path performs a forge or PR check.
@@ -140,6 +149,7 @@ GitHub PRs and issues are observed; unsupported forges remain disclosed as unmea
 The existing Bearings Captain's Call consumes that coverage, and its skill owns supervisor triage through existing captain holds and durable check wakes.
 
 For whole-fleet review, `bin/fm-fleet-snapshot.sh --json` emits schema `fm-fleet-snapshot.v1` from the backlog, task metadata, local current crew state, supervision-owned endpoint evidence, PR/report pointers, scout reports, bounded current summaries from registered secondmate homes, and secondmate return-channel guidance.
+Its `crew_ledger` field exposes the latest watcher observation, `bin/fm-fleet-view.sh` renders that record for heartbeat review, and Bearings shows active ledger alerts.
 Each home atomically publishes that bounded home summary with freshness epoch metadata at `state/home-summary.json` after a locked session start, a watcher-observed status change, task spawn, task teardown, and on a recurring live-watcher cadence; `bin/fm-home-summary-refresh.sh` owns the publication mechanics.
 The fleet snapshot and Bearings paths use the concurrent remote-ledger collection, cache, unreadable-home disclosure, and remote-liveness boundary owned by `bin/fm-fleet-snapshot.sh`'s header.
 `bin/fm-fleet-view.sh` renders that snapshot as Markdown for humans, while `bin/fm-bearings-snapshot.sh` provides the bounded bearings projection, so both views consume one structured contract instead of reparsing raw fleet files.

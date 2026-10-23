@@ -26,6 +26,9 @@ WATCH="$ROOT/bin/fm-watch.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-watch-triage-tests)
+# Pane-capture count fixtures exercise the stale classifier; the independent
+# ledger has its own watcher regression in fm-crew-ledger.test.sh.
+export FM_CREW_LEDGER_CHECK_SECS=999999
 
 ack_stopped_cycle() {  # <state>
   local state=$1 err sequence generation
