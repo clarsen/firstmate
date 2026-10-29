@@ -3815,13 +3815,22 @@ EOF
   done < <(git -C "$dir" ls-files --stage -z 2>/dev/null)
 }
 
+# Print every submodule path whose checked-out commit differs from the gitlink
+# HEAD records, regardless of any configured submodule ignore setting.
+stale_submodule_gitlinks() { # <worktree>
+  local raw
+  raw=$(git -C "$1" -c core.quotePath=false diff-index --ignore-submodules=dirty HEAD --) || return 1
+  printf '%s\n' "$raw" | awk -F '\t' '/^:160000 160000 / { print $2 }'
+}
+
 # An earlier base refresh can leave a pooled slot's submodule checkout on the
-# previous pin. Every status entry is inspected before any checkout moves, and
-# each stale pin is collected even when the slot does not qualify, so a refusal
-# can name it. Only clean, disposable submodule gitlinks qualify, so mixed drift
-# cannot trigger a partial realignment.
-classify_stale_submodule_pins() { # <worktree> <status>
-  local worktree=$1 status=$2 line path want have qualifies=0
+# previous pin. The configured status is the cleanliness baseline: each of its
+# entries must be one of the stale gitlinks. Every stale pin is collected even
+# when the slot does not qualify, so a refusal can name it, and every one must be
+# disposable before any checkout moves, so mixed drift cannot trigger a partial
+# realignment.
+classify_stale_submodule_pins() { # <worktree> <status> <stale-gitlinks>
+  local worktree=$1 status=$2 stale=$3 line path want have qualifies=0
   SPAWN_STALE_SUBMODULE_PATHS=()
   SPAWN_STALE_SUBMODULE_OLD=()
   SPAWN_STALE_SUBMODULE_NEW=()
@@ -3829,8 +3838,13 @@ classify_stale_submodule_pins() { # <worktree> <status>
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case $line in ' M '*) path=${line#' M '} ;; *) qualifies=1; continue ;; esac
-    if [ "$(git -C "$worktree" ls-files --stage -- "$path" 2>/dev/null | cut -c1-6)" = 160000 ] \
-      && want=$(git -C "$worktree" rev-parse --verify --quiet "HEAD:$path" 2>/dev/null) \
+    case $'\n'"$stale"$'\n' in *$'\n'"$path"$'\n'*) ;; *) qualifies=1 ;; esac
+  done <<EOF
+$status
+EOF
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if want=$(git -C "$worktree" rev-parse --verify --quiet "HEAD:$path" 2>/dev/null) \
       && have=$(git -C "$worktree/$path" rev-parse --verify --quiet HEAD 2>/dev/null) \
       && [ "$want" != "$have" ]; then
       SPAWN_STALE_SUBMODULE_PATHS+=("$path")
@@ -3841,22 +3855,23 @@ classify_stale_submodule_pins() { # <worktree> <status>
       qualifies=1
     fi
   done <<EOF
-$status
+$stale
 EOF
   return "$qualifies"
 }
 
 realign_stale_submodule_pins() { # <worktree>
-  local worktree=$1 status i reason="pooled worktree '$1' is not clean; refusing to discard uncommitted work while refreshing its base"
-  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=all --ignore-submodules=none) || {
+  local worktree=$1 status stale i reason="pooled worktree '$1' is not clean; refusing to discard uncommitted work while refreshing its base"
+  if ! status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) \
+    || ! stale=$(stale_submodule_gitlinks "$worktree"); then
     echo "error: could not inspect pooled worktree '$worktree' while refreshing its base" >&2
     return 1
-  }
-  [ -n "$status" ] || return 0
-  if classify_stale_submodule_pins "$worktree" "$status"; then
+  fi
+  [ -n "$status$stale" ] || return 0
+  if classify_stale_submodule_pins "$worktree" "$status" "$stale"; then
     if git -C "$worktree" submodule update --recursive --checkout -- "${SPAWN_STALE_SUBMODULE_PATHS[@]}" >&2; then
-      status=$(git -C "$worktree" status --porcelain --untracked-files=all --ignore-submodules=none) || status=inspection-failed
-      if [ -z "$status" ]; then
+      { status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) && stale=$(stale_submodule_gitlinks "$worktree"); } || status=inspection-failed
+      if [ -z "$status$stale" ]; then
         for i in "${!SPAWN_STALE_SUBMODULE_PATHS[@]}"; do
           echo "realigned submodule '${SPAWN_STALE_SUBMODULE_PATHS[$i]}' in pooled worktree '$worktree': ${SPAWN_STALE_SUBMODULE_OLD[$i]} -> ${SPAWN_STALE_SUBMODULE_NEW[$i]}" >&2
         done

@@ -622,6 +622,47 @@ test_ignored_files_do_not_block_realignment() {
   pass "gitignored files inside a stale submodule do not block realignment"
 }
 
+test_config_ignored_submodule_content_at_current_pin_launches() {
+  local rec id out status
+  id='pool-sub-config-ignored-r1'
+  rec=$(make_submodule_case sub-config-ignored "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$POOL_DIR/ui" checkout --quiet "$SUBPIN2"
+  git -C "$POOL_DIR" config submodule.ui.ignore dirty
+  printf 'scratch the project ignores by config\n' > "$POOL_DIR/ui/scratch.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "content hidden by submodule.ui.ignore should not block a current-pin launch"$'\n'"$out"
+  assert_not_contains "$out" "realigned submodule" "spawn realigned a submodule already on its recorded pin"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn moved a submodule already on its recorded pin"
+  assert_grep 'scratch the project ignores by config' "$POOL_DIR/ui/scratch.txt" \
+    "spawn discarded submodule content hidden by configuration"
+  pass "submodule content hidden by submodule.<name>.ignore does not block a current-pin launch"
+}
+
+test_hidden_untracked_files_do_not_block_realignment() {
+  local rec id out status
+  id='pool-sub-untracked-hidden-r1'
+  rec=$(make_submodule_case sub-untracked-hidden "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$POOL_DIR" config status.showUntrackedFiles no
+  printf 'operator scratch hidden from status\n' > "$POOL_DIR/scratch.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "untracked files hidden by status.showUntrackedFiles=no should not block realignment"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'ui'" "spawn did not realign the stale submodule"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the submodule on its stale pin"
+  assert_grep 'operator scratch hidden from status' "$POOL_DIR/scratch.txt" \
+    "spawn discarded an untracked file hidden by configuration"
+  pass "status.showUntrackedFiles=no keeps hidden untracked files from blocking realignment"
+}
+
 test_ignored_file_colliding_with_recorded_pin_refuses() {
   local rec id out status
   id='pool-sub-ignored-collision-r1'
@@ -1002,6 +1043,8 @@ test_base_reset_realigns_moved_submodule_pin
 test_base_reset_realigns_nested_submodule_pin
 test_ignored_files_do_not_block_realignment
 test_ignored_file_colliding_with_recorded_pin_refuses
+test_config_ignored_submodule_content_at_current_pin_launches
+test_hidden_untracked_files_do_not_block_realignment
 test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work
 test_stale_pin_carrying_real_work_is_not_called_stale
