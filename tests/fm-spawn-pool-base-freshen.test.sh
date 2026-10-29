@@ -456,8 +456,10 @@ test_unresolved_remote_default_refuses_pool() {
 # A base refresh can move the superproject while leaving its submodule on the
 # previous pin. The fixture only builds repositories; a real spawn produces the
 # stale checkout that the following cases exercise.
-make_submodule_case() {  # <name> <id> [nested]
-  local name=$1 id=$2 nested=${3:-} case_dir home project origin pool publisher fakebin sub child subpin1 subpin2 advanced
+make_submodule_case() {  # <name> <id> [nested|spaced]
+  local name=$1 id=$2 nested=${3:-} subpath=ui case_dir home project origin pool publisher fakebin sub child subpin1 subpin2 advanced
+  [ "$nested" != spaced ] || subpath='my ui'
+
   case_dir="$TMP_ROOT/$name"
   home="$case_dir/home"
   project="$case_dir/project"
@@ -493,8 +495,6 @@ make_submodule_case() {  # <name> <id> [nested]
     git -C "$sub" add child
   fi
   printf 'pin two\n' > "$sub/lib.txt"
-  printf 'tracked from pin two\n' > "$sub/generated.cfg"
-  git -C "$sub" add generated.cfg
   git -C "$sub" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam sub-two
   subpin2=$(git -C "$sub" rev-parse HEAD)
   git -C "$sub" checkout --quiet "$subpin1"
@@ -503,7 +503,7 @@ make_submodule_case() {  # <name> <id> [nested]
   printf 'base\n' > "$project/README.md"
   git -C "$project" add README.md
   git -C "$project" -c protocol.file.allow=always -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
-    submodule --quiet add "file://$sub" ui
+    submodule --quiet add "file://$sub" "$subpath"
   git -C "$project" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
   git clone --quiet --bare "$project" "$origin"
   git -C "$project" remote add origin "file://$origin"
@@ -514,16 +514,16 @@ make_submodule_case() {  # <name> <id> [nested]
   # Advance origin and move the submodule pin, exactly as the field incident did.
   git clone --quiet "file://$origin" "$publisher"
   git -C "$publisher" -c protocol.file.allow=always submodule --quiet update --init --recursive
-  git -C "$publisher/ui" checkout --quiet "$subpin2"
+  git -C "$publisher/$subpath" checkout --quiet "$subpin2"
   git -C "$publisher" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam advance-pin
   git -C "$publisher" push --quiet origin main
   advanced=$(git -C "$publisher" rev-parse HEAD)
 
-  printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$subpin1|$subpin2|$advanced"
+  printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$subpin1|$subpin2|$advanced|$subpath"
 }
 
 read_submodule_case() {
-  IFS='|' read -r CASE_DIR HOME_DIR PROJECT_DIR POOL_DIR FAKEBIN_DIR SUBPIN1 SUBPIN2 ADVANCED_SHA <<EOF
+  IFS='|' read -r CASE_DIR HOME_DIR PROJECT_DIR POOL_DIR FAKEBIN_DIR SUBPIN1 SUBPIN2 ADVANCED_SHA SUB_PATH <<EOF
 $1
 EOF
 }
@@ -536,7 +536,7 @@ strand_submodule_pin() {
   git -C "$POOL_DIR" reset --quiet --hard origin/main
   [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$ADVANCED_SHA" ] \
     || fail "the fixture did not move the pooled base across the moved submodule pin"
-  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
+  [ "$(git -C "$POOL_DIR/$SUB_PATH" rev-parse HEAD)" = "$SUBPIN1" ] \
     || fail "the fixture did not strand the submodule on the pin the old base recorded"
 }
 
@@ -663,29 +663,40 @@ test_hidden_untracked_files_do_not_block_realignment() {
   pass "status.showUntrackedFiles=no keeps hidden untracked files from blocking realignment"
 }
 
-test_ignored_file_colliding_with_recorded_pin_refuses() {
+test_stale_submodule_path_with_whitespace_realigns() {
   local rec id out status
-  id='pool-sub-ignored-collision-r1'
-  rec=$(make_submodule_case sub-ignored-collision "$id")
+  id='pool-sub-spaced-r1'
+  rec=$(make_submodule_case sub-spaced "$id" spaced)
   read_submodule_case "$rec"
   strand_submodule_pin
-  printf 'generated.cfg\n' >> "$(git -C "$POOL_DIR/ui" rev-parse --path-format=absolute --git-path info/exclude)"
-  printf 'local settings that must survive\n' > "$POOL_DIR/ui/generated.cfg"
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  [ "$status" -ne 0 ] || fail "spawn launched after overwriting an ignored file tracked at the recorded pin"
-  assert_contains "$out" "stale pin: $SUBPIN1 -> recorded $SUBPIN2" \
-    "the collision refusal did not name the stale submodule pin"
-  assert_contains "$out" "ignored file '$POOL_DIR/ui/generated.cfg' collides" \
-    "the collision refusal did not name the colliding path"
-  assert_not_contains "$out" "realigned submodule" \
-    "spawn realigned a submodule over a colliding ignored file"
+  expect_code 0 "$status" "a clean stale submodule whose path has whitespace should realign"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'my ui'" "spawn did not realign the submodule with a spaced path"
+  [ "$(git -C "$POOL_DIR/my ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the spaced-path submodule on its stale pin"
+  pass "a stale submodule whose path contains whitespace is realigned"
+}
+
+test_ignore_all_submodule_is_left_alone() {
+  local rec id out status
+  id='pool-sub-ignore-all-r1'
+  rec=$(make_submodule_case sub-ignore-all "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$POOL_DIR" config submodule.ui.ignore all
+  printf 'scratch in a submodule the project ignores\n' > "$POOL_DIR/ui/scratch.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a submodule configured ignore=all should not block launch"$'\n'"$out"
+  assert_not_contains "$out" "realigned submodule" "spawn realigned a submodule configured ignore=all"
   [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
-    || fail "spawn moved the submodule despite the ignored-file collision"
-  assert_grep 'local settings that must survive' "$POOL_DIR/ui/generated.cfg" \
-    "spawn overwrote an ignored file that collides with the recorded pin"
-  pass "an ignored file the recorded pin would overwrite refuses realignment before checkout"
+    || fail "spawn moved a submodule configured ignore=all"
+  assert_grep 'scratch in a submodule the project ignores' "$POOL_DIR/ui/scratch.txt" \
+    "spawn discarded content in a submodule configured ignore=all"
+  pass "a submodule configured ignore=all is neither realigned nor refused"
 }
 
 test_unpushed_submodule_commit_is_still_uncommitted_work() {
@@ -1042,7 +1053,8 @@ test_clean_reachable_submodule_pin_realigns
 test_base_reset_realigns_moved_submodule_pin
 test_base_reset_realigns_nested_submodule_pin
 test_ignored_files_do_not_block_realignment
-test_ignored_file_colliding_with_recorded_pin_refuses
+test_stale_submodule_path_with_whitespace_realigns
+test_ignore_all_submodule_is_left_alone
 test_config_ignored_submodule_content_at_current_pin_launches
 test_hidden_untracked_files_do_not_block_realignment
 test_unpushed_submodule_commit_is_still_uncommitted_work
