@@ -493,6 +493,8 @@ make_submodule_case() {  # <name> <id> [nested]
     git -C "$sub" add child
   fi
   printf 'pin two\n' > "$sub/lib.txt"
+  printf 'tracked from pin two\n' > "$sub/generated.cfg"
+  git -C "$sub" add generated.cfg
   git -C "$sub" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam sub-two
   subpin2=$(git -C "$sub" rev-parse HEAD)
   git -C "$sub" checkout --quiet "$subpin1"
@@ -620,6 +622,31 @@ test_ignored_files_do_not_block_realignment() {
   pass "gitignored files inside a stale submodule do not block realignment"
 }
 
+test_ignored_file_colliding_with_recorded_pin_refuses() {
+  local rec id out status
+  id='pool-sub-ignored-collision-r1'
+  rec=$(make_submodule_case sub-ignored-collision "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  printf 'generated.cfg\n' >> "$(git -C "$POOL_DIR/ui" rev-parse --path-format=absolute --git-path info/exclude)"
+  printf 'local settings that must survive\n' > "$POOL_DIR/ui/generated.cfg"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn launched after overwriting an ignored file tracked at the recorded pin"
+  assert_contains "$out" "stale pin: $SUBPIN1 -> recorded $SUBPIN2" \
+    "the collision refusal did not name the stale submodule pin"
+  assert_contains "$out" "ignored file '$POOL_DIR/ui/generated.cfg' collides" \
+    "the collision refusal did not name the colliding path"
+  assert_not_contains "$out" "realigned submodule" \
+    "spawn realigned a submodule over a colliding ignored file"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
+    || fail "spawn moved the submodule despite the ignored-file collision"
+  assert_grep 'local settings that must survive' "$POOL_DIR/ui/generated.cfg" \
+    "spawn overwrote an ignored file that collides with the recorded pin"
+  pass "an ignored file the recorded pin would overwrite refuses realignment before checkout"
+}
+
 test_unpushed_submodule_commit_is_still_uncommitted_work() {
   local rec id out status unpushed before before_sub
   id='pool-sub-unpushed-r10'
@@ -647,7 +674,7 @@ test_unpushed_submodule_commit_is_still_uncommitted_work() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot holding an unpushed submodule commit"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "an unpushed submodule commit was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "an unpushed submodule commit was misreported as a stale pin"
   assert_contains "$out" "stale pin: $unpushed -> recorded $SUBPIN2" \
     "the refusal did not name the stale submodule pin"
@@ -678,7 +705,7 @@ test_work_inside_submodule_is_still_uncommitted_work() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot holding work inside a submodule"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "work inside a submodule was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "real work inside a submodule was misreported as a stale pin"
   assert_grep 'work that must survive' "$POOL_DIR/ui/keep-me.txt" \
     "spawn discarded work inside the submodule while refusing the pool"
@@ -700,7 +727,7 @@ test_stale_pin_carrying_real_work_is_not_called_stale() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot with a stale pin and work inside it"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "a stale pin carrying real work was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "a submodule holding real work was reported as merely stale"
   assert_grep 'work that must survive' "$POOL_DIR/ui/keep-me.txt" \
     "spawn discarded work inside the submodule while refusing the pool"
@@ -744,7 +771,7 @@ test_stale_pin_beside_other_dirt_reports_one_verdict() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot with a stale pin beside an untracked file"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "a stale pin beside an untracked file was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "a slot carrying more than a stale pin was reported as merely stale"
   assert_contains "$out" "stale pin: $SUBPIN1 -> recorded $SUBPIN2" \
     "the refusal did not name the stale submodule pin beside other dirt"
@@ -974,6 +1001,7 @@ test_clean_reachable_submodule_pin_realigns
 test_base_reset_realigns_moved_submodule_pin
 test_base_reset_realigns_nested_submodule_pin
 test_ignored_files_do_not_block_realignment
+test_ignored_file_colliding_with_recorded_pin_refuses
 test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work
 test_stale_pin_carrying_real_work_is_not_called_stale

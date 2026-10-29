@@ -274,11 +274,12 @@
 #   risking a PR based on stale history or discarding local work.
 #   A slot whose only deviation is a clean stale submodule checkout is realigned
 #   before and after the base reset, recursively, when every checked-out commit
-#   is contained in a remote-tracking ref; gitignored files do not block it.
-#   Modified or untracked submodule content, uncontained commits, and other drift
-#   keep the conservative uncommitted-work refusal, naming any stale pin. The
-#   containment test reads local refs only; submodule update may fetch the
-#   recorded pin when needed.
+#   is contained in a remote-tracking ref; gitignored files do not block it
+#   unless the recorded pin tracks a colliding path. Modified or untracked
+#   submodule content, uncontained commits, ignored-file collisions, and other
+#   drift keep the conservative uncommitted-work refusal, naming any stale pin and
+#   colliding path. The containment test reads local refs only; a recorded pin
+#   missing locally is fetched before its tree is compared.
 # Project setup hook (config/project-setup/<project>.sh):
 #   <project> is the basename of the spawning project directory. When present,
 #   a fresh ship or scout spawn runs it after the clean worktree's base refresh
@@ -3770,22 +3771,47 @@ validate_spawn_worktree() { # <source> <inspect-target>
   fi
 }
 
-# A submodule checkout may be moved only when nothing in it, or in any
-# initialized nested submodule, would be lost: no modified or untracked files
-# (gitignored files are left alone by a checkout) and every checked-out commit
-# contained in a remote-tracking ref.
-submodule_checkout_is_disposable() { # <dir>
-  local dir=$1 status have unpushed entry path
+# Print each gitignored file in <dir> that checking out <commit> would overwrite
+# or remove: the file, or one of its parent directories, is tracked there, or
+# the file sits where the commit tracks a directory.
+ignored_files_colliding_with() { # <dir> <commit>
+  local dir=$1 commit=$2 ignored tracked
+  ignored=$(git -C "$dir" -c core.quotePath=false ls-files --others --ignored --exclude-standard) || return 1
+  [ -n "$ignored" ] || return 0
+  tracked=$(git -C "$dir" -c core.quotePath=false ls-tree -r --name-only "$commit") || return 1
+  awk 'NR == FNR { tracked[$0] = 1; p = $0; while (sub(/\/[^\/]*$/, "", p)) dirs[p] = 1; next }
+    { hit = ($0 in dirs); p = $0; do { if (p in tracked) hit = 1 } while (sub(/\/[^\/]*$/, "", p)); if (hit) print }' \
+    <(printf '%s\n' "$tracked") <(printf '%s\n' "$ignored")
+}
+
+# A submodule checkout may be moved to <want> only when nothing in it, or in any
+# initialized nested submodule, would be lost: no modified or untracked files,
+# every checked-out commit contained in a remote-tracking ref, and no gitignored
+# file that the target commit would overwrite. Colliding paths are collected in
+# SPAWN_STALE_SUBMODULE_COLLISIONS for the refusal.
+submodule_checkout_is_disposable() { # <dir> <want>
+  local dir=$1 want=$2 status have unpushed collisions entry path
   status=$(git -C "$dir" status --porcelain --untracked-files=all --ignore-submodules=none 2>/dev/null) || return 1
   [ -z "$status" ] || return 1
   have=$(git -C "$dir" rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
   unpushed=$(git -C "$dir" log --format=%H --max-count=1 "$have" --not --remotes -- 2>/dev/null) || return 1
   [ -z "$unpushed" ] || return 1
+  git -C "$dir" cat-file -e "$want^{commit}" 2>/dev/null || git -C "$dir" fetch --quiet >&2 || return 1
+  collisions=$(ignored_files_colliding_with "$dir" "$want") || return 1
+  if [ -n "$collisions" ]; then
+    while IFS= read -r path; do
+      SPAWN_STALE_SUBMODULE_COLLISIONS+=("$dir/$path")
+    done <<EOF
+$collisions
+EOF
+    return 1
+  fi
   while IFS= read -r -d '' entry; do
     case $entry in 160000\ *) ;; *) continue ;; esac
     path=${entry#*$'\t'}
     [ -e "$dir/$path/.git" ] || continue
-    submodule_checkout_is_disposable "$dir/$path" || return 1
+    want=$(git -C "$dir" rev-parse --verify --quiet "$2:$path" 2>/dev/null) || want=$(git -C "$dir/$path" rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
+    submodule_checkout_is_disposable "$dir/$path" "$want" || return 1
   done < <(git -C "$dir" ls-files --stage -z 2>/dev/null)
 }
 
@@ -3799,6 +3825,7 @@ classify_stale_submodule_pins() { # <worktree> <status>
   SPAWN_STALE_SUBMODULE_PATHS=()
   SPAWN_STALE_SUBMODULE_OLD=()
   SPAWN_STALE_SUBMODULE_NEW=()
+  SPAWN_STALE_SUBMODULE_COLLISIONS=()
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case $line in ' M '*) path=${line#' M '} ;; *) qualifies=1; continue ;; esac
@@ -3809,7 +3836,7 @@ classify_stale_submodule_pins() { # <worktree> <status>
       SPAWN_STALE_SUBMODULE_PATHS+=("$path")
       SPAWN_STALE_SUBMODULE_OLD+=("$have")
       SPAWN_STALE_SUBMODULE_NEW+=("$want")
-      submodule_checkout_is_disposable "$worktree/$path" || qualifies=1
+      submodule_checkout_is_disposable "$worktree/$path" "$want" || qualifies=1
     else
       qualifies=1
     fi
@@ -3841,6 +3868,9 @@ realign_stale_submodule_pins() { # <worktree>
   fi
   for i in "${!SPAWN_STALE_SUBMODULE_PATHS[@]}"; do
     echo "error: submodule '${SPAWN_STALE_SUBMODULE_PATHS[$i]}' in pooled worktree '$worktree' is on a stale pin: ${SPAWN_STALE_SUBMODULE_OLD[$i]} -> recorded ${SPAWN_STALE_SUBMODULE_NEW[$i]}" >&2
+  done
+  for i in "${!SPAWN_STALE_SUBMODULE_COLLISIONS[@]}"; do
+    echo "error: ignored file '${SPAWN_STALE_SUBMODULE_COLLISIONS[$i]}' collides with a path tracked at the recorded submodule pin; refusing to overwrite it" >&2
   done
   echo "error: $reason" >&2
   return 1
