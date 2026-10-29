@@ -1,0 +1,36 @@
+# Live lab: real bin/fm-spawn.sh + real treehouse v3.1.1 + real git, lab FM_HOME, private tmux socket
+# pins:
+P1=c26ce3cdecf5d687da26033758c97bd50200b9d7
+P2=7e228d2fa8cd9cde67f4def9bb9191a2d932af5b
+P3=255a4b2f057eca6f4f2f7e03596cdce39196ebb9
+P4=266efb86ddb99561f80c0939c16d43d207f1e330
+
+## spawn lab-realign-s1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home ~/tmp/fm-lab.iw0ijd
+Submodule path 'cfg_dc_monitoring_stack': checked out '7e228d2fa8cd9cde67f4def9bb9191a2d932af5b'
+realigned submodule 'cfg_dc_monitoring_stack' in pooled worktree '~/tmp/fm-lab.iw0ijd/pool/.treehouse/datafeed-d20c13/1/datafeed': c26ce3cdecf5d687da26033758c97bd50200b9d7 -> 7e228d2fa8cd9cde67f4def9bb9191a2d932af5b
+error: refusing to pre-register Claude trust: node is required to record workspace trust and was not found on PATH
+error: could not pre-register Claude workspace trust for ~/tmp/fm-lab.iw0ijd/pool/.treehouse/datafeed-d20c13/1/datafeed; refusing to launch a claude worker that would wedge on the trust dialog; inspect window firstmate:fm-lab-realign-s1
+exit=1
+
+## spawn lab-realign-s3
+fm-gate-refuse: gate agent lifecycle permitted only against lab home ~/tmp/fm-lab.iw0ijd
+fatal: transport 'file' not allowed
+Unable to fetch in submodule path 'cfg_dc_monitoring_stack'; trying to directly fetch 255a4b2f057eca6f4f2f7e03596cdce39196ebb9:
+fatal: transport 'file' not allowed
+fatal: Fetched in submodule path 'cfg_dc_monitoring_stack', but it did not contain 255a4b2f057eca6f4f2f7e03596cdce39196ebb9. Direct fetching of that commit failed.
+error: submodule 'cfg_dc_monitoring_stack' in pooled worktree '~/tmp/fm-lab.iw0ijd/pool/.treehouse/datafeed-d20c13/2/datafeed' is on a stale pin: 7e228d2fa8cd9cde67f4def9bb9191a2d932af5b -> recorded 255a4b2f057eca6f4f2f7e03596cdce39196ebb9
+error: could not realign submodules in pooled worktree '~/tmp/fm-lab.iw0ijd/pool/.treehouse/datafeed-d20c13/2/datafeed'; refusing to launch
+
+## spawn lab-realign-s4
+fm-gate-refuse: gate agent lifecycle permitted only against lab home ~/tmp/fm-lab.iw0ijd
+From file://~/tmp/fm-lab.iw0ijd/w/sub
+   255a4b2..266efb8  main       -> origin/main
+Submodule path 'cfg_dc_monitoring_stack': checked out '266efb86ddb99561f80c0939c16d43d207f1e330'
+realigned submodule 'cfg_dc_monitoring_stack' in pooled worktree '~/tmp/fm-lab.iw0ijd/pool/.treehouse/datafeed-d20c13/2/datafeed': 255a4b2f057eca6f4f2f7e03596cdce39196ebb9 -> 266efb86ddb99561f80c0939c16d43d207f1e330
+no server running on ~/tmp/fm-lab.iw0ijd/tmux/tmux-20690/fm-lab
+warning: leaving task lab-realign-s4's slot claim on ~/tmp/fm-lab.iw0ijd/pool/.treehouse/datafeed-d20c13/2/datafeed in place; the Treehouse project lock is no longer held, so the next spawn's claim replaces it
+exit=1
+
+## slot 2 after s4 (status --ignore-submodules=none, then submodule status)
+ 266efb86ddb99561f80c0939c16d43d207f1e330 cfg_dc_monitoring_stack (remotes/origin/HEAD)
