@@ -273,10 +273,12 @@
 #   default branch, or non-clean worktree refuses a fresh spawn rather than
 #   risking a PR based on stale history or discarding local work.
 #   A slot whose only deviation is a clean stale submodule checkout is realigned
-#   before launch when each checked-out commit is contained in a remote-tracking
-#   ref. Dirty submodules, uncontained commits, and other drift keep the
-#   conservative uncommitted-work refusal. The containment test reads local refs
-#   only; submodule update may fetch the recorded pin when needed.
+#   before and after the base reset, recursively, when every checked-out commit
+#   is contained in a remote-tracking ref; gitignored files do not block it.
+#   Modified or untracked submodule content, uncontained commits, and other drift
+#   keep the conservative uncommitted-work refusal, naming any stale pin. The
+#   containment test reads local refs only; submodule update may fetch the
+#   recorded pin when needed.
 # Project setup hook (config/project-setup/<project>.sh):
 #   <project> is the basename of the spawning project directory. When present,
 #   a fresh ship or scout spawn runs it after the clean worktree's base refresh
@@ -3768,34 +3770,80 @@ validate_spawn_worktree() { # <source> <inspect-target>
   fi
 }
 
+# A submodule checkout may be moved only when nothing in it, or in any
+# initialized nested submodule, would be lost: no modified or untracked files
+# (gitignored files are left alone by a checkout) and every checked-out commit
+# contained in a remote-tracking ref.
+submodule_checkout_is_disposable() { # <dir>
+  local dir=$1 status have unpushed entry path
+  status=$(git -C "$dir" status --porcelain --untracked-files=all --ignore-submodules=none 2>/dev/null) || return 1
+  [ -z "$status" ] || return 1
+  have=$(git -C "$dir" rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
+  unpushed=$(git -C "$dir" log --format=%H --max-count=1 "$have" --not --remotes -- 2>/dev/null) || return 1
+  [ -z "$unpushed" ] || return 1
+  while IFS= read -r -d '' entry; do
+    case $entry in 160000\ *) ;; *) continue ;; esac
+    path=${entry#*$'\t'}
+    [ -e "$dir/$path/.git" ] || continue
+    submodule_checkout_is_disposable "$dir/$path" || return 1
+  done < <(git -C "$dir" ls-files --stage -z 2>/dev/null)
+}
+
 # An earlier base refresh can leave a pooled slot's submodule checkout on the
-# previous pin. Inspect every status entry before changing any checkout: only
-# clean submodule gitlinks whose commits are contained in remote-tracking refs
-# qualify. The caller uses the collected paths and pins after the whole preflight
-# succeeds, so mixed drift cannot trigger a partial realignment.
+# previous pin. Every status entry is inspected before any checkout moves, and
+# each stale pin is collected even when the slot does not qualify, so a refusal
+# can name it. Only clean, disposable submodule gitlinks qualify, so mixed drift
+# cannot trigger a partial realignment.
 classify_stale_submodule_pins() { # <worktree> <status>
-  local worktree=$1 status=$2 line path want have unpushed substatus
+  local worktree=$1 status=$2 line path want have qualifies=0
   SPAWN_STALE_SUBMODULE_PATHS=()
   SPAWN_STALE_SUBMODULE_OLD=()
   SPAWN_STALE_SUBMODULE_NEW=()
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    case $line in ' M '*) path=${line#' M '} ;; *) return 1 ;; esac
-    [ "$(git -C "$worktree" ls-files --stage -- "$path" 2>/dev/null | cut -c1-6)" = 160000 ] || return 1
-    substatus=$(git -C "$worktree/$path" status --porcelain --untracked-files=all --ignore-submodules=none --ignored=matching 2>/dev/null) || return 1
-    [ -z "$substatus" ] || return 1
-    want=$(git -C "$worktree" rev-parse --verify --quiet "HEAD:$path" 2>/dev/null) || return 1
-    have=$(git -C "$worktree/$path" rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
-    [ "$want" != "$have" ] || return 1
-    unpushed=$(git -C "$worktree/$path" log --format=%H --max-count=1 "$have" --not --remotes -- 2>/dev/null) || return 1
-    [ -z "$unpushed" ] || return 1
-    SPAWN_STALE_SUBMODULE_PATHS+=("$path")
-    SPAWN_STALE_SUBMODULE_OLD+=("$have")
-    SPAWN_STALE_SUBMODULE_NEW+=("$want")
+    case $line in ' M '*) path=${line#' M '} ;; *) qualifies=1; continue ;; esac
+    if [ "$(git -C "$worktree" ls-files --stage -- "$path" 2>/dev/null | cut -c1-6)" = 160000 ] \
+      && want=$(git -C "$worktree" rev-parse --verify --quiet "HEAD:$path" 2>/dev/null) \
+      && have=$(git -C "$worktree/$path" rev-parse --verify --quiet HEAD 2>/dev/null) \
+      && [ "$want" != "$have" ]; then
+      SPAWN_STALE_SUBMODULE_PATHS+=("$path")
+      SPAWN_STALE_SUBMODULE_OLD+=("$have")
+      SPAWN_STALE_SUBMODULE_NEW+=("$want")
+      submodule_checkout_is_disposable "$worktree/$path" || qualifies=1
+    else
+      qualifies=1
+    fi
   done <<EOF
 $status
 EOF
-  [ "${#SPAWN_STALE_SUBMODULE_PATHS[@]}" -gt 0 ]
+  return "$qualifies"
+}
+
+realign_stale_submodule_pins() { # <worktree>
+  local worktree=$1 status i reason="pooled worktree '$1' is not clean; refusing to discard uncommitted work while refreshing its base"
+  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=all --ignore-submodules=none) || {
+    echo "error: could not inspect pooled worktree '$worktree' while refreshing its base" >&2
+    return 1
+  }
+  [ -n "$status" ] || return 0
+  if classify_stale_submodule_pins "$worktree" "$status"; then
+    if git -C "$worktree" submodule update --recursive --checkout -- "${SPAWN_STALE_SUBMODULE_PATHS[@]}" >&2; then
+      status=$(git -C "$worktree" status --porcelain --untracked-files=all --ignore-submodules=none) || status=inspection-failed
+      if [ -z "$status" ]; then
+        for i in "${!SPAWN_STALE_SUBMODULE_PATHS[@]}"; do
+          echo "realigned submodule '${SPAWN_STALE_SUBMODULE_PATHS[$i]}' in pooled worktree '$worktree': ${SPAWN_STALE_SUBMODULE_OLD[$i]} -> ${SPAWN_STALE_SUBMODULE_NEW[$i]}" >&2
+        done
+        return 0
+      fi
+    else
+      reason="could not realign submodules in pooled worktree '$worktree'; refusing to launch"
+    fi
+  fi
+  for i in "${!SPAWN_STALE_SUBMODULE_PATHS[@]}"; do
+    echo "error: submodule '${SPAWN_STALE_SUBMODULE_PATHS[$i]}' in pooled worktree '$worktree' is on a stale pin: ${SPAWN_STALE_SUBMODULE_OLD[$i]} -> recorded ${SPAWN_STALE_SUBMODULE_NEW[$i]}" >&2
+  done
+  echo "error: $reason" >&2
+  return 1
 }
 
 spawn_worktree_has_origin_config() { # <worktree>
@@ -3945,29 +3993,8 @@ spawn_launch_brief_finish() {
 }
 
 freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
-  local worktree=$1 base=${2:-} default target expected actual status i
-  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=all --ignore-submodules=none) || {
-    echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
-    return 1
-  }
-  if [ -n "$status" ]; then
-    if ! classify_stale_submodule_pins "$worktree" "$status"; then
-      echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
-      return 1
-    fi
-    if ! git -C "$worktree" submodule update --init --checkout -- "${SPAWN_STALE_SUBMODULE_PATHS[@]}" >&2; then
-      echo "error: could not realign submodules in pooled worktree '$worktree'; refusing to launch" >&2
-      return 1
-    fi
-    status=$(git -C "$worktree" status --porcelain --untracked-files=all --ignore-submodules=none) || status=inspection-failed
-    if [ -n "$status" ]; then
-      echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
-      return 1
-    fi
-    for i in "${!SPAWN_STALE_SUBMODULE_PATHS[@]}"; do
-      echo "realigned submodule '${SPAWN_STALE_SUBMODULE_PATHS[$i]}' in pooled worktree '$worktree': ${SPAWN_STALE_SUBMODULE_OLD[$i]} -> ${SPAWN_STALE_SUBMODULE_NEW[$i]}" >&2
-    done
-  fi
+  local worktree=$1 base=${2:-} default target expected actual
+  realign_stale_submodule_pins "$worktree" || return 1
   if ! spawn_worktree_has_origin_config "$worktree"; then
     [ -z "$base" ] || {
       echo "error: pooled worktree '$worktree' has no origin, so it cannot start from base branch '$base'" >&2
@@ -4009,6 +4036,7 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
     echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not current '$target' ('$expected'); refusing to launch" >&2
     return 1
   fi
+  realign_stale_submodule_pins "$worktree"
 }
 
 herdr_projection_meta_field_exact() { # <meta> <key>
