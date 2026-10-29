@@ -453,14 +453,13 @@ test_unresolved_remote_default_refuses_pool() {
   pass "an unresolved remote default branch refuses the pooled worktree"
 }
 
-# A slot left on a stale submodule pin is the field failure this diagnosis exists
-# for: a refresh moved the superproject and left the submodule behind, so the
-# refusal fires a spawn later, on a slot whose own `git status` looks clean to the
-# operator. Nothing here is converged - the gate only has to say why. The fixture
-# only builds the repositories; the residue itself is produced by a real spawn, so
-# these tests cover the reset that actually strands the submodule.
-make_submodule_case() {  # <name> <id>
-  local name=$1 id=$2 case_dir home project origin pool publisher fakebin sub subpin1 subpin2 advanced
+# A base refresh can move the superproject while leaving its submodule on the
+# previous pin. The fixture only builds repositories; a real spawn produces the
+# stale checkout that the following cases exercise.
+make_submodule_case() {  # <name> <id> [nested|spaced]
+  local name=$1 id=$2 nested=${3:-} subpath=ui case_dir home project origin pool publisher fakebin sub child subpin1 subpin2 advanced
+  [ "$nested" != spaced ] || subpath='my ui'
+
   case_dir="$TMP_ROOT/$name"
   home="$case_dir/home"
   project="$case_dir/project"
@@ -476,10 +475,25 @@ make_submodule_case() {  # <name> <id>
   touch "$home/state/.last-watcher-beat"
 
   git init --quiet -b main "$sub"
+  if [ "$nested" = nested ]; then
+    child="$case_dir/child-origin"
+    git init --quiet -b main "$child"
+    printf 'child base\n' > "$child/child.txt"
+    git -C "$child" add child.txt
+    git -C "$child" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm child-base
+    git -C "$sub" -c protocol.file.allow=always submodule --quiet add "file://$child" child
+  fi
   printf 'pin one\n' > "$sub/lib.txt"
   git -C "$sub" add lib.txt
   git -C "$sub" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm sub-one
   subpin1=$(git -C "$sub" rev-parse HEAD)
+  if [ "$nested" = nested ]; then
+    printf 'child two\n' > "$child/child.txt"
+    git -C "$child" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam child-two
+    git -C "$sub/child" fetch --quiet origin
+    git -C "$sub/child" checkout --quiet origin/main
+    git -C "$sub" add child
+  fi
   printf 'pin two\n' > "$sub/lib.txt"
   git -C "$sub" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam sub-two
   subpin2=$(git -C "$sub" rev-parse HEAD)
@@ -489,80 +503,200 @@ make_submodule_case() {  # <name> <id>
   printf 'base\n' > "$project/README.md"
   git -C "$project" add README.md
   git -C "$project" -c protocol.file.allow=always -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
-    submodule --quiet add "file://$sub" ui
+    submodule --quiet add "file://$sub" "$subpath"
   git -C "$project" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
   git clone --quiet --bare "$project" "$origin"
   git -C "$project" remote add origin "file://$origin"
+  git -C "$project" config protocol.file.allow always
   git -C "$project" worktree add --quiet --detach "$pool" HEAD
-  git -C "$pool" -c protocol.file.allow=always submodule --quiet update --init
+  git -C "$pool" -c protocol.file.allow=always submodule --quiet update --init --recursive
 
   # Advance origin and move the submodule pin, exactly as the field incident did.
   git clone --quiet "file://$origin" "$publisher"
-  git -C "$publisher" -c protocol.file.allow=always submodule --quiet update --init
-  git -C "$publisher/ui" checkout --quiet "$subpin2"
+  git -C "$publisher" -c protocol.file.allow=always submodule --quiet update --init --recursive
+  git -C "$publisher/$subpath" checkout --quiet "$subpin2"
   git -C "$publisher" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam advance-pin
   git -C "$publisher" push --quiet origin main
   advanced=$(git -C "$publisher" rev-parse HEAD)
 
-  printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$subpin1|$subpin2|$advanced"
+  printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$subpin1|$subpin2|$advanced|$subpath"
 }
 
 read_submodule_case() {
-  IFS='|' read -r CASE_DIR HOME_DIR PROJECT_DIR POOL_DIR FAKEBIN_DIR SUBPIN1 SUBPIN2 ADVANCED_SHA <<EOF
+  IFS='|' read -r CASE_DIR HOME_DIR PROJECT_DIR POOL_DIR FAKEBIN_DIR SUBPIN1 SUBPIN2 ADVANCED_SHA SUB_PATH <<EOF
 $1
 EOF
 }
 
-# The first of two consecutive spawns: it succeeds, resets the superproject onto
-# the base that moved the pin, and leaves the submodule checkout on the pin the
-# old base recorded. That reset is what strands the slot, so every case below
-# starts from residue this code path actually produced rather than a hand-built one.
-strand_submodule_pin_via_spawn() {  # <seed-id>
-  local id=$1 out status
-  fm_test_spawn_brief "$HOME_DIR" "$id"
-  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
-  status=$?
-  expect_code 0 "$status" "the spawn that moves the submodule pin should succeed"
-  assert_contains "$out" "spawned $id" "the spawn that moves the submodule pin did not report success"
+# Reproduce the residue an earlier base refresh left on a slot: the superproject
+# reset onto the base that moved the pin, with the submodule checkout still on the
+# pin the old base recorded.
+strand_submodule_pin() {
+  git -C "$POOL_DIR" fetch --quiet origin
+  git -C "$POOL_DIR" reset --quiet --hard origin/main
   [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$ADVANCED_SHA" ] \
-    || fail "the first spawn did not move the pooled base across the moved submodule pin"
-  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
-    || fail "the first spawn did not strand the submodule on the pin the old base recorded"
+    || fail "the fixture did not move the pooled base across the moved submodule pin"
+  [ "$(git -C "$POOL_DIR/$SUB_PATH" rev-parse HEAD)" = "$SUBPIN1" ] \
+    || fail "the fixture did not strand the submodule on the pin the old base recorded"
 }
 
-test_stale_submodule_pin_explains_itself() {
-  local rec id out status before before_sub
+test_clean_reachable_submodule_pin_realigns() {
+  local rec id out status
   id='pool-stale-pin-r7'
   rec=$(make_submodule_case stale-pin "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin_via_spawn 'pool-stale-pin-seed-r7'
+  strand_submodule_pin
   git -C "$POOL_DIR" remote remove origin
-  before=$(git -C "$POOL_DIR" rev-parse HEAD)
-  before_sub=$(git -C "$POOL_DIR/ui" rev-parse HEAD)
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  [ "$status" -ne 0 ] || fail "the second spawn launched from a slot carrying a stale submodule pin"
-  assert_contains "$out" "stale submodule checkout" \
-    "refusal did not name the cause as a stale submodule checkout"
-  assert_contains "$out" "submodule 'ui'" "refusal did not name the submodule"
-  assert_contains "$out" "$SUBPIN1" "refusal did not report the pin the slot actually has"
-  assert_contains "$out" "$SUBPIN2" "refusal did not report the pin the base records"
-  # No remedy is printed on purpose: the containment check reads local refs only,
-  # so a stale remote-tracking ref can make an unpushed commit look contained, and
-  # a checkout command on that judgement could cost the operator a commit.
-  assert_not_contains "$out" "submodule update --checkout" \
-    "refusal printed a remedy command the containment check cannot stand behind"
-  assert_not_contains "$out" "refusing to discard uncommitted work" \
-    "a stale pin was misreported as uncommitted work"
-  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
-    || fail "spawn moved HEAD while refusing a stale submodule pin"
-  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$before_sub" ] \
-    || fail "spawn converged the submodule; this gate must never touch the slot"
-  if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
-    printf '# observed stale-pin refusal: %s\n' "$(printf '%s\n' "$out" | grep 'submodule' | head -n 1)"
-  fi
-  pass "an origin-less pool with a stale submodule pin refuses while naming both pins and no remedy"
+  expect_code 0 "$status" "a clean reachable stale pin should realign before launch"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'ui'" "spawn did not log the realigned submodule"
+  assert_contains "$out" "$SUBPIN1 -> $SUBPIN2" "spawn did not log both submodule pins"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the submodule on its stale pin"
+  [ -z "$(git -C "$POOL_DIR" status --porcelain)" ] \
+    || fail "spawn left drift after realigning the submodule"
+  pass "an origin-less pool realigns a clean reachable stale submodule before launch"
+}
+
+# The spawn's own reset moves the superproject across a pin bump; the worker must
+# still launch with the submodule on the pin the new base records.
+test_base_reset_realigns_moved_submodule_pin() {
+  local rec id out status
+  id='pool-remote-stale-pin-r1'
+  rec=$(make_submodule_case remote-stale-pin "$id")
+  read_submodule_case "$rec"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a spawn across a submodule pin bump should launch"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'ui'" "spawn did not log the realignment after its reset"
+  assert_contains "$out" "$SUBPIN1 -> $SUBPIN2" "spawn did not log the old and new pins"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$ADVANCED_SHA" ] \
+    || fail "spawn did not move the pooled base to the current superproject base"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn launched with the submodule on the old pin"
+  [ -z "$(git -C "$POOL_DIR" status --porcelain --ignore-submodules=none)" ] \
+    || fail "spawn launched with submodule drift after its base reset"
+  pass "a spawn whose base reset bumps a submodule pin launches with it realigned"
+}
+
+test_base_reset_realigns_nested_submodule_pin() {
+  local rec id out status
+  id='pool-nested-pin-r1'
+  rec=$(make_submodule_case nested-pin "$id" nested)
+  read_submodule_case "$rec"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD:child)" != "$(git -C "$POOL_DIR/ui" rev-parse "$SUBPIN2:child")" ] \
+    || fail "the fixture's new outer pin does not bump the nested pin"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a spawn across a nested submodule pin bump should launch"$'\n'"$out"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the outer submodule on its old pin"
+  [ "$(git -C "$POOL_DIR/ui/child" rev-parse HEAD)" = "$(git -C "$POOL_DIR/ui" rev-parse "$SUBPIN2:child")" ] \
+    || fail "spawn left the nested submodule on its old pin"
+  [ -z "$(git -C "$POOL_DIR" status --porcelain --ignore-submodules=none)" ] \
+    || fail "spawn left nested submodule drift"
+  pass "a nested submodule pin bump is realigned recursively"
+}
+
+test_ignored_files_do_not_block_realignment() {
+  local rec id out status
+  id='pool-sub-ignored-r1'
+  rec=$(make_submodule_case sub-ignored "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  printf 'build/\n' >> "$(git -C "$POOL_DIR/ui" rev-parse --path-format=absolute --git-path info/exclude)"
+  mkdir -p "$POOL_DIR/ui/build"
+  printf 'build output\n' > "$POOL_DIR/ui/build/out.o"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "gitignored build output should not block realignment"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'ui'" "spawn did not realign a submodule holding only ignored files"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the submodule with ignored files on its stale pin"
+  assert_grep 'build output' "$POOL_DIR/ui/build/out.o" "realignment discarded ignored build output"
+  pass "gitignored files inside a stale submodule do not block realignment"
+}
+
+test_config_ignored_submodule_content_at_current_pin_launches() {
+  local rec id out status
+  id='pool-sub-config-ignored-r1'
+  rec=$(make_submodule_case sub-config-ignored "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$POOL_DIR/ui" checkout --quiet "$SUBPIN2"
+  git -C "$POOL_DIR" config submodule.ui.ignore dirty
+  printf 'scratch the project ignores by config\n' > "$POOL_DIR/ui/scratch.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "content hidden by submodule.ui.ignore should not block a current-pin launch"$'\n'"$out"
+  assert_not_contains "$out" "realigned submodule" "spawn realigned a submodule already on its recorded pin"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn moved a submodule already on its recorded pin"
+  assert_grep 'scratch the project ignores by config' "$POOL_DIR/ui/scratch.txt" \
+    "spawn discarded submodule content hidden by configuration"
+  pass "submodule content hidden by submodule.<name>.ignore does not block a current-pin launch"
+}
+
+test_hidden_untracked_files_do_not_block_realignment() {
+  local rec id out status
+  id='pool-sub-untracked-hidden-r1'
+  rec=$(make_submodule_case sub-untracked-hidden "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$POOL_DIR" config status.showUntrackedFiles no
+  printf 'operator scratch hidden from status\n' > "$POOL_DIR/scratch.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "untracked files hidden by status.showUntrackedFiles=no should not block realignment"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'ui'" "spawn did not realign the stale submodule"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the submodule on its stale pin"
+  assert_grep 'operator scratch hidden from status' "$POOL_DIR/scratch.txt" \
+    "spawn discarded an untracked file hidden by configuration"
+  pass "status.showUntrackedFiles=no keeps hidden untracked files from blocking realignment"
+}
+
+test_stale_submodule_path_with_whitespace_realigns() {
+  local rec id out status
+  id='pool-sub-spaced-r1'
+  rec=$(make_submodule_case sub-spaced "$id" spaced)
+  read_submodule_case "$rec"
+  strand_submodule_pin
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a clean stale submodule whose path has whitespace should realign"$'\n'"$out"
+  assert_contains "$out" "realigned submodule 'my ui'" "spawn did not realign the submodule with a spaced path"
+  [ "$(git -C "$POOL_DIR/my ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+    || fail "spawn left the spaced-path submodule on its stale pin"
+  pass "a stale submodule whose path contains whitespace is realigned"
+}
+
+test_ignore_all_submodule_is_left_alone() {
+  local rec id out status
+  id='pool-sub-ignore-all-r1'
+  rec=$(make_submodule_case sub-ignore-all "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$POOL_DIR" config submodule.ui.ignore all
+  printf 'scratch in a submodule the project ignores\n' > "$POOL_DIR/ui/scratch.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a submodule configured ignore=all should not block launch"$'\n'"$out"
+  assert_not_contains "$out" "realigned submodule" "spawn realigned a submodule configured ignore=all"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
+    || fail "spawn moved a submodule configured ignore=all"
+  assert_grep 'scratch in a submodule the project ignores' "$POOL_DIR/ui/scratch.txt" \
+    "spawn discarded content in a submodule configured ignore=all"
+  pass "a submodule configured ignore=all is neither realigned nor refused"
 }
 
 test_unpushed_submodule_commit_is_still_uncommitted_work() {
@@ -570,7 +704,7 @@ test_unpushed_submodule_commit_is_still_uncommitted_work() {
   id='pool-sub-unpushed-r10'
   rec=$(make_submodule_case sub-unpushed "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin_via_spawn 'pool-sub-unpushed-seed-r10'
+  strand_submodule_pin
   # A commit made inside the submodule and never pushed leaves the submodule work
   # tree clean and the pins different - the same two facts a stale pin shows. Any
   # checkout of the recorded pin would move HEAD off this commit and leave it
@@ -592,10 +726,10 @@ test_unpushed_submodule_commit_is_still_uncommitted_work() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot holding an unpushed submodule commit"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "an unpushed submodule commit was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "an unpushed submodule commit was misreported as a stale pin"
-  assert_not_contains "$out" "is checked out at" \
-    "an unpushed submodule commit still drew the stale-pin diagnosis"
+  assert_contains "$out" "stale pin: $unpushed -> recorded $SUBPIN2" \
+    "the refusal did not name the stale submodule pin"
   [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$before_sub" ] \
     || fail "spawn moved the submodule off its unpushed commit"
   git -C "$POOL_DIR/ui" cat-file -e "$unpushed^{commit}" \
@@ -612,7 +746,7 @@ test_work_inside_submodule_is_still_uncommitted_work() {
   id='pool-sub-work-r8'
   rec=$(make_submodule_case sub-work "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin_via_spawn 'pool-sub-work-seed-r8'
+  strand_submodule_pin
   # Put the submodule back on the pin the base records, so the ONLY deviation is
   # real work inside it. This must never be softened into a stale-pin diagnosis.
   git -C "$POOL_DIR/ui" checkout --quiet "$SUBPIN2"
@@ -623,7 +757,7 @@ test_work_inside_submodule_is_still_uncommitted_work() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot holding work inside a submodule"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "work inside a submodule was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "real work inside a submodule was misreported as a stale pin"
   assert_grep 'work that must survive' "$POOL_DIR/ui/keep-me.txt" \
     "spawn discarded work inside the submodule while refusing the pool"
@@ -635,7 +769,7 @@ test_stale_pin_carrying_real_work_is_not_called_stale() {
   id='pool-sub-both-r9'
   rec=$(make_submodule_case sub-both "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin_via_spawn 'pool-sub-both-seed-r9'
+  strand_submodule_pin
   # Stale pin AND real work inside it: calling this merely stale would be wrong, so
   # the refusal must stay the conservative one.
   printf 'work that must survive\n' > "$POOL_DIR/ui/keep-me.txt"
@@ -645,11 +779,33 @@ test_stale_pin_carrying_real_work_is_not_called_stale() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot with a stale pin and work inside it"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "a stale pin carrying real work was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "a submodule holding real work was reported as merely stale"
   assert_grep 'work that must survive' "$POOL_DIR/ui/keep-me.txt" \
     "spawn discarded work inside the submodule while refusing the pool"
   pass "a stale pin carrying real work is refused conservatively, never called stale"
+}
+
+test_stale_pin_with_nested_untracked_work_refuses() {
+  local rec id out status
+  id='pool-sub-nested-work-r1'
+  rec=$(make_submodule_case sub-nested-work "$id" nested)
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  printf 'nested work that must survive\n' > "$POOL_DIR/ui/child/keep-me.txt"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn launched from a stale pin with nested untracked work"
+  assert_contains "$out" "refusing to discard uncommitted work" \
+    "nested untracked work did not keep the existing refusal"
+  assert_not_contains "$out" "realigned submodule" \
+    "spawn realigned a submodule containing nested work"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
+    || fail "spawn moved the outer submodule off its stale pin"
+  assert_grep 'nested work that must survive' "$POOL_DIR/ui/child/keep-me.txt" \
+    "spawn discarded nested untracked work"
+  pass "nested untracked work prevents realignment of a stale outer submodule"
 }
 
 test_stale_pin_beside_other_dirt_reports_one_verdict() {
@@ -657,9 +813,9 @@ test_stale_pin_beside_other_dirt_reports_one_verdict() {
   id='pool-sub-mixed-r11'
   rec=$(make_submodule_case sub-mixed "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin_via_spawn 'pool-sub-mixed-seed-r11'
+  strand_submodule_pin
   # Git sorts status paths, so the stale 'ui' entry is scanned before this file.
-  # The conservative verdict must not arrive contradicted by a stale-pin line.
+  # The later dirt must still refuse the whole slot before any checkout moves.
   printf 'notes the operator still wants\n' > "$POOL_DIR/zz-notes.txt"
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
@@ -667,13 +823,13 @@ test_stale_pin_beside_other_dirt_reports_one_verdict() {
   [ "$status" -ne 0 ] || fail "spawn launched from a slot with a stale pin beside an untracked file"
   assert_contains "$out" "refusing to discard uncommitted work" \
     "a stale pin beside an untracked file was not refused as uncommitted work"
-  assert_not_contains "$out" "stale submodule checkout" \
+  assert_not_contains "$out" "realigned submodule" \
     "a slot carrying more than a stale pin was reported as merely stale"
-  assert_not_contains "$out" "is checked out at" \
-    "the stale-pin diagnosis was printed alongside the conservative refusal"
+  assert_contains "$out" "stale pin: $SUBPIN1 -> recorded $SUBPIN2" \
+    "the refusal did not name the stale submodule pin beside other dirt"
   assert_grep 'notes the operator still wants' "$POOL_DIR/zz-notes.txt" \
     "spawn discarded the untracked file while refusing the pool"
-  pass "a stale pin beside other dirt yields the conservative refusal alone, with no stale-pin line"
+  pass "a stale pin beside other dirt is refused conservatively, naming the stale pin"
 }
 
 # Re-lay a case's pooled worktree as a managed Treehouse slot: <pool>/<slot>/<repo>
@@ -893,10 +1049,18 @@ test_origin_config_without_url_refuses_pool
 test_empty_origin_config_section_refuses_pool
 test_empty_only_included_origin_config_section_launches_pool
 test_inactive_conditional_origin_include_launches_pool
-test_stale_submodule_pin_explains_itself
+test_clean_reachable_submodule_pin_realigns
+test_base_reset_realigns_moved_submodule_pin
+test_base_reset_realigns_nested_submodule_pin
+test_ignored_files_do_not_block_realignment
+test_stale_submodule_path_with_whitespace_realigns
+test_ignore_all_submodule_is_left_alone
+test_config_ignored_submodule_content_at_current_pin_launches
+test_hidden_untracked_files_do_not_block_realignment
 test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work
 test_stale_pin_carrying_real_work_is_not_called_stale
+test_stale_pin_with_nested_untracked_work_refuses
 test_stale_pin_beside_other_dirt_reports_one_verdict
 
 echo "# all fm-spawn-pool-base-freshen tests passed"
