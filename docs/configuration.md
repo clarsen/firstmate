@@ -85,6 +85,7 @@ Each effective `FM_HOME` contains private operational directories.
 
 - Task metadata, append-only status events, and endpoint signals.
 - The watcher-owned direct-report observation at `state/crew-ledger.json` (`bin/fm-crew-ledger.sh`).
+- Captain-facing Stop sidecars under `state/portal-sidecars/` and capture errors in `state/portal-capture.log` (`bin/fm-portal-capture.sh`).
 - Watcher and wake-queue coordination, away-mode state, and generated Relay artifacts.
 - Inactive terminal-outcome receipts under `state/terminal-outcomes/`.
 - Enabled extension working namespaces under `state/extensions/`.
@@ -576,6 +577,14 @@ See [`trace-context.md`](trace-context.md) for carrier semantics, supported rout
 ## Fleet activity ledger (config/fleet-ledger)
 
 See [`fleet-ledger.md`](fleet-ledger.md) for the opt-in setup, record contract, and limits.
+
+## Portal Stop capture (config/portal-capture)
+
+In a captain-facing primary home, create the local, gitignored `config/portal-capture` presence flag to capture Claude Stop messages: `touch config/portal-capture`.
+Each non-empty Stop writes one schema-1 sidecar with the full message under `state/portal-sidecars/`; capture errors go to `state/portal-capture.log` and never block a turn.
+The hook stays inactive in linked task worktrees and secondmate homes.
+The watcher removes sidecars older than `FM_PORTAL_SIDECAR_KEEP_DAYS` days, default `30`; set a positive integer to change retention.
+The watcher also writes `state/crew-ledger.json` with each task's title from its brief, worktree from metadata, and `current_state.since`, the epoch when the reconciled state last changed.
 
 ## Waiting worker spends no turns (config/wait-no-turns)
 

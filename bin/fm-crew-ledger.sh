@@ -25,6 +25,8 @@
 # up to FM_CREW_LEDGER_WAIT_SECS after its last successful read, so a transient
 # failure cannot start a new alert episode; older evidence is reported unverified,
 # and current_state.observed_at keeps the last successful crew-state read.
+# Each row also has title (first Captain's intent line or null), worktree from
+# metadata, and current_state.since (the epoch the reconciled state changed).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +56,8 @@ done
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-brief-heading-lib.sh
+. "$SCRIPT_DIR/fm-brief-heading-lib.sh"
 # shellcheck source=/dev/null # The wake owner is linted as a separate root.
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
@@ -77,6 +81,12 @@ while IFS= read -r meta <&3; do
   id=${meta##*/}; id=${id%.meta}
   kind=$(fm_meta_get "$meta" kind)
   [ -n "$kind" ] || kind=ship
+  worktree=$(fm_meta_get "$meta" worktree)
+  brief="$FM_HOME/data/$id/brief.md"
+  title=
+  if [ -f "$brief" ]; then
+    title=$(fm_brief_task_heading_body "$brief" "## Captain's intent" | awk 'NF { print; exit }')
+  fi
   generation=$(fm_meta_get "$meta" spawn_gen)
   [ -n "$generation" ] || generation="$(fm_backend_target_of_meta "$meta")|$(fm_meta_get "$meta" worktree)|$(fm_meta_get "$meta" branch)"
   previous=$(jq -c --arg id "$id" --arg generation "$generation" \
@@ -219,6 +229,7 @@ while IFS= read -r meta <&3; do
 
   row=$(jq -cn \
     --argjson previous "$previous" --arg id "$id" --arg kind "$kind" \
+    --arg title "$title" --arg worktree "$worktree" \
     --arg generation "$generation" --arg status_raw "$status_raw" \
     --arg status_verb "$status_verb" --argjson status_at "$status_at" \
     --arg wait_raw "$wait_raw" --arg wait_class "$wait_class" --argjson wait_at "$wait_at" \
@@ -234,6 +245,7 @@ while IFS= read -r meta <&3; do
        then $old.ci_progress | del(.pr_url, .progress_at)
        else null end) as $ci
     | (if $harness == $old.harness.state then ($old.harness.since // $now) else $now end) as $harness_since
+    | (if $state == $old.current_state.state then ($old.current_state.since // $now) else $now end) as $state_since
     | (if $source == "run-step" then
          (if $step_label != "" then $step_label else ($state + " / " + $detail) end)
        else null end) as $step
@@ -293,10 +305,12 @@ while IFS= read -r meta <&3; do
              ($ci.completed_count // 0),($ci.latest_completed_at // 0)] | @json end) as $signature
     | {
         id:$id,kind:$kind,generation:$generation,checked_at:$now,
+        title:(if $title == "" then null else $title end),
+        worktree:(if $worktree == "" then null else $worktree end),
         harness:{state:$harness,source:$harness_source,since:$harness_since},
         last_status:{state:$status_verb,raw:$status_raw,at:$status_at},
         declared_wait:{class:$wait_class,raw:$wait_raw,at:$wait_at,since:$wait_since},
-        current_state:{state:$state,source:$source,detail:$detail,observed_at:$state_observed_at},
+        current_state:{state:$state,source:$source,detail:$detail,observed_at:$state_observed_at,since:$state_since},
         run_step:{state:$step,changed_at:(if $step == null then null else $step_changed end),
           pr_url:(if $run_pr == "" then null else $run_pr end)},
         ci_progress:(if $ci == null then null else ($ci + {pr_url:$run_pr,progress_at:$ci_progress_at}) end),
