@@ -2737,6 +2737,8 @@ while :; do
   [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" capture || true
 
   if [ "$(age_of "$STATE/crew-ledger.json")" -ge "$CREW_LEDGER_CHECK_SECS" ]; then
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/fm-portal-capture.sh" prune
     crew_ledger_alerts=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
       FM_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$SCRIPT_DIR/fm-crew-state.sh}" \
       "$SCRIPT_DIR/fm-crew-ledger.sh" tick) || {

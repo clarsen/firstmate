@@ -7,7 +7,15 @@ set -u
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 home=$(fm_test_tmproot fm-crew-ledger)/home
-mkdir -p "$home/state" "$home/projects/task" "$home/fakebin"
+mkdir -p "$home/state" "$home/projects/task" "$home/fakebin" "$home/data/ci-ship"
+cat > "$home/data/ci-ship/brief.md" <<'MD'
+# Task
+## Captain's intent
+Make the portal capture visible.
+
+## Firstmate spec
+More detail.
+MD
 cat > "$home/fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -83,12 +91,16 @@ tick() {
 out=$(tick 10000) || fail 'first ledger tick failed'
 assert_contains "$out" 'check: crew-ledger ci-ship declared-wait-no-run-progress' \
   'old paused run-step wakes for inspection'
-jq -e '.crew[0] | .harness.state == "idle" and .last_status.at == 8000 and
+jq -e --arg worktree "$home/projects/task" '.crew[0] | .harness.state == "idle" and .last_status.at == 8000 and
   .run_step.state == "running" and .run_step.changed_at == 8000 and .checked_at == 10000 and
-  .alert.condition == "declared-wait-no-run-progress"' \
+  .alert.condition == "declared-wait-no-run-progress" and
+  .title == "Make the portal capture visible." and
+  .worktree == $worktree and .current_state.since == 10000' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'ledger evidence is incomplete'
 out=$(tick 10060) || fail 'repeat ledger tick failed'
 assert_equals '' "$out" 'unchanged evidence does not repeat the wake'
+jq -e '.crew[0].current_state.since == 10000' "$home/state/crew-ledger.json" >/dev/null \
+  || fail 'unchanged current state reset its since epoch'
 printf 'resolved [at=10060] [key=other]: unrelated decision closed\n' >> "$home/state/ci-ship.status"
 out=$(tick 10060) || fail 'unrelated resolution tick failed'
 assert_equals '' "$out" 'an unrelated resolution does not repeat or reset the declared wait'
@@ -114,6 +126,8 @@ out=$(tick 10965) || fail 'terminal status tick failed'
 assert_equals '' "$out" 'terminal status clears the alert'
 jq -e '.crew[0].alert == null' "$home/state/crew-ledger.json" >/dev/null \
   || fail 'terminal status left an alert open'
+jq -e '.crew[0].current_state | .state == "done" and .since == 10965' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'terminal state did not get its own since epoch'
 fm_write_meta "$home/state/ci-progress.meta" \
   'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-ci-progress' \
   "worktree=$home/projects/task" 'spawn_gen=one'
@@ -127,6 +141,9 @@ cat > "$home/ci-snapshot" <<'JSON'
 JSON
 out=$(tick 16800) || fail 'CI completion baseline failed'
 assert_equals '' "$out" 'recent PR job completion prevents a stale wait alarm'
+jq -e '.crew[] | select(.id == "ci-progress") | .title == null and
+  .worktree != null and .current_state.since == 16800' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'ledger row without brief must have null title'
 jq -e '.crew[] | select(.id == "ci-progress") |
   .ci_progress.completed_count == 1 and .ci_progress.progress_at == 16600 and .alert == null' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'PR completion was not recorded'
