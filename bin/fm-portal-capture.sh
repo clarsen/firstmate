@@ -29,7 +29,6 @@ sha256_text() {
 
 prune() {
   local days=${FM_PORTAL_SIDECAR_KEEP_DAYS:-30}
-  [ -e "$CONFIG/portal-capture" ] || return 0
   [ -d "$SIDECARS" ] || return 0
   case "$days" in ''|*[!0-9]*|0) log_error "$LINENO" "invalid FM_PORTAL_SIDECAR_KEEP_DAYS"; return 0 ;; esac
   find "$SIDECARS" -maxdepth 1 -type f -name '*.json' -mtime "+$((days - 1))" -exec rm -f -- {} + 2>/dev/null ||

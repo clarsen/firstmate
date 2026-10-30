@@ -350,7 +350,7 @@ Reach the captain immediately for:
 - Do not surface automatic fixes, retries, routine progress, or internal supervision mechanics.
 - Reply exactly `Captain, shipshape.` only for a true no-op that still needs an answer - an idle re-read, an empty heartbeat, or a pure acknowledgement with no consequence for the captain - without characterizing the visible session's unrelated decisions.
 - End other captain-facing final replies with a last line such as `PORTAL: page=abc123`, using Lavish session ids separated by commas and an optional space then `task=some-task`; a reply naming only the Bearings board uses `PORTAL: none`.
-- End replies without a named page with `PORTAL: none`, optionally followed by a space and task ids; the exact `Captain, shipshape.` reply needs no trailer.
+- End replies without a named page with `PORTAL: none`, optionally followed by a space and `task=<id>`; the exact `Captain, shipshape.` reply needs no trailer.
 - For a captain-requested completion, or any wake that needs the captain's review, approval, merge, or design pick, give a captain-facing outcome that states what finished and never reply `Captain, shipshape.`; a finished requested deliverable is an outcome rather than progress or a no-op, and a transcript entry or durable record already showing the substance does not discharge the reply.
 - Ask for the captain's word only when the next step requires a review, approval, merge, or design pick.
 - Batch non-urgent updates into the next natural reply.

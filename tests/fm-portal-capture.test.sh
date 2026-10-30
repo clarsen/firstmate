@@ -119,17 +119,21 @@ printf 'gitdir: %s\n' "$primary/.git/worktrees/linked" > "$linked/.git"
 capture "$(payload 'linked worktree' linked)" "$linked" >/dev/null
 assert_equals "$before" "$(count_sidecars)" 'linked worktree must be out of scope'
 
+documented=0
 while IFS= read -r example; do
   [ -n "$example" ] || continue
+  documented=$((documented + 1))
   capture "$(payload "$example" "doc-$RANDOM")" >/dev/null
   jq -e --arg t "$example" 'select(.message_text == $t) | .trailer_status == "valid"' \
     "$home/state/portal-sidecars"/*.json | jq -s -e 'length >= 1 and all(.[]; . == true)' >/dev/null \
     || fail "documented trailer did not parse: $example"
-done < <(rg -o 'PORTAL: (page=[A-Za-z0-9_-]+|none)' "$ROOT/AGENTS.md" | LC_ALL=C sort -u)
+done < <(grep -oE 'PORTAL: (page=[A-Za-z0-9_-]+|none)' "$ROOT/AGENTS.md" | LC_ALL=C sort -u)
+[ "$documented" -ge 2 ] || fail "expected documented page and none trailers, checked $documented"
 before=$(count_sidecars)
 
 old=$(last_sidecar)
 touch -t 202001010000 "$old"
+rm -f "$home/config/portal-capture"
 FM_HOME="$home" FM_ROOT_OVERRIDE="$primary" FM_PORTAL_SIDECAR_KEEP_DAYS=30 \
   "$ROOT/bin/fm-portal-capture.sh" prune
 [ ! -e "$old" ] || fail 'expired sidecar was not pruned'
@@ -137,6 +141,7 @@ assert_equals "$((before - 1))" "$(count_sidecars)" 'prune removed a fresh sidec
 if find "$home/state/portal-sidecars" -name '.capture.*' | grep -q .; then
   fail 'temporary sidecar was left behind'
 fi
+: > "$home/config/portal-capture"
 rm -rf "$home/state/portal-sidecars"
 : > "$home/state/portal-sidecars"
 capture "$(payload 'cannot write' unwritable)" >/dev/null || fail 'unwritable sidecar path blocked Stop'

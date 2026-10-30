@@ -56,6 +56,8 @@ done
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-brief-heading-lib.sh
+. "$SCRIPT_DIR/fm-brief-heading-lib.sh"
 # shellcheck source=/dev/null # The wake owner is linted as a separate root.
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
@@ -83,9 +85,7 @@ while IFS= read -r meta <&3; do
   brief="$FM_HOME/data/$id/brief.md"
   title=
   if [ -f "$brief" ]; then
-    title=$(awk '/^## Captain.s intent[[:space:]]*$/ { found=1; next }
-      found && /^## / { exit }
-      found && NF { print; exit }' "$brief")
+    title=$(fm_brief_task_heading_body "$brief" "## Captain's intent" | awk 'NF { print; exit }')
   fi
   generation=$(fm_meta_get "$meta" spawn_gen)
   [ -n "$generation" ] || generation="$(fm_backend_target_of_meta "$meta")|$(fm_meta_get "$meta" worktree)|$(fm_meta_get "$meta" branch)"
