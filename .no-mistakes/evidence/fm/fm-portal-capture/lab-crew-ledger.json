@@ -1,0 +1,82 @@
+{
+  "schema": "fm-crew-ledger.v1",
+  "checked_at": 21800,
+  "crew": [
+    {
+      "id": "demo-task",
+      "kind": "ship",
+      "generation": "g1",
+      "checked_at": 21800,
+      "title": "Wire the Lavish portal live view to the crew ledger.",
+      "worktree": "/home/ctlarsen/tmp/fm-lab.QV9Fsu/projects/demo-wt",
+      "harness": {
+        "state": "unknown",
+        "source": "missing",
+        "since": 20000
+      },
+      "last_status": {
+        "state": "done",
+        "raw": "done [at=21000]: delivered",
+        "at": 21000
+      },
+      "declared_wait": {
+        "class": "none",
+        "raw": "",
+        "at": null,
+        "since": null
+      },
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "observed_at": 21800,
+        "since": 20000
+      },
+      "run_step": {
+        "state": null,
+        "changed_at": null,
+        "pr_url": null
+      },
+      "ci_progress": null,
+      "alert": null
+    },
+    {
+      "id": "nobrief",
+      "kind": "scout",
+      "generation": "g2",
+      "checked_at": 21800,
+      "title": null,
+      "worktree": "/home/ctlarsen/tmp/fm-lab.QV9Fsu/projects/nobrief-wt",
+      "harness": {
+        "state": "unknown",
+        "source": "missing",
+        "since": 20000
+      },
+      "last_status": {
+        "state": "",
+        "raw": "",
+        "at": null
+      },
+      "declared_wait": {
+        "class": "none",
+        "raw": "",
+        "at": null,
+        "since": null
+      },
+      "current_state": {
+        "state": "unknown",
+        "source": "none",
+        "detail": "worktree gone (torn down?)",
+        "observed_at": 21800,
+        "since": 20000
+      },
+      "run_step": {
+        "state": null,
+        "changed_at": null,
+        "pr_url": null
+      },
+      "ci_progress": null,
+      "alert": null
+    }
+  ]
+}

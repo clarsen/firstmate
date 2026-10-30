@@ -1,0 +1,76 @@
+# Sidecars remaining after prune (written by real Claude Stop hooks in lab primary)
+## 20261030T172426Z-863bae44-19a6-4b55-b265-b5609b7035c5-0a9148896198e318.json
+{
+  "schema": 1,
+  "session_id": "863bae44-19a6-4b55-b265-b5609b7035c5",
+  "prompt_id": "ed35953d-9bec-4bee-beff-03a234f8ec60",
+  "timestamp": "2026-10-30T17:24:26Z",
+  "cwd": "/home/ctlarsen/tmp/fm-lab.QV9Fsu/fm",
+  "hook_version": "1",
+  "trailer_status": "missing",
+  "trailer_kind": null,
+  "page_ids": [],
+  "task_ids": [],
+  "message_text": "hello lab",
+  "text_outside_trailer_chars": 9,
+  "content_hash": "sha256:8fc6baba79a0d60b37dee612ccc1ec096ef52dba8cb0a24a6451e8bfb0e4d761",
+  "enforcement": "off"
+}
+## 20261030T172600Z-863bae44-19a6-4b55-b265-b5609b7035c5-fbb75c79670357f8.json
+{
+  "schema": 1,
+  "session_id": "863bae44-19a6-4b55-b265-b5609b7035c5",
+  "prompt_id": "7f92e064-dc49-4f67-a280-d27ca59d604e",
+  "timestamp": "2026-10-30T17:26:00Z",
+  "cwd": "/home/ctlarsen/tmp/fm-lab.QV9Fsu/fm",
+  "hook_version": "1",
+  "trailer_status": "valid",
+  "trailer_kind": "none",
+  "page_ids": [],
+  "task_ids": [],
+  "message_text": "Captain, shipshape.",
+  "text_outside_trailer_chars": 0,
+  "content_hash": "sha256:90bfb066e272fd571ac7e87cde0a47a3c93aee0f99a0859ff76ce61b38dc096e",
+  "enforcement": "off"
+}
+## 20261030T172620Z-863bae44-19a6-4b55-b265-b5609b7035c5-fe896ca86b61b330.json
+{
+  "schema": 1,
+  "session_id": "863bae44-19a6-4b55-b265-b5609b7035c5",
+  "prompt_id": "replay-new-prompt",
+  "timestamp": "2026-10-30T17:26:20Z",
+  "cwd": "/home/ctlarsen/tmp/fm-lab.QV9Fsu/fm",
+  "hook_version": "1",
+  "trailer_status": "valid",
+  "trailer_kind": "page",
+  "page_ids": [
+    "abc123"
+  ],
+  "task_ids": [
+    "lab-1"
+  ],
+  "message_text": "Captain, the lab report is ready.\n\nPORTAL: page=abc123 task=lab-1",
+  "text_outside_trailer_chars": 35,
+  "content_hash": "sha256:3ba927d9a83ba5a04669656c0050a58103f02c06c886e97fb6335dab0baccdad",
+  "enforcement": "off"
+}
+## 20261030T172623Z-863bae44-19a6-4b55-b265-b5609b7035c5-76dede59bafa3175.json
+{
+  "schema": 1,
+  "session_id": "863bae44-19a6-4b55-b265-b5609b7035c5",
+  "prompt_id": "40781faa-5045-4c80-a30f-764353f413d6",
+  "timestamp": "2026-10-30T17:26:23Z",
+  "cwd": "/home/ctlarsen/tmp/fm-lab.QV9Fsu/fm",
+  "hook_version": "1",
+  "trailer_status": "valid",
+  "trailer_kind": "none",
+  "page_ids": [],
+  "task_ids": [],
+  "message_text": "Captain, shipshape.",
+  "text_outside_trailer_chars": 0,
+  "content_hash": "sha256:90bfb066e272fd571ac7e87cde0a47a3c93aee0f99a0859ff76ce61b38dc096e",
+  "enforcement": "off"
+}
+# state/portal-capture.log
+fm-portal-capture.sh:80: cannot create temporary sidecar
+fm-portal-capture.sh:33: invalid FM_PORTAL_SIDECAR_KEEP_DAYS
