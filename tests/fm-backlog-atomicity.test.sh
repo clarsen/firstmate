@@ -2044,14 +2044,14 @@ test_recovery_replays_a_close_recorded_for_a_gitlab_merge_request() {
   case_dir=$(make_home heal-pending-close-gitlab)
   add_item "$case_dir" "$id"
   start_item "$case_dir" "$id"
-  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-gitlab\narg=--pr\narg=https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17\n' \
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-gitlab\narg=--pr\narg=https://gitlab.example.com/group/project/-/merge_requests/17\n' \
     "$id" "$(home_of "$case_dir")/data" \
     > "$(home_of "$case_dir")/state/$id.backlog-close"
 
   out=$(run_bootstrap "$case_dir")
   [ "$(row_state "$case_dir" "$id")" = "done" ] \
     || fail "session start left a GitLab-merged item's interrupted cleanup at $(row_state "$case_dir" "$id"): $out"
-  assert_grep 'merge request https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17' \
+  assert_grep 'merge request https://gitlab.example.com/group/project/-/merge_requests/17' \
     "$(backlog_of "$case_dir")" \
     "the replayed close dropped the GitLab merge request's completion link"
   assert_absent "$(home_of "$case_dir")/state/$id.backlog-close" \
@@ -2963,7 +2963,7 @@ test_dispatch_and_completion_are_structural() {
 test_completion_closes_a_gitlab_merge_request_as_a_note() {
   local case_dir home id meta mr out
   id=fm-structural-gitlab-b15
-  mr=https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17
+  mr=https://gitlab.example.com/group/project/-/merge_requests/17
   case_dir=$(make_home structural-gitlab "$id")
   home=$(home_of "$case_dir")
   add_item "$case_dir" "$id"
