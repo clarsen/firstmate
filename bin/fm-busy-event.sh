@@ -59,6 +59,8 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-excl-mkdir-lib.sh
+. "$SCRIPT_DIR/fm-excl-mkdir-lib.sh"
 
 CMD=${1:-}
 case "$CMD" in
@@ -127,7 +129,7 @@ fi
 # pair; a holder that died mid-write is broken after FM_BUSY_LOCK_STALE_SECS.
 lock_acquire() {
   local tries=0 now mtime age
-  while ! mkdir "$LOCK" 2>/dev/null; do
+  while ! fm_mkdir_exclusive "$LOCK" 2>/dev/null; do
     tries=$((tries + 1))
     if [ "$tries" -ge 40 ]; then
       now=$(date +%s)
@@ -139,7 +141,7 @@ lock_acquire() {
       age=$((now - mtime))
       if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
         rmdir "$LOCK" 2>/dev/null || rm -rf "$LOCK" 2>/dev/null || true
-        mkdir "$LOCK" 2>/dev/null && break
+        fm_mkdir_exclusive "$LOCK" 2>/dev/null && break
       fi
       echo "error: busy-state lock timeout for $ID" >&2
       return 1

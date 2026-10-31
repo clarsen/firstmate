@@ -214,7 +214,7 @@ worker_recover_quarantine() { # <account-home>
 worker_acquire_lock() { # <account-home> <identity>
   local account_home=$1 identity=$2 attempt=0
   while [ "$attempt" -lt 150 ]; do
-    if (umask 077; mkdir "$WORKER_LOCK") 2>/dev/null; then
+    if (umask 077; fm_mkdir_exclusive "$WORKER_LOCK") 2>/dev/null; then
       WORKER_LOCK_HELD=1
       # Discard the predecessor's heartbeat before publishing our identity:
       # readiness must come from this owner after lock publication succeeds.
@@ -598,7 +598,7 @@ worker_claim() { # <job-dir>
   local job=$1 claim pid start pid_tmp start_tmp
   claim="$job/.claim"
   [ ! -e "$claim" ] && [ ! -L "$claim" ] || return 1
-  (umask 077; mkdir "$claim") || return 1
+  (umask 077; fm_mkdir_exclusive "$claim") || return 1
   pid=${BASHPID:-$$}
   start=$(fm_remote_job_process_start "$pid") || { rmdir "$claim" 2>/dev/null || true; return 1; }
   pid_tmp=$(umask 077; mktemp "$claim/.owner.XXXXXX") || { rmdir "$claim" 2>/dev/null || true; return 1; }

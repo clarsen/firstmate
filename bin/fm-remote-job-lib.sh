@@ -97,6 +97,9 @@
 # bin/fm-remote-job-reap-orphans.sh uses it to reap workers that were already
 # orphaned that way.
 
+# shellcheck source=bin/fm-excl-mkdir-lib.sh
+. "$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/fm-excl-mkdir-lib.sh"
+
 FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
 FM_REMOTE_JOB_MAX_BYTES=${FM_REMOTE_JOB_MAX_BYTES:-1048576}
 FM_REMOTE_JOB_QUEUE_TIMEOUT=${FM_REMOTE_JOB_QUEUE_TIMEOUT:-360}
@@ -606,7 +609,7 @@ fm_remote_job_next_seq() { # [stage-dir destination]
     attempt=$((attempt + 1))
     value=$((value + 1))
     claim="$FM_REMOTE_JOB_SEQ_CLAIMS/$value"
-    if (umask 077; mkdir "$claim") 2>/dev/null; then
+    if (umask 077; fm_mkdir_exclusive "$claim") 2>/dev/null; then
       chmod 700 "$claim" || return 1
       fm_remote_job_advance_seq_hint "$value" || true
       if [ -n "$stage" ]; then
@@ -1272,7 +1275,7 @@ fm_remote_job_reload_lock_acquire() { # <lock-link>
   name="${lock##*/}.owner.$pid.$RANDOM$RANDOM"
   owner="$dir/$name"
   FM_REMOTE_JOB_RELOAD_OWNER=
-  (umask 077; mkdir "$owner") 2>/dev/null || return 1
+  (umask 077; fm_mkdir_exclusive "$owner") 2>/dev/null || return 1
   if ! printf '%s\n' "$pid" > "$owner/pid" ||
     ! fm_remote_job_process_start "$pid" > "$owner/start" ||
     ! fm_remote_job_process_command "$pid" > "$owner/command"; then

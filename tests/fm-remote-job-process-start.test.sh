@@ -20,7 +20,7 @@ TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 FIXTURE_ROOT="$TMP_ROOT/remote-root"
 ACCOUNT_HOME="$TMP_ROOT/account"
 mkdir -p "$FIXTURE_ROOT/bin" "$ACCOUNT_HOME"
-cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" "$FIXTURE_ROOT/bin/"
+cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-excl-mkdir-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" "$FIXTURE_ROOT/bin/"
 printf 'fixture\n' > "$FIXTURE_ROOT/AGENTS.md"
 WORKER="$FIXTURE_ROOT/bin/fm-remote-job-worker.sh"
 
