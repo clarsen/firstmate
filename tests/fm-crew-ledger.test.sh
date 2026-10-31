@@ -69,7 +69,15 @@ case "$*" in
   *) cat "$FM_HOME/mr-snapshot" ;;
 esac
 SH
-chmod +x "$home/fakebin/tmux" "$home/fakebin/crew-state" "$home/fakebin/gh" "$home/fakebin/glab"
+cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = show ] && [ "$2" = ci-ship ] || exit 1
+[ ! -e "$FM_HOME/backlog-fail" ] || exit 1
+[ -f "$FM_HOME/backlog-title" ] || exit 1
+printf '  title: %s\n' "$(jq -Rn --arg title "$(cat "$FM_HOME/backlog-title")" '$title')"
+SH
+chmod +x "$home/fakebin/tmux" "$home/fakebin/crew-state" "$home/fakebin/gh" "$home/fakebin/glab" "$home/fakebin/tasks-axi"
+printf 'Track portal capture\n' > "$home/backlog-title"
 fm_write_meta "$home/state/ci-ship.meta" \
   'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-ci-ship' \
   "worktree=$home/projects/task" 'spawn_gen=one'
@@ -94,9 +102,23 @@ assert_contains "$out" 'check: crew-ledger ci-ship declared-wait-no-run-progress
 jq -e --arg worktree "$home/projects/task" '.crew[0] | .harness.state == "idle" and .last_status.at == 8000 and
   .run_step.state == "running" and .run_step.changed_at == 8000 and .checked_at == 10000 and
   .alert.condition == "declared-wait-no-run-progress" and
-  .title == "Make the portal capture visible." and
+  .title == "Track portal capture" and .request == "Make the portal capture visible." and
   .worktree == $worktree and .current_state.since == 10000' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'ledger evidence is incomplete'
+rm "$home/backlog-title"
+out=$(tick 10001) || fail 'missing backlog title tick failed'
+assert_equals '' "$out" 'missing backlog title does not change alert evidence'
+jq -e '.crew[0] | .title == "Make the portal capture visible." and
+  .request == "Make the portal capture visible."' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'missing backlog title did not fall back to request'
+printf 'Track portal capture\n' > "$home/backlog-title"
+: > "$home/backlog-fail"
+out=$(tick 10002) || fail 'failed backlog read tick failed'
+assert_equals '' "$out" 'failed backlog read does not change alert evidence'
+jq -e '.crew[0] | .title == "Make the portal capture visible." and
+  .request == "Make the portal capture visible."' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'failed backlog read did not fall back to request'
+rm "$home/backlog-fail"
 out=$(tick 10060) || fail 'repeat ledger tick failed'
 assert_equals '' "$out" 'unchanged evidence does not repeat the wake'
 jq -e '.crew[0].current_state.since == 10000' "$home/state/crew-ledger.json" >/dev/null \
@@ -141,7 +163,7 @@ cat > "$home/ci-snapshot" <<'JSON'
 JSON
 out=$(tick 16800) || fail 'CI completion baseline failed'
 assert_equals '' "$out" 'recent PR job completion prevents a stale wait alarm'
-jq -e '.crew[] | select(.id == "ci-progress") | .title == null and
+jq -e '.crew[] | select(.id == "ci-progress") | .title == null and .request == null and
   .worktree != null and .current_state.since == 16800' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'ledger row without brief must have null title'
 jq -e '.crew[] | select(.id == "ci-progress") |
