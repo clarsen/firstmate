@@ -48,7 +48,7 @@ if [ "$1" != ci-ship ]; then
   if [ "${1#mr-}" != "$1" ]; then
     printf 'state: working · source: run-step · validating (running)\n'
     printf 'run-step: running/running\n'
-    printf 'run-pr: https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416\n'
+    printf 'run-pr: https://gitlab.example.com/group/other-project/-/merge_requests/12416\n'
     exit 0
   fi
   printf 'state: unknown · source: none · no run\n'

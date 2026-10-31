@@ -2612,13 +2612,13 @@ test_gate_rows_carry_backlog_detail_and_artifact_links() {
 ## In flight
 
 ## Queued
-- [ ] detail-gate - Needs richer context (repo: firstmate) (kind: ship) https://github.com/acme/firstmate/pull/42 https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/abc123 data/detail-gate/report.md
+- [ ] detail-gate - Needs richer context (repo: firstmate) (kind: ship) https://github.com/acme/firstmate/pull/42 https://host.tailnet-example.ts.net:4387/session/abc123 data/detail-gate/report.md
   Captain asked for deeper evidence before dispatch; the integration test flaked twice in a row.
 - [ ] bare-gate - No extra context (repo: firstmate) (kind: ship)
 
 ## Done
 EOF
-  long_url="https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/long?q=$(printf 'x%.0s' {1..300})"
+  long_url="https://host.tailnet-example.ts.net:4387/session/long?q=$(printf 'x%.0s' {1..300})"
   awk -v line="- [ ] long-link-gate - Overlong artifact link (repo: firstmate) (kind: ship) $long_url" \
     '/^## Done/ { print line; print "" } { print }' "$home/data/backlog.md" > "$home/data/backlog.md.tmp"
   mv "$home/data/backlog.md.tmp" "$home/data/backlog.md"
@@ -2631,7 +2631,7 @@ EOF
       and (.body | contains("flaked twice in a row"))
       and .pr_url == "https://github.com/acme/firstmate/pull/42"
       and .report_path == "data/detail-gate/report.md"
-      and (.links == ["https://cases-macbook-pro-2.tail9d4712.ts.net:4387/session/abc123"])))
+      and (.links == ["https://host.tailnet-example.ts.net:4387/session/abc123"])))
       and (.gates | any(.id == "bare-gate"
         and .repo == "firstmate" and .kind == "ship"
         and .body == null and .pr_url == null and .report_path == null and .links == []))
