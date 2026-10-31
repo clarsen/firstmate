@@ -1,0 +1,9 @@
+== explicit core path with bd call
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+/Users/clarsen/.no-mistakes/worktrees/bf7f38e6f6d2/01M6A0PNWJ945S0J610G59VXTA/bin/zz-purity-probe.sh:2: direct Beads CLI invocation bypasses tasks-axi
+exit=1
+== clean explicit path
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+exit=0
