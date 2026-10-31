@@ -183,37 +183,39 @@ test_canonical_partitions_preserve_full_lint() {
   fakebin="$tmp/bin"
   mkdir -p "$fakebin"
   all=$(CI=true "$LINT" --list-files | LC_ALL=C sort)
-  : > "$tmp/union"
-  for part in 1of2 2of2; do
-    selected=$(CI=false GITHUB_ACTIONS=false "$LINT" --partition "$part" --list-files) \
-      || fail "partition $part must select full canonical roots even on a local branch"
-    [ -n "$selected" ] || fail "empty lint partition $part"
-    printf '%s\n' "$selected" >> "$tmp/union"
-    [ "$selected" = "$("$LINT" --partition "$part" --list-files)" ] \
-      || fail "partition $part is nondeterministic"
-    log="$tmp/$part.roots"
-    flags="$tmp/$part.flags"
-    mode="$tmp/$part.mode"
-    fm_lint_stub_shellcheck "$fakebin" "$log"
-    PATH="$fakebin:$PATH" FM_TEST_FLAG_LOG="$flags" FM_TEST_MODE_LOG="$mode" \
-      "$LINT" --partition "$part" > "$tmp/$part.out" 2>&1 \
-      || fail "canonical partition $part failed: $(cat "$tmp/$part.out")"
-    [ "$(LC_ALL=C sort "$log")" = "$(printf '%s\n' "$selected" | LC_ALL=C sort)" ] \
-      || fail "partition $part executed a different root set than it listed"
-    [ "$(LC_ALL=C sort -u "$flags")" = "$(printf 'exclude=none\nexternal-sources=yes')" ] \
-      || fail "partition $part weakened source-aware analysis"
-    [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
-    root_count=$(printf '%s\n' "$selected" | grep -c .)
-    invocation_count=$(grep -c '^external-sources=' "$flags" || true)
-    [ "$invocation_count" -eq "$root_count" ] \
-      || fail "partition $part used $invocation_count ShellCheck calls for $root_count roots"
-    [ "$(grep -c '^fm-lint: begin ' "$tmp/$part.out" || true)" -eq "$root_count" ] \
-      || fail "partition $part did not stream a begin record per root"
-    [ "$(grep -c '^fm-lint: end ' "$tmp/$part.out" || true)" -eq "$root_count" ] \
-      || fail "partition $part did not stream an end record per root"
+  for count in 2 3; do
+    : > "$tmp/union"
+    for part in $(seq 1 "$count" | sed "s/\$/of$count/"); do
+      selected=$(CI=false GITHUB_ACTIONS=false "$LINT" --partition "$part" --list-files) \
+        || fail "partition $part must select full canonical roots even on a local branch"
+      [ -n "$selected" ] || fail "empty lint partition $part"
+      printf '%s\n' "$selected" >> "$tmp/union"
+      [ "$selected" = "$("$LINT" --partition "$part" --list-files)" ] \
+        || fail "partition $part is nondeterministic"
+      log="$tmp/$part.roots"
+      flags="$tmp/$part.flags"
+      mode="$tmp/$part.mode"
+      fm_lint_stub_shellcheck "$fakebin" "$log"
+      PATH="$fakebin:$PATH" FM_TEST_FLAG_LOG="$flags" FM_TEST_MODE_LOG="$mode" \
+        "$LINT" --partition "$part" > "$tmp/$part.out" 2>&1 \
+        || fail "canonical partition $part failed: $(cat "$tmp/$part.out")"
+      [ "$(LC_ALL=C sort "$log")" = "$(printf '%s\n' "$selected" | LC_ALL=C sort)" ] \
+        || fail "partition $part executed a different root set than it listed"
+      [ "$(LC_ALL=C sort -u "$flags")" = "$(printf 'exclude=none\nexternal-sources=yes')" ] \
+        || fail "partition $part weakened source-aware analysis"
+      [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
+      root_count=$(printf '%s\n' "$selected" | grep -c .)
+      invocation_count=$(grep -c '^external-sources=' "$flags" || true)
+      [ "$invocation_count" -eq "$root_count" ] \
+        || fail "partition $part used $invocation_count ShellCheck calls for $root_count roots"
+      [ "$(grep -c '^fm-lint: begin ' "$tmp/$part.out" || true)" -eq "$root_count" ] \
+        || fail "partition $part did not stream a begin record per root"
+      [ "$(grep -c '^fm-lint: end ' "$tmp/$part.out" || true)" -eq "$root_count" ] \
+        || fail "partition $part did not stream an end record per root"
+    done
+    [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "$count lint partitions lose or duplicate canonical roots"
   done
-  [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "lint partitions lose or duplicate canonical roots"
-  for option in 0of2 3of2 1of3; do
+  for option in 0of2 3of2 0of3 4of3 1of4; do
     rc=0
     "$LINT" --partition "$option" --list-files > "$tmp/refused" 2>&1 || rc=$?
     [ "$rc" = 2 ] || fail "invalid partition $option was not refused"
@@ -224,7 +226,7 @@ test_canonical_partitions_preserve_full_lint() {
   rc=0
   "$LINT" --partition 1of2 bin/fm-lint.sh > "$tmp/refused" 2>&1 || rc=$?
   [ "$rc" = 2 ] || fail "partition accepted an explicit subset"
-  pass "two canonical lint partitions preserve complete source-aware coverage and reject weakened modes"
+  pass "two or three canonical lint partitions preserve complete source-aware coverage and reject weakened modes"
 }
 
 # fm_lint_stub_git <fakebin-dir>: install a git stub for the changed-file mode
