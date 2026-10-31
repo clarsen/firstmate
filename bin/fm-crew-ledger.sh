@@ -25,8 +25,9 @@
 # up to FM_CREW_LEDGER_WAIT_SECS after its last successful read, so a transient
 # failure cannot start a new alert episode; older evidence is reported unverified,
 # and current_state.observed_at keeps the last successful crew-state read.
-# Each row also has title (first Captain's intent line or null), worktree from
-# metadata, and current_state.since (the epoch the reconciled state changed).
+# Each row also has title (backlog title, then first Captain's intent line, or
+# null), request (first Captain's intent line or null), worktree from metadata,
+# and current_state.since (the epoch the reconciled state changed).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,9 +84,9 @@ while IFS= read -r meta <&3; do
   [ -n "$kind" ] || kind=ship
   worktree=$(fm_meta_get "$meta" worktree)
   brief="$FM_HOME/data/$id/brief.md"
-  title=
+  request=
   if [ -f "$brief" ]; then
-    title=$(fm_brief_task_heading_body "$brief" "## Captain's intent" | awk 'NF { print; exit }')
+    request=$(fm_brief_task_heading_body "$brief" "## Captain's intent" | awk 'NF { print; exit }')
   fi
   generation=$(fm_meta_get "$meta" spawn_gen)
   [ -n "$generation" ] || generation="$(fm_backend_target_of_meta "$meta")|$(fm_meta_get "$meta" worktree)|$(fm_meta_get "$meta" branch)"
@@ -95,6 +96,18 @@ while IFS= read -r meta <&3; do
   if [ "$SECONDS" -ge "$BUDGET_SECS" ]; then
     [ "$previous" = '{}' ] || printf '%s\n' "$previous" >> "$tmp/rows"
     continue
+  fi
+  title=$request
+  remaining=$((BUDGET_SECS - SECONDS))
+  if [ "$remaining" -gt 2 ]; then remaining=2; fi
+  if [ "$remaining" -gt 0 ]; then
+    backlog_row=$(fm_run_timed "$remaining" env FM_HOME="$FM_HOME" \
+      "$SCRIPT_DIR/fm-tasks-axi.sh" show "$id" 2>/dev/null) || backlog_row=
+    backlog_title=$(printf '%s\n' "$backlog_row" | sed -n 's/^  title: //p' | head -1)
+    case "$backlog_title" in
+      \"*) backlog_title=$(printf '%s\n' "$backlog_title" | jq -r 'select(type == "string")' 2>/dev/null) || backlog_title= ;;
+    esac
+    [ -z "$backlog_title" ] || title=$backlog_title
   fi
 
   status_file="$STATE/$id.status"
@@ -229,7 +242,7 @@ while IFS= read -r meta <&3; do
 
   row=$(jq -cn \
     --argjson previous "$previous" --arg id "$id" --arg kind "$kind" \
-    --arg title "$title" --arg worktree "$worktree" \
+    --arg title "$title" --arg request "$request" --arg worktree "$worktree" \
     --arg generation "$generation" --arg status_raw "$status_raw" \
     --arg status_verb "$status_verb" --argjson status_at "$status_at" \
     --arg wait_raw "$wait_raw" --arg wait_class "$wait_class" --argjson wait_at "$wait_at" \
@@ -306,6 +319,7 @@ while IFS= read -r meta <&3; do
     | {
         id:$id,kind:$kind,generation:$generation,checked_at:$now,
         title:(if $title == "" then null else $title end),
+        request:(if $request == "" then null else $request end),
         worktree:(if $worktree == "" then null else $worktree end),
         harness:{state:$harness,source:$harness_source,since:$harness_since},
         last_status:{state:$status_verb,raw:$status_raw,at:$status_at},
