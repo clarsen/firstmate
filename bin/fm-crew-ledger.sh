@@ -26,8 +26,9 @@
 # failure cannot start a new alert episode; older evidence is reported unverified,
 # and current_state.observed_at keeps the last successful crew-state read.
 # Each row also has title (backlog title, then first Captain's intent line, or
-# null), request (first Captain's intent line or null), worktree from metadata,
-# and current_state.since (the epoch the reconciled state changed).
+# null), request (first Captain's intent line or null), project (the recorded
+# project directory's name, or null), worktree from metadata, and
+# current_state.since (the epoch the reconciled state changed).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +84,9 @@ while IFS= read -r meta <&3; do
   kind=$(fm_meta_get "$meta" kind)
   [ -n "$kind" ] || kind=ship
   worktree=$(fm_meta_get "$meta" worktree)
+  project_path=$(fm_meta_get "$meta" project)
+  project=
+  [ -z "$project_path" ] || project=$(basename -- "$project_path")
   brief="$FM_HOME/data/$id/brief.md"
   request=
   if [ -f "$brief" ]; then
@@ -94,7 +98,11 @@ while IFS= read -r meta <&3; do
     '.crew[]? | select(.id == $id and .generation == $generation)' "$tmp/previous.json" | head -1)
   [ -n "$previous" ] || previous='{}'
   if [ "$SECONDS" -ge "$BUDGET_SECS" ]; then
-    [ "$previous" = '{}' ] || printf '%s\n' "$previous" >> "$tmp/rows"
+    if [ "$previous" != '{}' ]; then
+      jq -c --arg project "$project" \
+        '. + {project:(if $project == "" then null else $project end)}' \
+        <<< "$previous" >> "$tmp/rows"
+    fi
     continue
   fi
   title=$request
@@ -242,7 +250,7 @@ while IFS= read -r meta <&3; do
 
   row=$(jq -cn \
     --argjson previous "$previous" --arg id "$id" --arg kind "$kind" \
-    --arg title "$title" --arg request "$request" --arg worktree "$worktree" \
+    --arg title "$title" --arg request "$request" --arg project "$project" --arg worktree "$worktree" \
     --arg generation "$generation" --arg status_raw "$status_raw" \
     --arg status_verb "$status_verb" --argjson status_at "$status_at" \
     --arg wait_raw "$wait_raw" --arg wait_class "$wait_class" --argjson wait_at "$wait_at" \
@@ -320,6 +328,7 @@ while IFS= read -r meta <&3; do
         id:$id,kind:$kind,generation:$generation,checked_at:$now,
         title:(if $title == "" then null else $title end),
         request:(if $request == "" then null else $request end),
+        project:(if $project == "" then null else $project end),
         worktree:(if $worktree == "" then null else $worktree end),
         harness:{state:$harness,source:$harness_source,since:$harness_since},
         last_status:{state:$status_verb,raw:$status_raw,at:$status_at},
