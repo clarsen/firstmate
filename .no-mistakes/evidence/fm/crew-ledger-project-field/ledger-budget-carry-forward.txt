@@ -1,0 +1,5 @@
+--- legacy ledger before (project key stripped) ---
+[{"id":"legacy-c","has_project":false,"checked_at":20000},{"id":"ship-a","has_project":false,"checked_at":20000},{"id":"sm-b","has_project":false,"checked_at":20000}]
+exit=0
+--- after budget-limited tick (rows with checked_at 20000 were carried forward unread) ---
+[{"id":"legacy-c","project":null,"checked_at":20500},{"id":"ship-a","project":"widget-app","checked_at":20000},{"id":"sm-b","project":"My Proj","checked_at":20000}]

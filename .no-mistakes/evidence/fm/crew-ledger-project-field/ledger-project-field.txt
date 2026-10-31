@@ -1,0 +1,23 @@
+$ FM_HOME=$LAB bin/fm-crew-ledger.sh tick   (lab home, real crew-state, private tmux socket)
+exit=0
+--- state/crew-ledger.json (id, kind, project, worktree) ---
+[
+  {
+    "id": "legacy-c",
+    "kind": "scout",
+    "project": null,
+    "worktree": null
+  },
+  {
+    "id": "ship-a",
+    "kind": "ship",
+    "project": "widget-app",
+    "worktree": "$LAB/projects/pool/widget-app-3"
+  },
+  {
+    "id": "sm-b",
+    "kind": "secondmate",
+    "project": "My Proj",
+    "worktree": "$LAB/homes/sm-b"
+  }
+]
