@@ -628,7 +628,8 @@ test_refused_spawn_leaves_no_task_state() {
 # Resolve the final prompt argument using the same shell argument splitting the
 # pane sees after the leading export statements.
 claude_launch_doorbell() {  # <launch command>
-  local command=$1
+  local command
+  command=$(fm_test_launch_command "$1")
   while true; do
     case "$command" in
       export\ *\;*) command=${command#*; } ;;

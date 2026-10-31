@@ -133,9 +133,12 @@ case "${1:-}" in
     prev=
     for a in "$@"; do
       [ "$prev" != -c ] || printf '%s\n' "$a" > "$state"
+      # Remember the window name so tmux target checks find the endpoint.
+      [ "$prev" != -n ] || printf '%s\n' "$a" >> "$(dirname "$0")/.spawn-windows"
       prev=$a
     done
     ;;
+  list-windows) cat "$(dirname "$0")/.spawn-windows" 2>/dev/null ;;
   send-keys)
     [ "$state" != /dev/null ] || exit 0
     shift
