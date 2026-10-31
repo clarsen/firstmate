@@ -38,6 +38,7 @@ The same run measured the wedge-cap parity suite at 27763 ms, which `bin/fm-test
 `test_portable_serial_packing_budget_boundary` now pins every other fixture script to 1 ms, so packing exactly at the 1200000 ms budget is accepted and one millisecond above it is refused even when real serial members have no hint.
 The coverage-guard test owns modeled real-hint headroom under that budget.
 `tests/fm-captain-question.test.sh` postdates that baseline and uses its successful 1116 ms sample from run [39518822414](https://github.com/clarsen/firstmate/actions/runs/39518822414), so the unmeasured default no longer changes the serial packing.
+`tests/fm-remote-secondmate-lifecycle-e2e.test.sh` (1132578 ms), `tests/fm-teardown.test.sh` (405518 ms), and `tests/fm-control-relaunch.test.sh` (216826 ms) use their slowest ubuntu-26.04 samples, from run [41239515541](https://github.com/clarsen/firstmate/actions/runs/41239515541), where their 345655, 202132, and 114115 ms hints had packed them into one shard that overran the 30-minute job cap.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 The T3 Code backend suites carry the slowest successful Ubuntu samples from CI runs [39463576576](https://github.com/kunchenguid/firstmate/actions/runs/39463576576), [39814995718](https://github.com/kunchenguid/firstmate/actions/runs/39814995718), and [39883948163](https://github.com/kunchenguid/firstmate/actions/runs/39883948163) - 239245 ms for `tests/fm-backend-t3code.test.sh`, 57613 ms for `tests/fm-t3-mcp.test.sh`, 283 ms for `tests/fm-watch-inbox-meta.test.sh`, and the 51 ms and 52 ms live-guard skips for `tests/fm-backend-t3code-live-e2e.test.sh` and `tests/fm-backend-t3code-pr-tools-live-e2e.test.sh`.
 `tests/fm-backend-t3code.test.sh` and `tests/fm-t3-mcp.test.sh` run in the portable parallel lanes, so those two values sit in `portable_parallel_weight_hints`: every case id the backend suite spawns carries a per-run suffix and its cleanup removes only the `/tmp/fm-<id>` directories that run created, and both suites passed running concurrently with each other and beside another parallel suite (see [`fm-test-isolation-proof.md`](fm-test-isolation-proof.md)).
@@ -71,14 +72,14 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 
 `bin/fm-test-run.sh` owns `n` and refuses any lane whose `of<n>` disagrees with it.
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
-The eleventh shard contains only `tests/fm-supervision-host.test.sh` because, as a single file, it measured 1507 and 1528 seconds on main and 1657 seconds on [PR 32](https://github.com/clarsen/firstmate/pull/32).
+The twelfth shard contains only `tests/fm-supervision-host.test.sh` because, as a single file, it measured 1507 and 1528 seconds on main and 1657 seconds on [PR 32](https://github.com/clarsen/firstmate/pull/32).
 That long runtime left too little of a 30-minute job for other scripts; the suite is now split into four serial members (see [Verification inputs](#verification-inputs)), and the dedicated shard still holds only the main host file.
-The other ten shards use the 20-minute modeled packing target.
+The other eleven shards use the 20-minute modeled packing target.
 The dedicated shard is checked for singleton membership and runs under the 45-minute dedicated-shard exception in [Timeouts](#timeouts).
 `--check-coverage` reports its hint as `serial_dedicated_ms=` and refuses one above the 38-minute `PORTABLE_SERIAL_DEDICATED_MAX_WEIGHT_MS` ceiling (`serial_dedicated_budget_ms=`), which leaves seven minutes for setup and variance.
 Past that ceiling, speed up or split the host suite instead of raising the timeout again.
 
-Assignment for the other ten shards is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
+Assignment for the other eleven shards is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
 [Verification inputs](#verification-inputs) owns the measurement provenance and exceptions.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
@@ -136,7 +137,7 @@ No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the three watch-triage members still sum to about 26 minutes of CI test time.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses seventeen long-lived Linux jobs (eleven serial, two parallel, Herdr, three lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses eighteen long-lived Linux jobs (twelve serial, two parallel, Herdr, three lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession and keeps only the newest of close main pushes' runs, without changing the compliance workflow's event semantics.
 

@@ -341,7 +341,8 @@ jobs:
           - { shard: 8, timeout: 30 }
           - { shard: 9, timeout: 30 }
           - { shard: 10, timeout: 30 }
-          - { shard: 11, timeout: 45 }
+          - { shard: 11, timeout: 30 }
+          - { shard: 12, timeout: 45 }
     steps:
       - uses: actions/checkout@v6
         with:
