@@ -1,0 +1,127 @@
+ok: added fm-lavish-portal-ack-not-saved (ship) -> Queued
+task:
+  id: fm-lavish-portal-ack-not-saved
+  title: Save portal acks
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-30
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fm-lavish-portal-ack-not-saved` to move it to in flight
+  - Run `tasks-axi block fm-lavish-portal-ack-not-saved --by <other>` to record a dependency
+ok: added fm-quoted-title (ship) -> Queued
+task:
+  id: fm-quoted-title
+  title: "Track \"portal\", capture: now"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-30
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fm-quoted-title` to move it to in flight
+  - Run `tasks-axi block fm-quoted-title --by <other>` to record a dependency
+ok: added fm-numeric-title (ship) -> Queued
+task:
+  id: fm-numeric-title
+  title: "2026"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-30
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fm-numeric-title` to move it to in flight
+  - Run `tasks-axi block fm-numeric-title --by <other>` to record a dependency
+=== tasks-axi show (real TOON output) ===
+--- fm-lavish-portal-ack-not-saved
+task:
+  id: fm-lavish-portal-ack-not-saved
+  title: Save portal acks
+  state: queued
+  blocked: no
+  blocked_by: none
+--- fm-quoted-title
+task:
+  id: fm-quoted-title
+  title: "Track \"portal\", capture: now"
+  state: queued
+  blocked: no
+  blocked_by: none
+--- fm-numeric-title
+task:
+  id: fm-numeric-title
+  title: "2026"
+  state: queued
+  blocked: no
+  blocked_by: none
+--- fm-not-in-backlog
+error: "Task \"fm-not-in-backlog\" not found in this backlog"
+code: NOT_FOUND
+help[1]: Run `tasks-axi list` to see existing tasks
+=== fm-crew-ledger.sh tick ===
+exit=0
+=== state/crew-ledger.json (id, title, request, harness, current_state, last_status) ===
+{
+  "id": "fm-lavish-portal-ack-not-saved",
+  "title": "Save portal acks",
+  "request": "for lavish crew view, it doesn't show work being done by fm-lavish-portal-ack-not-saved for instance well it shows, but unknown/unknown and the title is this long request line",
+  "harness": "unknown",
+  "current_state": "unknown",
+  "last_status": "working"
+}
+{
+  "id": "fm-not-in-backlog",
+  "title": "Request for a task with no backlog row.",
+  "request": "Request for a task with no backlog row.",
+  "harness": "unknown",
+  "current_state": "unknown",
+  "last_status": "working"
+}
+{
+  "id": "fm-numeric-title",
+  "title": "2026",
+  "request": "Numeric title request line.",
+  "harness": "unknown",
+  "current_state": "unknown",
+  "last_status": "working"
+}
+{
+  "id": "fm-quoted-title",
+  "title": "Track \"portal\", capture: now",
+  "request": "Quoted title request line.",
+  "harness": "unknown",
+  "current_state": "unknown",
+  "last_status": "working"
+}
