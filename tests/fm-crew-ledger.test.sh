@@ -80,7 +80,7 @@ chmod +x "$home/fakebin/tmux" "$home/fakebin/crew-state" "$home/fakebin/gh" "$ho
 printf 'Track portal capture\n' > "$home/backlog-title"
 fm_write_meta "$home/state/ci-ship.meta" \
   'kind=ship' 'harness=claude' 'backend=tmux' 'window=firstmate:fm-ci-ship' \
-  "worktree=$home/projects/task" 'spawn_gen=one'
+  "worktree=$home/projects/task" "project=$home/projects/therealfirstmate" 'spawn_gen=one'
 printf 'running\n' > "$home/run-step"
 printf 'paused [at=8000]: CI monitor running; resume on final CI result\n' > "$home/state/ci-ship.status"
 gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" ci-ship)
@@ -103,7 +103,7 @@ jq -e --arg worktree "$home/projects/task" '.crew[0] | .harness.state == "idle" 
   .run_step.state == "running" and .run_step.changed_at == 8000 and .checked_at == 10000 and
   .alert.condition == "declared-wait-no-run-progress" and
   .title == "Track portal capture" and .request == "Make the portal capture visible." and
-  .worktree == $worktree and .current_state.since == 10000' \
+  .project == "therealfirstmate" and .worktree == $worktree and .current_state.since == 10000' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'ledger evidence is incomplete'
 printf '"Track \\"portal\\", capture"\n' > "$home/backlog-title"
 out=$(tick 10000) || fail 'quoted backlog title tick failed'
@@ -168,7 +168,7 @@ JSON
 out=$(tick 16800) || fail 'CI completion baseline failed'
 assert_equals '' "$out" 'recent PR job completion prevents a stale wait alarm'
 jq -e '.crew[] | select(.id == "ci-progress") | .title == null and .request == null and
-  .worktree != null and .current_state.since == 16800' \
+  .project == null and .worktree != null and .current_state.since == 16800' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'ledger row without brief must have null title'
 jq -e '.crew[] | select(.id == "ci-progress") |
   .ci_progress.completed_count == 1 and .ci_progress.progress_at == 16600 and .alert == null' \
@@ -422,7 +422,12 @@ slow_tick() {
     FM_CREW_LEDGER_BUDGET_SECS=2 FM_CREW_LEDGER_WAIT_SECS=900 FM_CREW_LEDGER_IDLE_SECS=300 \
     "$ROOT/bin/fm-crew-ledger.sh" tick
 }
+jq '(.crew[] | select(.id == "committed-idle")) |= del(.project)' \
+  "$home/state/crew-ledger.json" > "$home/legacy-ledger.json"
+mv "$home/legacy-ledger.json" "$home/state/crew-ledger.json"
 slow_tick 30400 >/dev/null || fail 'first budgeted tick failed'
+jq -e 'all(.crew[]; has("project"))' "$home/state/crew-ledger.json" >/dev/null \
+  || fail 'budgeted tick kept a row without a project field'
 jq -e '[.crew[] | {id,checked_at}] ==
   [{id:"budget-new",checked_at:30400},{id:"committed-idle",checked_at:30361}]' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'budgeted tick did not keep the unread row'

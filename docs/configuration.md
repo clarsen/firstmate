@@ -743,7 +743,7 @@ In a captain-facing primary home, create the local, gitignored `config/portal-ca
 Each non-empty Stop writes one schema-1 sidecar with the full message under `state/portal-sidecars/`; capture errors go to `state/portal-capture.log` and never block a turn.
 The hook stays inactive in linked task worktrees and secondmate homes.
 The watcher removes sidecars older than `FM_PORTAL_SIDECAR_KEEP_DAYS` days, default `30`; set a positive integer to change retention.
-The watcher also writes `state/crew-ledger.json` with each task's title (its backlog title, falling back to the first Captain's intent line from its brief), request (that Captain's intent line), worktree from metadata, and `current_state.since`, the epoch when the reconciled state last changed.
+The watcher also writes `state/crew-ledger.json` with each task's title (its backlog title, falling back to the first Captain's intent line from its brief), request (that Captain's intent line), project (the recorded project directory's name, or null), worktree from metadata, and `current_state.since`, the epoch when the reconciled state last changed.
 
 ## Firstmate role (config/firstmate-role)
 
