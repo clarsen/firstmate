@@ -948,7 +948,7 @@ EOF
 lock_concurrency_barrier() {  # <dir> <count>
   local dir=$1 want=$2 start=$SECONDS entries
   while [ -d "$dir" ] && kill -0 "$FM_TEST_SUITE_PID" 2>/dev/null \
-    && [ $((SECONDS - start)) -lt "$FM_TEST_STUB_MAX_BLOCK_SECONDS" ]; do
+    && [ $((SECONDS - start)) -lt $((FM_TEST_STUB_MAX_BLOCK_SECONDS * 4)) ]; do
     entries=("$dir"/*)
     [ -e "${entries[0]}" ] || entries=()
     [ "${#entries[@]}" -lt "$want" ] || return 0

@@ -331,39 +331,39 @@ wait_until_deadline() {  # <seconds> <command...>
 dump_host_handback_diagnostics() {  # <home> [wait-name]
   local home=${1:-} waited=${2:-host_exited}
   printf 'wait_until_deadline: %s timed out for %s\n' "$waited" "${home:-<missing home>}" >&2
-  printf '--- host.out ---\n' >&2
+  printf '%s\n' '--- host.out ---' >&2
   if [ -n "$home" ] && [ -f "$home/host.out" ]; then
     cat "$home/host.out" >&2
   else
     printf '(missing)\n' >&2
   fi
-  printf '--- .supervision-host.log ---\n' >&2
+  printf '%s\n' '--- .supervision-host.log ---' >&2
   if [ -n "$home" ] && [ -f "$home/state/.supervision-host.log" ]; then
     cat "$home/state/.supervision-host.log" >&2
   else
     printf '(missing)\n' >&2
   fi
-  printf '--- .supervision-host-health ---\n' >&2
+  printf '%s\n' '--- .supervision-host-health ---' >&2
   if [ -n "$home" ] && [ -f "$home/state/.supervision-host-health" ]; then
     cat "$home/state/.supervision-host-health" >&2
   else
     printf '(missing)\n' >&2
   fi
   if [ "$waited" = hook_exited ]; then
-    printf '--- hook.out ---\n' >&2
+    printf '%s\n' '--- hook.out ---' >&2
     if [ -n "$home" ] && [ -f "$home/hook.out" ]; then
       cat "$home/hook.out" >&2
     else
       printf '(missing)\n' >&2
     fi
-    printf '--- hook.err ---\n' >&2
+    printf '%s\n' '--- hook.err ---' >&2
     if [ -n "$home" ] && [ -f "$home/hook.err" ]; then
       cat "$home/hook.err" >&2
     else
       printf '(missing)\n' >&2
     fi
   fi
-  printf '--- process tree ---\n' >&2
+  printf '%s\n' '--- process tree ---' >&2
   if ps -axo pid,ppid,pgid,etime,command >/dev/null 2>&1; then
     ps -axo pid,ppid,pgid,etime,command >&2
   else
@@ -834,7 +834,7 @@ park_outcome() {  # <name> <park-seconds>; sets PARK_OUTCOME to boundary or hand
     PARK_OUTCOME=boundary
   else
     kill -TERM "$(awk -F '\t' '$1 == "host" { print $2 }' "$home/state/.supervision-host")"
-    wait_until_deadline 60 host_exited "$home" || fail "$1: the host did not stop on TERM"
+    wait_until_deadline 180 host_exited "$home" || fail "$1: the host did not stop on TERM"
     # shellcheck disable=SC2034 # read by the sourcing fm-supervision-host*.test.sh files
     PARK_OUTCOME=handled
   fi

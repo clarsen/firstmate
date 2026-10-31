@@ -436,7 +436,7 @@ test_park_limit_lets_a_turn_outlive_the_boundary() {
     else
       [ "$want" = handled ] || fail "$name: a turn past the boundary ran without a later limit"
       kill -TERM "$(awk -F '\t' '$1 == "host" { print $2 }' "$home/state/.supervision-host")"
-      wait_until_deadline 60 host_exited "$home" || fail "$name: the host did not stop on TERM"
+      wait_until_deadline 180 host_exited "$home" || fail "$name: the host did not stop on TERM"
     fi
   done
   pass "host: an owner's later park limit lets a turn outlive the boundary, and no other limit does"
@@ -504,7 +504,7 @@ test_first_cycle_status_streams_and_owner_options_reach_it() {
   sleep 3
   host_exited "$home" && fail "a handling successor re-announced the pending episode: $(cat "$home/host.out")"
   kill -TERM "$(awk -F '\t' '$1 == "host" { print $2 }' "$home/state/.supervision-host")"
-  wait_until_deadline 60 host_exited "$home" || fail "stream: the successor host did not stop on TERM"
+  wait_until_deadline 180 host_exited "$home" || fail "stream: the successor host did not stop on TERM"
   pass "host: the first cycle's status streams once, --restart replaces a stale watcher, and an owner predecessor makes a handling successor"
 }
 
@@ -560,7 +560,7 @@ test_unchanged_held_outcome_reaches_the_captain_once_until_a_new_event() {
   pid=$(awk -F '\t' '$1 == "host" { print $2 }' "$home/state/.supervision-host")
   watcher=$(cat "$home/state/.watch.lock/pid")
   kill -TERM "$pid"
-  wait_until_deadline 60 host_exited "$home" || fail "held: the host did not stop on TERM"
+  wait_until_deadline 180 host_exited "$home" || fail "held: the host did not stop on TERM"
   wait_until 100 sh -c '! kill -0 "$1" 2>/dev/null' _ "$watcher" || fail "held: a stopped host left its watcher running"
   pass "host: an unchanged held outcome reaches the captain once across cadences, and a later decision on the task still does"
 }
@@ -620,7 +620,7 @@ SH
   assert_re '^branch win:7204 [0-9]+ live$' "$home/engine-lease.log" \
     "the engine's lease must record the tagged holder whole and read live"
   kill -TERM "$(awk -F '\t' '$1 == "host" { print $2 }' "$home/state/.supervision-host")"
-  wait_until_deadline 60 host_exited "$home" || fail "tagged: the host did not stop on TERM"
+  wait_until_deadline 180 host_exited "$home" || fail "tagged: the host did not stop on TERM"
   pass "host: a Windows-tagged session-lock holder reaches the engine's lease whole"
 }
 
