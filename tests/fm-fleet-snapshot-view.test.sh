@@ -169,7 +169,7 @@ test_fixture_snapshot_json() {
       and .backlog.body_excerpt == "Preserve this detail for bearings."
       and .hints.pending_decision == false
       and .paths.status_log.kind == "event_history"
-  ' >/dev/null || fail "ship task state, PR, body, and stale event hints wrong"
+  ' >/dev/null || fail "ship task state, PR, body, and stale event hints wrong: $(printf '%s' "$out" | jq -c '.tasks[] | select(.id == "ship-task")' 2>&1)"
   printf '%s' "$out" | jq -e '
     .tasks[] | select(.id == "scout-task")
     | .paths.report.present == true
