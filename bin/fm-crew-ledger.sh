@@ -104,10 +104,10 @@ while IFS= read -r meta <&3; do
     backlog_row=$(fm_run_timed "$remaining" env FM_HOME="$FM_HOME" \
       "$SCRIPT_DIR/fm-tasks-axi.sh" show "$id" 2>/dev/null) || backlog_row=
     backlog_title=$(printf '%s\n' "$backlog_row" | sed -n 's/^  title: //p' | head -1)
-    if [ -n "$backlog_title" ]; then
-      backlog_title=$(printf '%s\n' "$backlog_title" | jq -r 'select(type == "string" and length > 0)' 2>/dev/null) || backlog_title=
-      [ -z "$backlog_title" ] || title=$backlog_title
-    fi
+    case "$backlog_title" in
+      \"*) backlog_title=$(printf '%s\n' "$backlog_title" | jq -r 'select(type == "string")' 2>/dev/null) || backlog_title= ;;
+    esac
+    [ -z "$backlog_title" ] || title=$backlog_title
   fi
 
   status_file="$STATE/$id.status"

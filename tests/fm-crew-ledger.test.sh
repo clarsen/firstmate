@@ -74,7 +74,7 @@ cat > "$home/fakebin/tasks-axi" <<'SH'
 [ "$1" = show ] && [ "$2" = ci-ship ] || exit 1
 [ ! -e "$FM_HOME/backlog-fail" ] || exit 1
 [ -f "$FM_HOME/backlog-title" ] || exit 1
-printf '  title: %s\n' "$(jq -Rn --arg title "$(cat "$FM_HOME/backlog-title")" '$title')"
+printf '  title: %s\n' "$(cat "$FM_HOME/backlog-title")"
 SH
 chmod +x "$home/fakebin/tmux" "$home/fakebin/crew-state" "$home/fakebin/gh" "$home/fakebin/glab" "$home/fakebin/tasks-axi"
 printf 'Track portal capture\n' > "$home/backlog-title"
@@ -105,6 +105,10 @@ jq -e --arg worktree "$home/projects/task" '.crew[0] | .harness.state == "idle" 
   .title == "Track portal capture" and .request == "Make the portal capture visible." and
   .worktree == $worktree and .current_state.since == 10000' \
   "$home/state/crew-ledger.json" >/dev/null || fail 'ledger evidence is incomplete'
+printf '"Track \\"portal\\", capture"\n' > "$home/backlog-title"
+out=$(tick 10000) || fail 'quoted backlog title tick failed'
+jq -e '.crew[0].title == "Track \"portal\", capture"' \
+  "$home/state/crew-ledger.json" >/dev/null || fail 'quoted backlog title was not decoded'
 rm "$home/backlog-title"
 out=$(tick 10001) || fail 'missing backlog title tick failed'
 assert_equals '' "$out" 'missing backlog title does not change alert evidence'
