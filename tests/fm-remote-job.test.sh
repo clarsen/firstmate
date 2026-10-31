@@ -102,19 +102,6 @@ printf 'invoked\n' >> "$FM_FAKE_PERL_LOG"
 exit 127
 SH
 chmod +x "$RUNTIME_BIN/perl"
-# The worker must not need Perl on a host whose mkdir is exclusive. uutils mkdir
-# (the ubuntu-26.04 default) is not, and the shared helper then falls back to
-# Perl; this stand-in pins the worker to an exclusive mkdir so the contract is
-# the same on every host.
-cat > "$RUNTIME_BIN/mkdir" <<'SH'
-#!/bin/bash
-if [ "${1:-}" = --version ]; then
-  echo "mkdir (GNU coreutils) 9.4"
-  exit 0
-fi
-exec /bin/mkdir "$@"
-SH
-chmod +x "$RUNTIME_BIN/mkdir"
 
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com

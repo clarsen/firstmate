@@ -58,6 +58,35 @@ test_helper_honors_umask() {
   pass "helper honors umask and refuses existing directories"
 }
 
+# A uutils host that also carries GNU coreutils as gnumkdir (Ubuntu's layout)
+# must use gnumkdir and never start perl, which a remote worker may lack.
+test_helper_prefers_gnumkdir_over_perl() {
+  local gnubin="$TMP_ROOT/gnubin" calls="$TMP_ROOT/gnumkdir.calls"
+  /bin/mkdir -p "$gnubin"
+  cat > "$gnubin/gnumkdir" <<SH
+#!/bin/sh
+case "\${1:-}" in --version) echo 'mkdir (GNU coreutils) 9.7'; exit 0 ;; esac
+echo called >> '$calls'
+exec /bin/mkdir "\$@"
+SH
+  cat > "$gnubin/perl" <<SH
+#!/bin/sh
+echo invoked >> '$TMP_ROOT/perl.calls'
+exit 127
+SH
+  chmod +x "$gnubin/gnumkdir" "$gnubin/perl"
+  ( PATH="$gnubin:$PATH"
+    # shellcheck source=bin/fm-excl-mkdir-lib.sh
+    . "$ROOT/bin/fm-excl-mkdir-lib.sh"
+    (umask 077; fm_mkdir_exclusive "$TMP_ROOT/gnu-claim") || exit 1
+    fm_mkdir_exclusive "$TMP_ROOT/gnu-claim" 2>/dev/null && exit 2
+    exit 0 ) || fail "helper over gnumkdir must create once and refuse the existing directory"
+  [ -d "$TMP_ROOT/gnu-claim" ] || fail "helper over gnumkdir did not create the directory"
+  assert_equals 2 "$(wc -l < "$calls" | tr -d ' ')" "both claims must go through gnumkdir"
+  [ ! -e "$TMP_ROOT/perl.calls" ] || fail "helper started perl although gnumkdir was available"
+  pass "helper prefers gnumkdir over perl on a uutils host"
+}
+
 test_sequence_allocator_unique_under_stand_in() {
   local pids=() i pid results
   export FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/state"
@@ -77,4 +106,5 @@ test_sequence_allocator_unique_under_stand_in() {
 }
 
 fm_test_run test_stand_in_is_not_exclusive test_helper_grants_each_claim_once \
-  test_helper_honors_umask test_sequence_allocator_unique_under_stand_in
+  test_helper_honors_umask test_helper_prefers_gnumkdir_over_perl \
+  test_sequence_allocator_unique_under_stand_in
