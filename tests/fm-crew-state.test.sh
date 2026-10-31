@@ -855,9 +855,9 @@ test_active_run_is_authoritative() {
   assert_contains "$out" "validating (running)" "active run reports the step"
   ledger_out=$(FM_CREW_STATE_LEDGER=1 run_crew_state "$d" feat-a)
   assert_contains "$ledger_out" $'\nrun-step: running' "ledger mode exposes a stable run-step label"
-  FM_FAKE_AXI_STATUS=$(run_running fm/feat-a | sed 's#pr: ""#pr: "https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416"#')
+  FM_FAKE_AXI_STATUS=$(run_running fm/feat-a | sed 's#pr: ""#pr: "https://gitlab.example.com/group/other-project/-/merge_requests/12416"#')
   ledger_out=$(FM_CREW_STATE_LEDGER=1 run_crew_state "$d" feat-a)
-  assert_contains "$ledger_out" $'\nrun-pr: https://lsg-git.lbl.gov/lblnet/generate_nagios_cfg/-/merge_requests/12416' \
+  assert_contains "$ledger_out" $'\nrun-pr: https://gitlab.example.com/group/other-project/-/merge_requests/12416' \
     'ledger mode exposes the attributed forge change'
   pass "active run-step is authoritative"
 }

@@ -4210,7 +4210,7 @@ test_gitlab_retention_and_pending_answer() {
   local home id mr show url
   home=$(make_home gitlab-retention)
   id=sample-gitlab-retention
-  mr=https://lsg-git.lbl.gov/lblnet/platform-improvement/-/merge_requests/17
+  mr=https://gitlab.example.com/group/project/-/merge_requests/17
   tasks_in "$home" add "$id" "Ship a GitLab merge request" --kind ship --repo sample --start >/dev/null \
     || fail "could not create GitLab retention fixture"
   run_captain "$home" hold "$id" --reason "captain must choose" >/dev/null \
