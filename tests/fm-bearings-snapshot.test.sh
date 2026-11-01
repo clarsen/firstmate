@@ -3343,7 +3343,7 @@ SH
     i=$((i + 1))
   done
 
-  serial=$(FAKE_NM_DELAY=0 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 run "$home" "$fakebin" --json)
+  serial=$(FM_SNAPSHOT_CREW_STATE_TIMEOUT=120 FAKE_NM_DELAY=0 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 run "$home" "$fakebin" --json)
 
   # Serialized reads pay every worker's delay end to end while concurrent reads
   # overlap them. Time both runs and compare, because the two pay the same
@@ -3351,14 +3351,14 @@ SH
   # delivers, where an absolute wall-clock budget would instead measure how
   # loaded the host happens to be and flake on a busy runner.
   serial_started=$(date +%s)
-  FAKE_NM_DELAY=1 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 \
+  FM_SNAPSHOT_CREW_STATE_TIMEOUT=120 FAKE_NM_DELAY=1 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 \
     run "$home" "$fakebin" --json >/dev/null \
     || fail "serialized local snapshot failed"
   serial_elapsed=$(( $(date +%s) - serial_started ))
 
   parallel_started=$(date +%s)
   parallel_file="$home/parallel-snapshot.json"
-  FAKE_NM_DELAY=1 FAKE_NM_SIGNAL="$home/nm-started" \
+  FM_SNAPSHOT_CREW_STATE_TIMEOUT=120 FAKE_NM_DELAY=1 FAKE_NM_SIGNAL="$home/nm-started" \
     FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8 \
     run "$home" "$fakebin" --json > "$parallel_file" &
   snapshot_pid=$!
