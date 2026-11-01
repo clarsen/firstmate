@@ -86,15 +86,17 @@ Claude's `.claude/settings.json` Stop `asyncRewake` hook (`bin/fm-claude-stop-au
 Do not run the hook as a manual arm from a tool turn: a short-lived tool process cannot own its park; its header and help own the invocation contract.
 The hook fires on every Stop.
 On each Stop, an eligible primary with supervision need admits one home-scoped owner, which foregrounds `bin/fm-watch-arm.sh` inside the hook-owned process tree.
+If a session exits mid-cycle and leaves an orphaned Stop hook, the replacement session's first eligible Stop supersedes its claim, attaches to the running watcher through `bin/fm-watch-arm.sh`, and delivers the cycle's close.
+[`turnend-guard.md`](turnend-guard.md#auto-arm-generation-claim) owns the open-claim definition.
 While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
 
 ### Claude session-lock ownership
 
 The hook handles the session lock as follows:
 
-- A numeric session-lock owner that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh` before auto-arm state changes.
+- A session-lock owner, including a tagged `win:<pid>` holder on Windows/Git Bash, that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh` before auto-arm state changes.
 - A live Claude front-end whose conversation Claude Code moved into this background session, as `fm_session_lock_moved_to_self` proves, is also taken over through `bin/fm-lock.sh` before auto-arm state changes.
-- Any other live owner the session does not own, an absent lock, or a malformed lock keeps the competing hook inert.
+- Any other live owner the session does not own, an absent lock, or an unusable lock keeps the competing hook inert.
 
 Whether the session owns that lock is the shared `fm_session_lock_owned_by_self` verdict in `bin/fm-session-lock-lib.sh`.
 That verdict accepts either of two cases:
@@ -113,15 +115,12 @@ The beacon is `state/.last-watcher-beat`, which only the watcher process touches
 
 - A cycle-end failure is benign when that live-watcher predicate is true.
   In that case the hook suppresses the arm output and continues silently.
-- Only an exhausted failure with no verified watcher commits one last-resort notice for the continuous failure episode.
-- A refused notice commit stays silent for a later retry.
-- After a successful notice, later Stop cycles exit 2 without repeating it until the turn-end guard consumes the attended fail-open.
 
-The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
+[`turnend-guard.md`](turnend-guard.md#failure-progression-and-block-budget) owns the failure-notice commit contract, monotonic failure progression, attended-alarm writers, suppression reasons, and positive recovery reset.
 
 ### Claude hook-timeout renewal
 
-Claude never delivers that exit 2 from a hook it timed out: it settles the hook as killed before signalling the hook's tree, so a quiet cycle left running into the registered timeout ends with no wake at all.
+Claude never delivers the exit 2 of a hook it timed out: it settles the hook as killed before signalling the hook's tree, so a quiet cycle left running into the registered timeout ends with no wake at all.
 The hook therefore bounds every cycle it arms at `FM_CLAUDE_AUTOARM_RENEW_AFTER` seconds, half the registered timeout, so the renewal comes first under either clock Claude may time the hook with and across any system sleep shorter than that budget.
 At the bound the watcher closes a quiet cycle at its terminal wait with one `renew:` line and leaves the recovery episode exactly as it was, so the next cycle opens without a catch-up wake.
 The hook then commits the `renew` outcome and exits 2 with a renewal banner that asks for no handling, and the Stop ending that silent turn arms the next cycle.
@@ -132,7 +131,9 @@ An attached arm hands back at the bound and leaves the watcher it follows runnin
 
 On a non-Pi primary, a home that runs the supervision host runs `bin/fm-supervision-host.sh` in place of the arm its re-arm owner would start.
 The host owns successive watcher cycles through the same arm.
-[supervision-host.md](supervision-host.md#failure-direction) owns the hand-back's downtime restoration, including when the successor already exited; the arm's recovery and acknowledgement contracts below still apply.
+[supervision-host.md](supervision-host.md#failure-direction) owns the default hand-back's downtime restoration, including when the successor already exited.
+Its [acknowledged hand-back](supervision-host.md#acknowledged-hand-back) section owns the opt-in Claude transfer that preserves supervision and retries delivery until main acknowledges the specific queued check.
+The arm's recovery and acknowledgement contracts below still apply.
 
 ## Actionable wake ordering
 
@@ -201,8 +202,16 @@ The bounded turn-end guard enforces recovery at Stop when no watcher is live and
 So a finished, hung, or identity-mismatched claim cannot suppress that recovery ([`turnend-guard.md`](turnend-guard.md#harness-integrations) owns that boundary).
 
 The recovery-episode contract below owns once-per-generation announcement.
-A handling successor does not re-announce.
+A handling successor does not re-announce the predecessor-delivered wake while its handling handoff remains open.
 It enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
+An external durable append still republishes that episode as pending downtime, so the successor surfaces it whether the prior handling turn is still running or has acknowledged its rows.
+The append numbers past every queued row, so a lost or malformed sequence counter cannot let an outstanding acknowledgement consume it.
+Once those rows are acknowledged, a later append that repeats one byte for byte still opens a new recovery generation, which the successor recovers.
+Notification never consumes rows; sequence-bound, per-actor acknowledgement remains the owner of consumption.
+After the supervision host finishes a handled turn, it settles the successor handoff under the durable-queue and recovery-marker locks.
+Any row left for main then becomes a recoverable downtime episode, including one appended after the predecessor closed but before the successor initialized or the host confirmed its handoff.
+The successor closes once with the recovery wake only while that row is still queued; this is how a captain inbox note reaches main during handling-successor startup or while the host is parked on the handled wake's successor.
+When the host instead hands the accepted close back to main and leaves that successor running, it republishes the episode as announced downtime, because the close it hands back is that episode's delivery; the successor therefore does not announce it again, while a later durable append still opens a pending episode it recovers.
 
 ### Manual recovery and other harnesses
 
@@ -232,12 +241,14 @@ The first recovery marks that generation announced, and later empty-queue arms l
 A non-successor watcher start checks the durable queue and recovery marker under their locks.
 If an announced-but-unacknowledged episode has an empty queue, the arm leaves that generation announced, making repeated empty-queue arms idempotent while a long-poll source is merely alive.
 If a durable row arrived after the announcement, the arm opens a fresh pending downtime generation so buried work still resurfaces once.
+A Codex foreground checkpoint skips the announced-episode reopen transition, so an already-announced generation stays announced while the checkpoint continues its bounded supervision.
+Its ordinary arm check still announces a never-announced generation, including one made pending by a durable queue append during the checkpoint.
 
 ### Generation reuse
 
 An ordinary watcher close attempts to publish downtime, and every durable queue append publishes it.
-A lifetime-bound renewal close is the one exception: it preserves the existing episode marker as it is instead of publishing downtime, so the renewed cycle does not re-present handled work.
-A handling successor closing to resurface recovery preserves the existing marker instead.
+A lifetime-bound renewal close preserves the existing episode marker as it is instead of publishing downtime, so the renewed cycle does not re-present handled work.
+A watcher closing to resurface the recovery it found at its start preserves the existing marker instead, while a handling successor resurfacing a later row publishes downtime like any close.
 If EXIT cleanup cannot acquire the downtime-marker lock within its bound, it retains the stale singleton for the next arm to publish the missing downtime before clearing that lock (see [Grace, beacon, and stop signals](#grace-beacon-and-stop-signals)).
 A downtime republication of a pending episode reuses its generation.
 A watcher close leaves an announced downtime episode announced, while a successful durable append opens a fresh pending generation so a live watcher can recover the new work.
@@ -276,6 +287,7 @@ Every presented row is claimed to exactly one actor under the durable queue lock
 - A branch grant is published through `bin/fm-wake-grant.sh` under that same lock in `state/.branch-eligible-rows`.
   The grant is bound to the live branch process and extension generation recorded in `state/.branch-eligible-owner`.
   Publication is refused if main already claimed any requested row.
+  Activation, publication, release, and deactivation exit nonzero if queue-lock acquisition fails, preserving both grant records and leaving another owner's lock intact.
 - A main drain validates that owner evidence under the queue lock and reclaims the grant when its process is gone or its identity no longer matches.
 - A main drain claims every currently unclaimed row and excludes an active branch grant from both presentation and acknowledgement.
 
@@ -345,7 +357,8 @@ Under the away-posture record the exclusion lifts and a check row is offered to 
 
 `fm-wake-drain.sh` never reclassifies a row itself.
 It filters the queue to the current actor's opaque claim before same-key deduplication, then presents and acknowledges only that actor-local view.
-A missing or empty branch snapshot is refused loudly rather than read as "nothing eligible", because reaching the drain without the non-empty handoff promised by the extension is a wiring bug.
+A missing or empty branch snapshot is refused loudly rather than read as "nothing eligible".
+With a live branch owner, a missing snapshot means the branch's own acknowledgement already consumed the grant, and the refusal says so; otherwise reaching the drain without the non-empty handoff promised by the extension is a wiring bug.
 A branch acknowledgement retires the check-row receipts - inactive-outcome, inactive-reconcile notice, and secondmate stall - of exactly the granted sequences it consumes, so a branch-consumed check is never re-queued by its producer.
 Attended, a grant names no check row and each scan finds nothing.
 
@@ -414,11 +427,14 @@ Only the watcher process touches `state/.last-watcher-beat`.
 No helper process can make a wedged watcher appear healthy.
 An arm whose own script path sits under a disposable no-mistakes validation checkout (`.no-mistakes/worktrees/`) refuses with the typed failure line before touching any state, because a watcher started there outlives the validation step and keeps writing the real home's state from a checkout about to be deleted.
 Once per poll the watcher checks that its home, its state directory, and its own code root still exist, and exits with a logged reason when one is gone, scoped to itself alone, so a torn-down temporary home or a discarded checkout never leaves an orphan watcher behind.
-The watcher uses bash's native fatal handling for HUP and TERM, including during a blocked poll, so both run its EXIT cleanup.
+The arm applies the same rule to its own ground: when its script, its state directory, or an `FM_HOME` that existed at start disappears, it fails with `watcher: FAILED - arm ground removed: <path> no longer exists` instead of polling on; the `bin/fm-watch-arm.sh` header owns the timing bound.
+The watcher uses bash's native fatal handling for HUP and TERM, including during a blocked check, a blocked `fm_backend_capture` pane read, or a backend event wait, so both run its EXIT cleanup and stop that read or wait.
 `watcher_stop_signals` in `bin/fm-watch.sh` owns the signal-handling rationale.
 The EXIT cleanup bounds its wait for `state/.watcher-down.lock` while persisting recovery state with `FM_WATCHER_CLEANUP_LOCK_BOUND` (default 2 seconds).
 Only positive decimal integers are accepted, including leading-zero forms such as `08`; empty, non-numeric, and zero values (including `00`) fall back to 2 seconds.
 A live foreign holder therefore cannot strand a TERM'd watcher in this marker-lock wait: on timeout the recovery transition fails without releasing the singleton, leaving dead-pid stale evidence for the next arm to republish and clear.
+The bounded wait allows itself one extra lock-freshness window past the bound when the only remaining blocker is a lock whose holder never published its pid: `fm_lock_mid_acquire_is_fresh` defers to that residue for a whole freshness window before it can be stolen, so a creator killed inside its claim write would otherwise consume the entire bound without ever becoming reclaimable.
+A published numeric pid, live or dead, grants no extension to the original wait bound.
 
 ## Regression coverage
 
@@ -462,6 +478,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 - A persistent live successor after recovery.
 - An idle live Lavish source that stays quiet until its real result wakes promptly.
 - An append that reopens an announced empty recovery.
+- An external append beside a handling successor's inherited rows that surfaces both before and after the prior handling turn acknowledges its rows, including after a lost or malformed sequence counter and when the new row repeats an acknowledged inherited row byte for byte.
 - A watcher close inside the handling window that must leave the printed acknowledgement valid.
 - A re-arm whose recovery cycle is slowed after confirmation and must still surface rather than read as a watcher that stayed live.
 - The self-healing moved-generation acknowledgement that consumes its handled rows and names its remedy.
@@ -470,7 +487,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 - Refusal of a malformed renewal bound.
 - The already-acknowledged confirmation no-op for a matching generation, with its mismatched-generation, dead-pid, and lock-mismatch rejections preserved.
 - The manual-restart generation churn that makes a confirmation for the churned generation report a mismatch, which an arm check without a reopen leaves in place.
-- A take-over that stays quiet after a confirmed TERM, still surfaces queued work and self-exit downtime, and attaches without stopping a cycle the named arm does not own.
+- A take-over that stays quiet after a confirmed TERM, including one that lands inside a herdr event wait, still surfaces queued work and self-exit downtime, and attaches without stopping a cycle the named arm does not own.
 - The disposable-checkout arm refusal.
 - The home-gone and state-gone watcher exits.
 - The test reaper that stops a watcher armed for a temporary home.
@@ -479,14 +496,17 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 
 - The once-per-generation announcement bound with the real Pi extension against a refused handling handshake.
 - A handling successor that must surface a real crew event instead of going blind.
+- A handling successor that resurfaces a row appended between its predecessor's close and its own startup handoff.
 
 `tests/fm-watch-triage.test.sh` proves TERM stops a watcher blocked inside a poll's pane capture and still releases its lock and records an acknowledgeable stop.
 It also exercises a single TERM with a live foreign downtime-marker lock holder, retained stale singleton and subsequent arm-style recovery, including decimal `08` and zero `00` cleanup bounds.
 It checks that a newly appended keyed decision is classified without rereading earlier status bytes, so signal handling can return to the watcher's beacon refresh even when the status history is long.
+`tests/fm-wake-queue.test.sh` proves TERM likewise stops a watcher blocked in the drain-ring idle check's pane capture.
 
 `tests/fm-watcher-lock.test.sh` covers:
 
 - Verified-successor attach.
+- Bounded lock-wait extension for an unpublished pid, while a published live holder retains the original bound.
 - Recovery publication before stale-lock removal.
 - The typed self-eviction failure.
 - Bounded and successor-linked lifecycle rows.
@@ -502,6 +522,9 @@ It checks that a newly appended keyed decision is classified without rereading e
 - Stale and live session owners.
 - Unchanged AFK and need boundaries.
 - Single-flight.
+- Supersession of a dead session's orphaned claim by the replacement session's first Stop, including a resumed session that carries the dead one's conversation id, and a claim with no readable session lock.
+- A recycled background bridge keeping its live claim on the trusted session id pinned to the lock holder's recorded session-lock identity.
+- The Windows/Git Bash session-lock readers for the supervision-host key, claim read-back, and mid-turn health, plus untagged-value parity with the numeric helpers, in `tests/fm-session-lock-windows-consumers.test.sh`.
 - Bounded failure retries.
 - Benign live-watcher cycle ends.
 - One-notice failure episodes.
@@ -541,7 +564,8 @@ OpenCode support targets persistent TUI sessions rather than headless `opencode 
 
 The other harnesses rely on these mechanisms:
 
-- Claude depends on the Stop `asyncRewake` rewake and on renewing each quiet cycle inside the registered hook timeout, which costs one silent turn per renewal budget of unbroken quiet.
+- Claude normally depends on the Stop `asyncRewake` rewake and on renewing each quiet cycle inside the registered hook timeout, which costs one silent turn per renewal budget of unbroken quiet.
+  The host's opt-in [acknowledged hand-back](supervision-host.md#acknowledged-hand-back) adds guarded tmux retries when that continuation is lost.
 - Cursor depends on its awaited stop-hook park.
 - Grok retains native background-completion notifications.
 - Codex retains bounded foreground checkpoints.

@@ -9,6 +9,9 @@ set -u
 SNAPSHOT="$ROOT/bin/fm-fleet-snapshot.sh"
 VIEW="$ROOT/bin/fm-fleet-view.sh"
 TMP_ROOT=$(fm_test_tmproot fm-fleet-snapshot)
+# Stock Bash 3.2 on a loaded macOS runner can take longer than the 10s default per crew-state read,
+# which folds the row to state unknown; these tests assert row content, not the bound.
+export FM_SNAPSHOT_CREW_STATE_TIMEOUT=120
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
@@ -169,7 +172,7 @@ test_fixture_snapshot_json() {
       and .backlog.body_excerpt == "Preserve this detail for bearings."
       and .hints.pending_decision == false
       and .paths.status_log.kind == "event_history"
-  ' >/dev/null || fail "ship task state, PR, body, and stale event hints wrong"
+  ' >/dev/null || fail "ship task state, PR, body, and stale event hints wrong: $(printf '%s' "$out" | jq -c '.tasks[] | select(.id == "ship-task")' 2>&1)"
   printf '%s' "$out" | jq -e '
     .tasks[] | select(.id == "scout-task")
     | .paths.report.present == true
@@ -1172,22 +1175,23 @@ EOF
   pass 'fleet snapshot and view expose the durable crew ledger'
 }
 
-test_empty_fleet_json
-test_fixture_snapshot_json
-test_home_summary_excludes_secondmate_from_child_inventory
-test_undated_captain_hold_phrasing_and_aging
-test_hold_buckets_are_total_and_text_blind
-test_main_inventory_orphan_and_unstructured_disclosure
-test_normalized_roles_and_plural_blocker_readiness
-test_event_hints_follow_reconciled_current_state
-test_open_decision_survives_later_unrelated_event
-test_secondmate_open_decision_survives_live_endpoint
-test_open_decision_transfers_to_captain_hold
-test_open_decision_clears_on_keyed_resolution
-test_completed_scout_report_is_pointer_not_pending
-test_parked_scout_decision_stays_pending
-test_scout_reports_include_teardown_reports
-test_backlog_tasks_axi_forms_and_overrides
-test_view_renders_snapshot
-test_view_renders_dead_secondmate_agent_status
-test_crew_ledger_is_visible
+fm_test_run \
+  test_empty_fleet_json \
+  test_fixture_snapshot_json \
+  test_home_summary_excludes_secondmate_from_child_inventory \
+  test_undated_captain_hold_phrasing_and_aging \
+  test_hold_buckets_are_total_and_text_blind \
+  test_main_inventory_orphan_and_unstructured_disclosure \
+  test_normalized_roles_and_plural_blocker_readiness \
+  test_event_hints_follow_reconciled_current_state \
+  test_open_decision_survives_later_unrelated_event \
+  test_secondmate_open_decision_survives_live_endpoint \
+  test_open_decision_transfers_to_captain_hold \
+  test_open_decision_clears_on_keyed_resolution \
+  test_completed_scout_report_is_pointer_not_pending \
+  test_parked_scout_decision_stays_pending \
+  test_scout_reports_include_teardown_reports \
+  test_backlog_tasks_axi_forms_and_overrides \
+  test_view_renders_snapshot \
+  test_view_renders_dead_secondmate_agent_status \
+  test_crew_ledger_is_visible
