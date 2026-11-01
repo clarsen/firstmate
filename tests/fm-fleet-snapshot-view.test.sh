@@ -9,6 +9,9 @@ set -u
 SNAPSHOT="$ROOT/bin/fm-fleet-snapshot.sh"
 VIEW="$ROOT/bin/fm-fleet-view.sh"
 TMP_ROOT=$(fm_test_tmproot fm-fleet-snapshot)
+# Stock Bash 3.2 on a loaded macOS runner can take longer than the 10s default per crew-state read,
+# which folds the row to state unknown; these tests assert row content, not the bound.
+export FM_SNAPSHOT_CREW_STATE_TIMEOUT=120
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 

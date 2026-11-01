@@ -116,7 +116,9 @@ test_concurrent_append_and_drain() {
     pids="$pids $!"
     i=$((i + 1))
   done
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out1" &
+  # This test proves append/drain correctness under contention, not the lock deadline; a loaded runner
+  # can hold 40 appenders past the 10s default, so the drain waits long enough to take the lock.
+  FM_STATE_OVERRIDE="$state" FM_STATUS_PRESENTATION_LOCK_TIMEOUT=300 "$DRAIN" > "$out1" &
   pids="$pids $!"
   for pid in $pids; do
     wait "$pid" || fail "concurrent append/drain subprocess failed"
