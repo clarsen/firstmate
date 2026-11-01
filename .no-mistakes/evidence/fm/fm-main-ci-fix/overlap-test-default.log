@@ -1,0 +1,4 @@
+1..1
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+FM_TEST_COMPLETE
+bash $f  4.25s user 1.86s system 99% cpu 6.121 total
