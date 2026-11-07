@@ -1,0 +1,10 @@
+fixed relisten:
+rc=0
+fixed relisten extra arg:
+Lavish adapter for the generic process-to-event runner.
+
+rc=0
+base relisten:
+/tmp/base-lavish.sh: line 205: /tmp/fm-pr-lib.sh: No such file or directory
+/tmp/base-lavish.sh: line 207: /tmp/fm-wake-lib.sh: No such file or directory
+rc=
