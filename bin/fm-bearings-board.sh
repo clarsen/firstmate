@@ -237,6 +237,18 @@
 # Incoming `captain_questions` is optional for compatibility; build replaces it
 # with the open rows from bin/fm-captain-question-list.sh before publishing, or
 # with null when that record is invalid so only that section reads unavailable.
+# Incoming `project_issues` is likewise optional; build always replaces it with
+# the output of bin/fm-project-issues.sh (that script owns the read and the row
+# shape), so labelled GitHub issues reach the board without depending on the
+# composer. It is { status: string, rows: [...] }, each row { project:
+# non-empty string, repo: string or null, state: open|unavailable, label:
+# captain|next-step on an open row and null otherwise, number, title, url (an
+# https:// URL), created (YYYY-MM-DD or null), reason (a non-empty string on an
+# unavailable row) }. The template renders `captain` rows and every unavailable
+# row in Captain's Call grouped by project with their full URLs, `next-step`
+# rows in Charted Next, and each project's rows in its Projects card. When the
+# reader itself fails, build substitutes one unavailable row so the board says
+# the issues could not be read instead of showing none.
 #
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
 # re-invocation rebuilds the same file in place, which keeps the same Lavish
@@ -431,6 +443,16 @@ validate_payload() {  # <data.json>
       and (.underway | type == "array") and ([.underway[] | project_underway] | all)
       and (.next | type == "array") and ([.next[] | project_next] | all)
       and ((has("more") | not) or (.more | nonneg_int));
+    def project_issue:
+      type == "object" and (.project | nonempty_string)
+      and (.repo == null or (.repo | type == "string"))
+      and (if .state == "open" then
+             (.label == "captain" or .label == "next-step")
+             and (.number | type == "number" and . >= 1 and floor == .)
+             and (.title | nonempty_string) and (.url | https_url)
+             and (.created == null or (.created | valid_filed))
+           elif .state == "unavailable" then (.reason | nonempty_string)
+           else false end);
     def captain_question:
       type == "object" and (.id | type == "string" and test("^q-[0-9]{8}-[0-9a-f]{8}$"))
       and (.question | nonempty_string) and (.status | nonempty_string)
@@ -448,6 +470,9 @@ validate_payload() {  # <data.json>
       or ((.captain_questions | type == "array")
         and ([.captain_questions[] | captain_question] | all)
         and (([.captain_questions[].id] | unique | length) == (.captain_questions | length))))
+    and ((has("project_issues") | not) or .project_issues == null
+      or ((.project_issues | type == "object") and (.project_issues.status | type == "string")
+        and (.project_issues.rows | type == "array") and ([.project_issues.rows[] | project_issue] | all)))
     and ((has("projects") | not)
       or ((.projects | type == "array") and ([.projects[] | project_item] | all)))
     and (.captains_call | type == "array")
@@ -953,7 +978,7 @@ verify_render() {  # <data.json> <built-page>
 }
 
 command_build() {
-  local data=${1-} board json effective stage1 tmp sid extracted owner version pre_reopen_owner questions
+  local data=${1-} board json effective stage1 tmp sid extracted owner version pre_reopen_owner questions issues
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$data" ] || fail "board data does not exist: $data"
@@ -970,13 +995,18 @@ command_build() {
     fail "cannot reconcile the board payload against landed work"
   fi
   questions=$("$SCRIPT_DIR/fm-captain-question-list.sh") || questions=null
-  json=$(jq -c --argjson questions "$questions" '.captain_questions = $questions' "$effective") \
+  if ! issues=$("$SCRIPT_DIR/fm-project-issues.sh" --json \
+       | jq -ce '{status, rows} | select(.rows | type == "array")'); then
+    issues='{"status":"unavailable (issue reader failed)","rows":[{"project":"(all projects)","repo":null,"state":"unavailable","label":null,"number":null,"title":null,"url":null,"created":null,"reason":"bin/fm-project-issues.sh failed"}]}'
+  fi
+  json=$(jq -c --argjson questions "$questions" --argjson issues "$issues" \
+    '.captain_questions = $questions | .project_issues = $issues' "$effective") \
     || { rm -f -- "$effective"; fail "cannot compact the board data"; }
   printf '%s\n' "$json" > "$effective"
   # Incoming cards were validated before reconcile was injected; that reserved
   # builder-owned option is stripped only for this final question validation.
   validate_payload <(jq '.captains_call = []' "$effective") \
-    || { rm -f -- "$effective"; fail "the durable captain questions violate $BOARD_SCHEMA"; }
+    || { rm -f -- "$effective"; fail "the durable captain questions or project issues violate $BOARD_SCHEMA"; }
   rm -f -- "$effective"
   # `<` never appears in JSON syntax outside strings, so escaping every
   # occurrence keeps the payload valid JSON while making </script> inert.

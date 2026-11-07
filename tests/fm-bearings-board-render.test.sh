@@ -321,6 +321,50 @@ render_projects() {  # <home> <charted-json> <projects-json>
     || fail "the built board could not be rendered"
 }
 
+# Labelled GitHub issues reach the board through build itself
+# (bin/fm-project-issues.sh), never through the composed payload.
+test_labelled_issues_render_in_captains_call_charted_next_and_projects() {
+  local home out
+  home=$(make_home labelled-issues)
+  fm_seed_issue_projects "$home" "$home/fakebin"
+  out=$(FAKE_GH_ISSUES_DIR="$ROOT/tests/assets/gh-issues" render_projects "$home" '[]' '[
+    {"name":"alpha","registered":true,"owners":"(main)","decisions":[],"underway":[],"next":[]},
+    {"name":"beta","registered":true,"owners":"(main)","decisions":[],"underway":[],"next":[]},
+    {"name":"delta","registered":true,"owners":"(main)","decisions":[],"underway":[],"next":[]}
+  ]') || exit 1
+  printf '%s' "$out" | jq -e '
+    .callIssues.shown
+    and .callIssues.projects == ["alpha", "gamma", "omega"]
+    and ([.callIssues.rows[] | [.title, (.url.text // null), (.badges[0].text)]] == [
+      ["Pick the alpha release name", "https://github.com/acme/alpha/issues/7", "captain"],
+      ["Approve the alpha storage cutover", "https://github.com/acme/alpha/issues/12", "captain"],
+      ["Issues could not be read", null, "unreadable"],
+      ["Issues could not be read from acme/omega", null, "unreadable"]])
+    and (.callIssues.rows[0].url.href == "https://github.com/acme/alpha/issues/7")
+    and (.callIssues.rows[2].sub == "no local clone to read the GitHub origin from")
+    and ([.charted[] | [.title, .url.text, .pickable]] == [
+      ["Remove the alpha legacy importer", "https://github.com/acme/alpha/issues/9", false],
+      ["Add the beta nightly export", "https://github.com/acme/beta/issues/3", false]])
+    and (.empty == [])
+    and ([.stats[] | select(.label == "need you" or .label == "charted next") | .n] == [2, 2])
+    and ([.projects.cards[] | {name, groups:[.groups[] | {label, n:(.rows | length)}]}] == [
+      {name:"alpha", groups:[{label:"GitHub issues", n:3}]},
+      {name:"beta", groups:[{label:"GitHub issues", n:1}]}])
+    and (.projects.quiet == ["Nothing charted: delta"])
+  ' >/dev/null || fail "labelled issues did not render where expected: $out"
+  pass "captain issues and unreadable projects render in Captain's Call by project with full URLs, next-step issues in Charted Next, and both in each project card"
+}
+
+test_a_board_with_no_labelled_issues_keeps_the_issue_list_hidden() {
+  local home out
+  home=$(make_home no-issues)
+  out=$(render "$home" '[]') || exit 1
+  printf '%s' "$out" | jq -e '
+    (.callIssues.shown | not) and (.callIssues.rows == []) and (.empty == ["Nothing is queued."])
+  ' >/dev/null || fail "a board with no labelled issues changed its rendering: $out"
+  pass "a home with no labelled issues renders Captain's Call and Charted Next as before"
+}
+
 test_the_project_drilldown_renders_ranked_cards_and_quiet_projects() {
   local home out
   home=$(make_home projects-drilldown)
@@ -468,6 +512,8 @@ test_an_omitted_kind_keeps_the_existing_queued_rendering
 test_a_charted_row_with_detail_renders_its_panel_and_links
 test_a_charted_row_without_detail_renders_unchanged
 test_the_project_drilldown_renders_ranked_cards_and_quiet_projects
+test_labelled_issues_render_in_captains_call_charted_next_and_projects
+test_a_board_with_no_labelled_issues_keeps_the_issue_list_hidden
 test_a_board_without_projects_keeps_the_drilldown_hidden
 test_open_captain_questions_render_separately_with_close_control
 test_host_zone_formats_question_updates_across_dst

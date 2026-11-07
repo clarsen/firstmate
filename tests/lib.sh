@@ -842,6 +842,38 @@ fm_git_init_commit() {
   git -C "$dir" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
 }
 
+# fm_seed_issue_projects <home> <fakebin>: register the labelled-issue fixture
+# projects in <home>/data/projects.md and install tests/assets/fake-gh-issues.sh
+# as <fakebin>/gh. Callers export FAKE_GH_ISSUES_DIR="$ROOT/tests/assets/gh-issues"
+# (or another fixture directory). Registry order is alpha, beta, gamma, delta, omega:
+#   alpha  clone, https GitHub origin acme/alpha (captain + next-step fixtures,
+#          issue 12 carries both labels)
+#   beta   clone, ssh GitHub origin acme/beta (next-step fixture only)
+#   gamma  registered with no local clone -> an unavailable row
+#   delta  clone with a non-GitHub origin -> skipped, no gh call
+#   omega  clone, GitHub origin acme/omega with no fixture -> gh fails
+fm_seed_issue_projects() {
+  local home=$1 fakebin=$2 name
+  mkdir -p "$home/data" "$home/projects"
+  cat > "$home/data/projects.md" <<'REG'
+# Projects
+- alpha [no-mistakes] - fixture project (added 2026-11-07)
+- beta [no-mistakes] - fixture project (added 2026-11-07)
+- gamma [no-mistakes] - fixture project with no local clone (added 2026-11-07)
+- delta [local-only] - fixture project on a non-GitHub forge (added 2026-11-07)
+- omega [no-mistakes] - fixture project whose issues cannot be read (added 2026-11-07)
+REG
+  for name in alpha beta delta omega; do
+    mkdir -p "$home/projects/$name"
+    git -C "$home/projects/$name" init -q -b main
+  done
+  git -C "$home/projects/alpha" remote add origin https://github.com/acme/alpha.git
+  git -C "$home/projects/beta" remote add origin git@github.com:acme/beta.git
+  git -C "$home/projects/delta" remote add origin https://gitlab.example.invalid/acme/delta.git
+  git -C "$home/projects/omega" remote add origin https://github.com/acme/omega
+  ln -sf "$ROOT/tests/assets/fake-gh-issues.sh" "$fakebin/gh"
+}
+
 # fm_git_add_origin <repo> <bare>: clone <repo> bare into <bare> and register it
 # as <repo>'s origin via a file:// URL (so later clones resolve an absolute path).
 fm_git_add_origin() {

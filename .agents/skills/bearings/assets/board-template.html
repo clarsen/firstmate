@@ -113,6 +113,10 @@ __FM_DECISION_CARD_CSS__
   font-size: var(--fs-xs); font-weight: 800; color: var(--text-muted);
   border: 1.5px dashed var(--ink-300); border-radius: var(--radius-pill); padding: 5px 12px; width: fit-content;
 }
+.bb-issues { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; padding-bottom: 6px; }
+.bb-issues__project { padding: 8px 18px 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.bb-issue__url { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ocean-600); overflow-wrap: anywhere; }
+.bb-issue__url:hover { text-decoration: underline; }
 .bb-empty { padding: 18px; font-size: var(--fs-sm); color: var(--text-muted); }
 
 /* ---- Charted Next details toggle + inline expandable panel ---- */
@@ -222,6 +226,9 @@ __FM_DECISION_CARD_CSS__
       </div>
       <div class="bb-call" id="bb-call"></div>
     </div>
+    <!-- open GitHub issues labelled captain, plus any project whose issues
+         could not be read, grouped by project (fm-project-issues.sh) -->
+    <div class="fm-card bb-issues" id="bb-call-issues" hidden></div>
   </section>
 
   <section class="bb-section">
@@ -434,13 +441,54 @@ __FM_DECISION_CARD_JS__
   document.getElementById("bb-provenance").textContent = data.schema + " · " +
     window.FMDecisionCard.displayTime(data.generated, displayTimeZone);
 
+  /* Labelled GitHub issues. build always injects project_issues from
+     bin/fm-project-issues.sh; a payload without it renders as before. */
+  var issueFeed = data.project_issues && Array.isArray(data.project_issues.rows) ? data.project_issues : null;
+  var issueRows = issueFeed ? issueFeed.rows : [];
+  var captainIssues = issueRows.filter(function (r) { return r.state === "open" && r.label === "captain"; });
+  var nextIssues = issueRows.filter(function (r) { return r.state === "open" && r.label === "next-step"; });
+  var unreadableIssues = issueRows.filter(function (r) { return r.state === "unavailable"; });
+  function issueRow(r, lead) {
+    var row = el("div", "bb-row");
+    if (lead) row.appendChild(lead);
+    var main = el("div", "bb-row__main");
+    if (r.state === "unavailable") {
+      row.appendChild(badge("danger", "unreadable"));
+      main.appendChild(el("div", "bb-row__title", "Issues could not be read" + (r.repo ? " from " + r.repo : "")));
+      main.appendChild(el("div", "bb-row__sub", r.reason));
+    } else {
+      row.appendChild(badge(r.label === "captain" ? "solid" : "info", r.label));
+      main.appendChild(el("div", "bb-row__title", r.title));
+      var a = el("a", "bb-issue__url", r.url);
+      a.href = r.url; a.target = "_blank"; a.rel = "noopener";
+      main.appendChild(a);
+      main.appendChild(el("div", "bb-row__sub", (r.repo || r.project) + (r.created ? " · opened " + r.created : "")));
+    }
+    row.appendChild(main);
+    return row;
+  }
+  var callIssues = document.getElementById("bb-call-issues");
+  var callIssueRows = issueRows.filter(function (r) { return r.state === "unavailable" || r.label === "captain"; });
+  callIssues.hidden = !callIssueRows.length;
+  if (callIssueRows.length) {
+    callIssues.appendChild(el("div", "bb-proj__label", "GitHub issues waiting on you"));
+    var lastProject = null;
+    callIssueRows.forEach(function (r) {
+      if (r.project !== lastProject) {
+        callIssues.appendChild(el("div", "bb-issues__project", r.project));
+        lastProject = r.project;
+      }
+      callIssues.appendChild(issueRow(r));
+    });
+  }
+
   /* stat strip */
-  var callTotal = data.captains_call.length;
+  var callTotal = data.captains_call.length + captainIssues.length;
   var stats = [
     { n: callTotal, l: "need you", call: true },
     { n: data.underway.length, l: "underway" },
     { n: data.landed.length, l: "landed recently" },
-    { n: chartedQueued(data.charted).length + chartedMoreQueued, l: "charted next" }
+    { n: chartedQueued(data.charted).length + chartedMoreQueued + nextIssues.length, l: "charted next" }
   ];
   var projects = Array.isArray(data.projects) ? data.projects : null;
   if (projects) {
@@ -526,7 +574,9 @@ __FM_DECISION_CARD_JS__
     showCard(0);
   } else {
     deck.classList.add("bb-call--empty");
-    deck.appendChild(el("div", "bb-empty", "Nothing needs your action right now."));
+    deck.appendChild(el("div", "bb-empty", captainIssues.length || unreadableIssues.length
+      ? "No decision cards - the GitHub issues below need you."
+      : "Nothing needs your action right now."));
     stackNav.hidden = true;
   }
 
@@ -655,7 +705,7 @@ __FM_DECISION_CARD_JS__
     return panel;
   }
 
-  if (!chartedQueued(data.charted).length && !chartedMoreQueued) {
+  if (!chartedQueued(data.charted).length && !chartedMoreQueued && !nextIssues.length) {
     ch.appendChild(el("div", "bb-empty", "Nothing is queued."));
   }
   chartedOrder(data.charted).forEach(function (t) {
@@ -676,6 +726,9 @@ __FM_DECISION_CARD_JS__
     var panel = detailPanel(t, row);
     ch.appendChild(row);
     if (panel) ch.appendChild(panel);
+  });
+  nextIssues.forEach(function (r) {
+    ch.appendChild(issueRow(r, el("span", "bb-pick-spacer")));
   });
   var chartedShown = chartedQueued(data.charted).length;
   var chartedTotal = chartedShown + chartedMoreQueued;
@@ -699,12 +752,14 @@ __FM_DECISION_CARD_JS__
     var quiet = [];
     var shownProjects = 0;
     projects.forEach(function (p) {
-      if (!p.decisions.length && !p.underway.length && !p.next.length) { quiet.push(p.name); return; }
+      var pIssues = issueRows.filter(function (r) { return r.project === p.name; });
+      var pCaptainIssues = pIssues.filter(function (r) { return r.label === "captain"; }).length;
+      if (!p.decisions.length && !p.underway.length && !p.next.length && !pIssues.length) { quiet.push(p.name); return; }
       shownProjects++;
       var ready = p.next.filter(function (t) { return t.status === "startable"; }).length;
       var waiting = p.next.length - ready;
       var card = el("details", "fm-card bb-proj");
-      card.open = p.decisions.length > 0 || ready > 0;
+      card.open = p.decisions.length > 0 || ready > 0 || pIssues.length > 0;
       var head = el("summary", "bb-proj__head");
       head.appendChild(el("span", "bb-proj__name", p.name));
       if (!p.registered) head.appendChild(badge("neutral", "unregistered"));
@@ -712,6 +767,8 @@ __FM_DECISION_CARD_JS__
       if (ready) head.appendChild(badge("online", ready + " ready"));
       if (p.underway.length) head.appendChild(badge("info", p.underway.length + " underway"));
       if (waiting) head.appendChild(badge("warn", waiting + " waiting"));
+      if (pIssues.length) head.appendChild(badge(pCaptainIssues ? "danger" : "info",
+        pIssues.length + " issue" + (pIssues.length === 1 ? "" : "s")));
       card.appendChild(head);
       var body = el("div", "bb-proj__body");
       function group(label, fill) {
@@ -720,6 +777,9 @@ __FM_DECISION_CARD_JS__
         fill(rows);
         body.appendChild(rows);
       }
+      if (pIssues.length) group("GitHub issues", function (rows) {
+        pIssues.forEach(function (r) { rows.appendChild(issueRow(r)); });
+      });
       if (p.decisions.length) group("Needs you", function (rows) {
         p.decisions.forEach(function (d) {
           var row = el("div", "bb-row");

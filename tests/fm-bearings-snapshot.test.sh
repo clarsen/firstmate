@@ -2692,6 +2692,44 @@ EOF
 EOF
 }
 
+# Labelled GitHub issues are read for every registered GitHub project by
+# bin/fm-project-issues.sh and projected verbatim, with unreadable projects as
+# visible rows; --projects attributes them to their project and ranks a project
+# with a captain issue like one with an open decision.
+test_project_issues_are_projected_with_unreadable_rows() {
+  local home fakebin json toon
+  home=$(make_home project-issues); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  fm_seed_issue_projects "$home" "$fakebin"
+  json=$(FAKE_GH_ISSUES_DIR="$ROOT/tests/assets/gh-issues" run "$home" "$fakebin" --json --projects) \
+    || fail "bearings snapshot failed with labelled issues: $json"
+  printf '%s' "$json" | jq -e '
+    .issues_status == "checked (3 repos, 2 captain, 2 next-step; 2 unavailable)"
+    and ([.project_issues[] | [.project, .state, .label, .number]] == [
+      ["alpha","open","captain",7], ["alpha","open","captain",12],
+      ["alpha","open","next-step",9], ["beta","open","next-step",3],
+      ["gamma","unavailable",null,null], ["omega","unavailable",null,null]])
+    and (.project_issues[0].url == "https://github.com/acme/alpha/issues/7")
+    and (.project_issues[0].created == "2026-11-05")
+    and ([.project_issues[] | select(.state == "unavailable") | .reason] == [
+      "no local clone to read the GitHub origin from", "gh issue list failed (exit 1)"])
+    and ((.projects.summary[] | select(.project == "alpha")) as $a
+         | $a.captain_issues == 2 and $a.next_issues == 1)
+    and ((.projects.summary[] | select(.project == "beta")) as $b
+         | $b.captain_issues == 0 and $b.next_issues == 1)
+    and ([.projects.summary[] | .project][0] == "alpha")
+    and ([.projects.issues[] | .project] | unique == ["alpha", "beta", "gamma", "omega"])
+  ' >/dev/null || fail "labelled issues were not projected as expected: $json"
+  grep -q '^gh issue list --repo acme/alpha ' "$home/net.log" || fail "the default run did not read alpha issues"
+  grep -q '^gh pr ' "$home/net.log" && fail "the default run made a PR call: $(cat "$home/net.log")"
+  toon=$(FAKE_GH_ISSUES_DIR="$ROOT/tests/assets/gh-issues" run "$home" "$fakebin") || fail "TOON run failed"
+  assert_contains "$toon" 'project_issues[6]{project,repo,state,label,number,title,url,created,reason}:' \
+    "TOON did not render the issue table: $toon"
+  assert_contains "$toon" '  alpha,acme/alpha,open,captain,7,Pick the alpha release name,"https://github.com/acme/alpha/issues/7",2026-11-05,null' \
+    "TOON did not render an issue row: $toon"
+  pass "labelled project issues and unreadable projects are projected in the default output and the drilldown"
+}
+
 test_projects_drilldown_ranks_every_project() {
   local home mate fakebin json default toon
   home=$(make_home projects-drilldown)
@@ -2704,9 +2742,11 @@ test_projects_drilldown_ranks_every_project() {
   ' >/dev/null || fail "projects are not ordered startable-or-decision first, quiet last: $json"
   printf '%s' "$json" | jq -e '
     (.projects.summary[] | select(.project == "alpha"))
-      == {project:"alpha", registered:true, owners:"(main)", decisions:1, underway:1, startable:3, waiting:2}
+      == {project:"alpha", registered:true, owners:"(main)", decisions:1, underway:1, startable:3, waiting:2,
+           captain_issues:0, next_issues:0}
     and (.projects.summary[] | select(.project == "quiet-one"))
-      == {project:"quiet-one", registered:true, owners:"(main)", decisions:0, underway:0, startable:0, waiting:0}
+      == {project:"quiet-one", registered:true, owners:"(main)", decisions:0, underway:0, startable:0, waiting:0,
+           captain_issues:0, next_issues:0}
     and (.projects.summary[] | select(.project == "beta") | .owners == "(main),solo-mate")
     and (.projects.summary[] | select(.project == "firstmate") | .registered == false)
   ' >/dev/null || fail "project summary counts are wrong: $json"
@@ -2741,7 +2781,7 @@ test_projects_drilldown_ranks_every_project() {
 
   toon=$(run "$home" "$fakebin" --projects)
   assert_contains "$toon" "projects: " "TOON must carry the projects object"
-  assert_contains "$toon" "  summary[6]{project,registered,owners,decisions,underway,startable,waiting}:" \
+  assert_contains "$toon" "  summary[6]{project,registered,owners,decisions,underway,startable,waiting,captain_issues,next_issues}:" \
     "TOON must render the project summary as a table"
   assert_contains "$toon" "  next[10]{" "TOON must render every ranked next action"
   pass "the project drilldown ranks every queued item per project and lists quiet projects"
@@ -3603,6 +3643,7 @@ fm_test_run \
   test_underway_and_gate_rows_carry_the_durable_name_and_filed_date \
   test_gate_rows_carry_backlog_detail_and_artifact_links \
   test_underway_landed_and_gate_rows_carry_untruncated_full_titles \
+  test_project_issues_are_projected_with_unreadable_rows \
   test_projects_drilldown_ranks_every_project \
   test_projects_drilldown_discloses_secondmate_queued_bound \
   test_mixed_secondmate_roles_partial_state_and_captain_readiness \
