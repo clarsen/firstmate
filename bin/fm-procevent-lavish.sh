@@ -11,6 +11,7 @@
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
+#   fm-procevent-lavish.sh relisten
 #   fm-procevent-lavish.sh canonical-path <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html> [--keep-session]
 #   fm-procevent-lavish.sh retired <source-id> -- <argv>...
@@ -51,6 +52,10 @@
 #            including the on-disk letter case on a case-insensitive volume.
 #            Other scripts that match a board against Lavish's own records call
 #            this rather than resolving the path themselves.
+# relisten   Exit 0: Lavish opts into the runner's generic relisten seam, so
+#            after a silent round (such as browser_disconnected) or an empty
+#            wait the same runner keeps its claim and polls again instead of
+#            exiting; bin/fm-procevent.sh owns the rule.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
 #            and prints its response verbatim, absorbing only the one exact
@@ -1138,6 +1143,7 @@ case "${1-}" in
   poll)      shift; cmd_poll "$@" ;;
   deliver-reply) shift; cmd_deliver_reply "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
+  relisten)  shift; [ "$#" -eq 0 ] || usage; exit 0 ;;
   canonical-path)
     shift
     [ "$#" -eq 1 ] && [ -n "$1" ] || usage
