@@ -727,6 +727,48 @@ out=$(PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh"
 assert_contains "$out" "retired: $lavish_id" "explicit adapter retirement stays supported after automatic retirement"
 pass "one Send & End yields exactly one captured result, automatic retirement, and no recurring poll"
 
+# --- a silent browser_disconnected round keeps the same Lavish runner -------
+# The defect: Lavish had no relisten command, so every silent disconnect round
+# ended the runner and left the source unlistened until a relaunch. With one
+# launch and no further reconcile, the runner must survive two silent rounds
+# and still be the one that captures the later real feedback.
+HRL="$TMP_ROOT/hrl"; new_home "$HRL"
+RL_BIN=$(fm_fakebin "$TMP_ROOT/lavish-relisten-stub")
+RL_POLL_COUNT="$TMP_ROOT/lavish-relisten-count"
+export RL_POLL_COUNT
+cat > "$RL_BIN/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+[ "${1-}" = end ] && { printf 'session:\n  status: ended\n  ended_by: agent\n'; exit 0; }
+n=$(cat "$RL_POLL_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1))
+printf '%s\n' "$n" > "$RL_POLL_COUNT"
+if [ "$n" -lt 3 ]; then
+  printf 'session:\n  file: /board.html\n  status: browser_disconnected\n'
+else
+  printf 'session:\n  file: /board.html\n  status: feedback\nfeedback[1]{text}:\n  answer\n'
+fi
+SH
+chmod +x "$RL_BIN/lavish-axi"
+RL_ART="$TMP_ROOT/relisten-board.html"
+printf '<h1>board</h1>\n' > "$RL_ART"
+lavish_session "$RL_ART"
+rl_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$RL_ART")
+"$ROOT/bin/fm-procevent-lavish.sh" relisten || fail "the Lavish adapter does not opt into relisten"
+fm_test_track_procevent_home "$HRL"
+PATH="$RL_BIN:$PATH" FM_HOME="$HRL" "$ROOT/bin/fm-procevent-lavish.sh" arm "$RL_ART" >/dev/null
+PATH="$RL_BIN:$PATH" pe "$HRL" reconcile >/dev/null
+for _ in $(seq 1 100); do
+  [ "$(cat "$RL_POLL_COUNT" 2>/dev/null || echo 0)" -ge 3 ] && [ "$(count_results "$HRL" "$rl_id")" -ge 3 ] \
+    && [ -n "$(wake_payloads "$HRL")" ] && break
+  sleep 0.1
+done
+[ "$(cat "$RL_POLL_COUNT" 2>/dev/null || echo 0)" = 3 ] \
+  || fail "the runner exited after a silent disconnect: $(cat "$RL_POLL_COUNT" 2>/dev/null || echo 0) polls from one launch"
+[ "$(count_results "$HRL" "$rl_id")" = 3 ] || fail "expected three captured rounds, got $(count_results "$HRL" "$rl_id")"
+[ "$(wake_payloads "$HRL" | sort -u | grep -c .)" = 1 ] \
+  || fail "silent disconnect rounds were announced: $(wake_payloads "$HRL" | sort -u)"
+pass "a silent Lavish disconnect round relistens on the same runner instead of exiting"
+
 # --- retire also ends the Lavish session as the agent -------------------------
 # The defect: retire only retired the process-event source, so the decision page's
 # Lavish session stayed open and kept showing as live. Retire now ends the
