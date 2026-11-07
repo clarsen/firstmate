@@ -2883,6 +2883,8 @@ A long-polling external process is registered as a *source* through its adapter,
 
 `bin/fm-procevent-lavish.sh` is the first built-in adapter and wraps the published `lavish-axi poll` interface plus `lavish-axi reply` when the installed version supports synchronous reply acceptance.
 
+The adapter opts into `relisten`, so a silent round such as `browser_disconnected` or an empty wait keeps the same runner and claim polling instead of exiting and waiting for a relaunch.
+
 **Open the Lavish artifact first**
 
 Before arming any Lavish source, open its artifact with `lavish-axi` so the saved session identifies the board's server; reply and poll attempts derive their host and port from that session and refuse missing or invalid session evidence before posting or consuming a staged worker reply.
