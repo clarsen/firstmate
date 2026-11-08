@@ -445,6 +445,8 @@ STUB
     "promoted no-mistakes worker did not receive the --yes prohibition"
   assert_grep "It is banned fleet-wide" "$payload" \
     "promoted no-mistakes worker did not receive the fleet-wide ban wording"
+  assert_grep "Evidence uses made-up fixture or stand-in data only" "$payload" \
+    "promoted no-mistakes worker did not receive the fixture-only evidence rule"
 
   payload="$TMP_ROOT/promote-dod/payload-promote-dod-direct-pr"
   assert_grep "supersede the scout delivery rules and report-based Definition of done" "$payload" \
@@ -1544,7 +1546,7 @@ test_forge_gerrit_changes_what_no_mistakes_means() {
     "the gerrit worker lost the pipeline initialization step no-mistakes still needs"
 
   # The forge changes the contract's head and tail only: how the pipeline is
-  # driven, what --intent may carry, and the two firstmate-specific rules are the
+  # driven, what --intent may carry, and the three firstmate-specific rules are the
   # same text a GitHub-forge worker receives.
   assert_grep 'ask-user findings are never yours to answer: escalate to firstmate' "$brief" \
     "the gerrit worker lost the ask-user escalation rule"

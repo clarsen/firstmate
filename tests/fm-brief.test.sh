@@ -534,6 +534,12 @@ test_no_mistakes_dod_wording() {
     "no-mistakes DOD still states the --yes ban as a preference"
   assert_no_grep "no-mistakes refuses" "$brief" \
     "no-mistakes DOD must not claim the tool itself refuses --yes"
+  # Pipeline evidence lands in public PR text and branches, so the worker is told
+  # to use fixture data and to assume a public repository until proven private.
+  assert_grep "Evidence uses made-up fixture or stand-in data only, never real project, issue, account, or personal data, when the repository is public" "$brief" \
+    "no-mistakes DOD must require fixture-only evidence for a public repository"
+  assert_grep "treat it as public unless you have confirmed it is private" "$brief" \
+    "no-mistakes DOD must default an unconfirmed repository to public"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright"
 }
 
