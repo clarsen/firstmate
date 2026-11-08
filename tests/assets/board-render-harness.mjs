@@ -120,6 +120,13 @@ const detailOf = (panel) => {
   return { body: body ? body.textContent : null, links };
 };
 
+// A labelled GitHub issue row shows its full URL as a link in the row body;
+// only such rows report a url, so every other row keeps its exact shape.
+const issueUrlOf = (main) => {
+  const a = main?.children.find((c) => c.className.includes("bb-issue__url"));
+  return a ? { text: a.textContent, href: a.href || "" } : null;
+};
+
 const rowsOf = (container) => {
   const kids = container.children;
   const out = [];
@@ -138,6 +145,7 @@ const rowsOf = (container) => {
       pick: pick ? pick.value : null,
       rank: row.children.find((c) => c.className.includes("bb-row__rank"))?.textContent ?? null,
       detail: hasDetailPanel ? detailOf(next) : null,
+      ...(issueUrlOf(main) ? { url: issueUrlOf(main) } : {}),
     });
   }
   return out;
@@ -197,6 +205,13 @@ const dispatch = ["bb-dispatch", "bb-proj-dispatch"].map((id) => ({
   hidden: byId.has(id) ? byId.get(id).hidden : true,
   count: byId.get(id + "-count")?.textContent ?? "",
 }));
+// Captain's Call issues: the project headings and rows in display order.
+const callIssueWrap = byId.get("bb-call-issues") || new Node("div");
+const callIssues = {
+  shown: !callIssueWrap.hidden,
+  projects: callIssueWrap.children.filter((c) => has(c, "bb-issues__project")).map((c) => c.textContent),
+  rows: rowsOf(callIssueWrap),
+};
 const questionContainer = byId.get("bb-captain-questions") || new Node("div");
 const descendants = (node) => [node, ...node.children.flatMap(descendants)];
 const questions = questionContainer.children.filter((node) => node.className.includes("bb-decision")).map((card) => {
@@ -219,5 +234,5 @@ const questionSection = {
 
 process.stdout.write(
   JSON.stringify({ provenance: byId.get("bb-provenance")?.textContent ?? "",
-    stats, underway, charted, questions, questionSection, empty, more, projects, dispatch,
+    stats, underway, charted, questions, questionSection, empty, more, projects, dispatch, callIssues,
     error: errorText }) + "\n");

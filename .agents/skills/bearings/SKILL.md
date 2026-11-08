@@ -51,6 +51,7 @@ The script header and help own the record format and exact commands, and this re
    The command's header and `--help` output own its exact fields, bounds, opt-ins, and output contract.
    The default performs bounded concurrent remote-ledger reads for registered remote homes under one shared snapshot budget and may refresh the parent-side cache.
    Only pass `--include-prs` when the captain asks for repository-wide live GitHub PR enrichment.
+   Outstanding project next steps are open GitHub issues in the project labelled `captain` or `next-step`; the snapshot always reads them into `project_issues` (with `issues_status`), and a next step recorded only in a merged PR or a private file is not tracked work.
    In projects mode also pass `--projects`.
    Registered owned contributions use the cached `contributions` projection independently of that opt-in; no invocation-time forge discovery is needed to read it.
    For registered secondmates, use the snapshot's structured-home classification and provenance.
@@ -93,11 +94,11 @@ The script header and help own the record format and exact commands, and this re
    This is the only file-mode write allowed by the skill.
    The detailed report includes:
    - **Title** - `# Bearings - <day> <YYYY-MM-DD>` (use "Morning status" only when the captain specifically asks for a morning brief), followed by two or three sentences framing where things stand.
-   - **Captain's Call** - every unsuppressed open decision summarized with its options from the structured decision record, plus each PR ready to merge and each needed credential or login, every PR with the full `https://...` URL, never a bare `#number`.
+   - **Captain's Call** - every unsuppressed open decision summarized with its options from the structured decision record, plus each PR ready to merge and each needed credential or login, every PR with the full `https://...` URL, never a bare `#number`, plus the labelled issues the chat contract below places there.
    - **Open Questions from the Captain** - every open captain question with its exact text, current status, last update, stale marker when applicable, and evidence links.
    - **Recently Landed** - the bounded current recent-completions baseline from structured state across the main fleet and every registered secondmate home, rendered in full on every run.
    - **Underway** - each live direct report making progress, with its current state, and the plans or main pickup pointers worth reopening (`data/<id>/report.md` files, `.lavish/*.html` boards).
-   - **Charted Next** - queued or gated work, including deferred or aged captain-hold safety gates and any main-inventory integrity warning, with each item's blocker, date, age, or integrity reason.
+   - **Charted Next** - queued or gated work, including deferred or aged captain-hold safety gates and any main-inventory integrity warning, with each item's blocker, date, age, or integrity reason, plus every `next-step` issue.
    After writing the file, return the concise five-section chat digest and include the report path or link without adding another section.
    For a richer review surface, offer `/bearings lavish` when the report has enough structure to deserve one, but only after the required digest is ready.
 
@@ -110,7 +111,7 @@ Charted Next in projects mode renders:
 
 - Every action-free fleet-integrity warning row from `gates` first, exactly as in the default Charted Next.
 - One block per project with charted work, in `projects.summary` order, led by the project name and its counts.
-- Inside each block, its open captain calls and underway work named briefly as pointers to their own sections, then its ranked next actions with each waiting row's reason.
+- Inside each block, its open captain calls, `captain` issues, and underway work named briefly as pointers to their own sections, then its ranked next actions with each waiting row's reason, then its `next-step` issues with their full URLs (`projects.issues`).
 - One closing line naming every project with nothing charted.
 
 A project's open captain calls still render in full in Captain's Call and its underway work in Underway, so the drilldown never becomes a second place to answer a call.
@@ -125,6 +126,7 @@ Keep each next action to one scannable line; `(unassigned)` collects items no st
 Compose the payload from the same snapshot with the same ranking judgment as the chat digest, plus these board rules:
 
 - `bin/fm-bearings-board.sh build` injects every open captain question directly from the durable record into the dedicated "Open Questions from the Captain" section, even if the composer omits that array.
+- `build` likewise injects the labelled project issues itself; never compose cards or Charted Next rows for them.
 - Refresh the question statuses before composing so the board never silently treats an old summary as a fresh investigation.
 - A Captain's Call decision key is the captain-held TASK ID from `decisions_open` (legacy `<origin>-decision-<key>` rows are already task ids); a merge card's key is `merge.<task-id>`; the Charted Next dispatch picker's key is `dispatch.charted`.
 - Before carding a hold, check that its SUBJECT has not already landed, and omit it when it has. `build` drops a card whose task or PR appears in the payload's own landed rows, and one whose task is no longer an open captain call. When a hold waits on one specific PR, put that PR in the card's `pr_url`. When it concerns a published version, put the artifact and numeric three-part version in the card's structured `subject`; landed rows for releases carry the same identity, and a matching or newer version drops the card. Identity matching is structured only, so verify any subject without one of these identities against current reality before carding it.
@@ -186,8 +188,9 @@ Every `/bearings` chat response renders EXACTLY these five sections, in THIS ord
 1. **Captain's Call** - ONLY unsuppressed items that need the captain's own action now: a decision to make, a PR to approve or merge, a credential or login to provide, or a blocker only the captain can clear.
    Deferred or aged holds follow the presentation safety rule above instead.
    Include `contributions.captain` rows in this section, deduplicating any row already represented by its live captain hold or merge call.
+   Include every `project_issues` row labelled `captain`, grouped by project, each with its title and full `https://...` issue URL, and every `unavailable` row with its reason, so a project whose issues could not be read is never shown as clear.
    Show the other contribution actors only as counts beside the checked/known coverage, and disclose `captain_omitted`, `unmeasured_homes`, stale verdicts and checks with no verdict when nonzero.
-   Empty-state: "Nothing needs your action right now" is allowed only when `contributions.proven_clear` is true and the existing decision set is empty.
+   Empty-state: "Nothing needs your action right now" is allowed only when `contributions.proven_clear` is true, the existing decision set is empty, and `project_issues` has no `captain` or `unavailable` row.
    When the section is empty but coverage is incomplete, say that no decision is recorded and give the checked/known count; a missing coverage field is also unverified.
 2. **Open Questions from the Captain** - every captain-opened question still open in `captain_questions`, with its current status and last-updated date; mark `stale` when the snapshot says so and link available evidence.
    Empty-state: "No open questions from the captain."
@@ -196,7 +199,7 @@ Every `/bearings` chat response renders EXACTLY these five sections, in THIS ord
    Empty-state: "No recent completions are in the current baseline."
 4. **Underway** - live work progressing on its own, one line of current state per direct report.
    Empty-state: "Nothing is underway."
-5. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
+5. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings, plus every `project_issues` row labelled `next-step` under its project with its full issue URL.
    In projects mode this section renders the per-project drilldown instead, under the same heading (the "Project drilldown" section above).
    Empty-state: "Nothing is queued."
 

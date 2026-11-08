@@ -351,9 +351,13 @@ test_build_injects_binds_then_arms() {
   # data block.
   extract_payload "$board" | jq -S . > "$home/extracted.json" \
     || fail "the built board does not carry parseable payload JSON"
-  jq -S 'del(.captain_questions) | .captains_call = [.captains_call[]
+  jq -S 'del(.captain_questions, .project_issues) | .captains_call = [.captains_call[]
       | .options = [.options[] | select(.value != "reconcile")]]' \
     "$home/extracted.json" > "$home/stripped.json"
+  # A home with no registered GitHub project still gets the reader's explicit
+  # empty result injected, never an absent field.
+  jq -e '.project_issues == {status:"no GitHub projects registered", rows:[]}' "$home/extracted.json" >/dev/null \
+    || fail "build did not inject the empty project-issue result: $(jq -c .project_issues "$home/extracted.json")"
   jq -S '.captains_call = [.captains_call[]
       | .options = [.options[] | select(.value != "reconcile")]]' \
     "$data" > "$home/expected.json"

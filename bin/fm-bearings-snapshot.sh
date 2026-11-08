@@ -14,9 +14,14 @@
 # By default the canonical snapshot performs bounded concurrent remote-ledger reads
 # for registered remote homes under one shared collection budget and may atomically
 # refresh its parent-side ledger cache. It MAY surface PR URLs already recorded in
-# task meta (recorded_prs), but performs no live GitHub discovery or checks. Live PR
-# discovery/checks happen ONLY under --include-prs; all gh coupling lives in that
-# branch and never in the canonical snapshot. The default output states explicitly
+# task meta (recorded_prs), but performs no live GitHub PR discovery or checks. Live PR
+# discovery/checks happen ONLY under --include-prs; that gh coupling lives in that
+# branch and never in the canonical snapshot.
+# The one default live GitHub read is each registered project's open issues
+# labelled `captain` or `next-step`, read by bin/fm-project-issues.sh (which owns
+# its bounds, concurrency, and unavailable-row rule) and projected verbatim as
+# project_issues with its issues_status line. An outstanding next step recorded
+# only in a merged PR or a private file is not tracked work; the labelled issue is. The default output states explicitly
 # (the prs: line and the omitted[] surfaces) what was not requested, so an absence is
 # never ambiguous.
 #
@@ -166,7 +171,12 @@ Default collection performs bounded concurrent remote-ledger reads for registere
 remote homes under one shared snapshot budget and may refresh the parent-side cache.
 --include-prs additionally performs live GitHub discovery and checks.
 
-Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,name_full,doing},
+Default fields: schema, home, generated, prs, issues_status,
+  project_issues{project,repo,state,label,number,title,url,created,reason}
+    (open issues labelled captain or next-step in each registered GitHub
+    project, read by fm-project-issues.sh; a project that cannot be read is an
+    unavailable row with its reason, never silently empty),
+  in_flight{id,kind,state,repo,name,name_full,doing},
   crew_alerts{id,condition,checked_at},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
@@ -203,12 +213,14 @@ Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
   --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
 Raise FM_BEARINGS_PR_LIMIT to expand per-repository open-PR results.
---projects adds projects{summary,decisions,underway,next}, uncapped within the
+--projects adds projects{summary,decisions,underway,next,issues}, uncapped within the
   bounded snapshot: summary{project,registered,owners,decisions,underway,startable,
-  waiting} lists every registered or charted project, decisions-or-startable first
+  waiting,captain_issues,next_issues} lists every registered or charted project, decisions-or-startable first
   and nothing-charted last; next ranks each project's queued work startable first,
   then priority (0 most urgent), then oldest filed, each row naming its status
-  (startable|blocked|dated|held), why, and project_from (repo|home|title|null).
+  (startable|blocked|dated|held), why, and project_from (repo|home|title|null);
+  issues is project_issues in project order. A captain issue ranks its project
+  like an open decision and a next-step issue like startable work.
   A secondmate home's own queued bound or unavailable ledger is disclosed in omitted[].
 EOF
 }
@@ -397,6 +409,17 @@ EOF
   fi
 fi
 
+# --- labelled project issues (bin/fm-project-issues.sh owns the read) -------
+if ISSUES=$("$SCRIPT_DIR/fm-project-issues.sh" --json) \
+   && printf '%s' "$ISSUES" | jq -e '.schema == "fm-project-issues.v1" and (.rows | type == "array")' >/dev/null 2>&1; then
+  :
+else
+  echo "fm-bearings-snapshot: project issues unavailable" >&2
+  ISSUES=$(jq -n '{status:"unavailable (issue reader failed)",
+    rows:[{project:"(all projects)",repo:null,state:"unavailable",label:null,number:null,
+           title:null,url:null,created:null,reason:"bin/fm-project-issues.sh failed"}]}')
+fi
+
 # --- projection: canonical snapshot -> fm-bearings.v1 model (JSON) ----------
 BEARINGS_TODAY=${NOW%%T*}
 case "$BEARINGS_TODAY" in
@@ -434,7 +457,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson return_catchup "$RETURN_CATCHUP" \
   --argjson want_projects "$PROJECTS" \
   --argjson registered_projects "$REGISTERED_PROJECTS" \
-  --argjson candidate_prs "$CANDIDATE_PRS" "$FM_LANDED_JQ_DEFS"'
+  --argjson candidate_prs "$CANDIDATE_PRS" \
+  --argjson issues "$ISSUES" "$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
   def fit($n):
@@ -693,6 +717,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       home: $home,
       generated: $now,
       prs: $prs,
+      issues_status: $issues.status,
+      project_issues: $issues.rows,
       contributions:(
         ([$snap.contributions + {owner:"(main)"}]
           + [($snap.secondmate_current.records // [])[] as $m | if $m.contributions == null then null else $m.contributions + {owner:$m.id} end])
@@ -808,7 +834,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       | ([ $next_all | group_by(.project)[]
            | sort_by(next_order_key)
            | to_entries | map(.value + {rank:(.key + 1)})[] ]) as $next_ranked
-      | ([ $reg[].name ] + [ ($next_ranked + $pdecisions + $punderway)[] | .project ] | unique) as $names
+      | ($issues.rows) as $pissues
+      | ([ $reg[].name ] + [ ($next_ranked + $pdecisions + $punderway + $pissues)[] | .project ] | unique) as $names
       | ([ $names[] as $n
            | ([$reg[] | select(.name == $n)][0]) as $r
            | ([$next_ranked[] | select(.project == $n)]) as $pn
@@ -816,12 +843,16 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            | ([$punderway[] | select(.project == $n)] | length) as $nu
            | ([$pn[] | select(.status == "startable")] | length) as $ns
            | (($pn | length) - $ns) as $nw
+           | ([$pissues[] | select(.project == $n and .label == "captain")] | length) as $nci
+           | ([$pissues[] | select(.project == $n and .label == "next-step")] | length) as $nni
            | {project:$n, registered:($r != null),
               owners:((($r.owners // []) + [($pn + [$pdecisions[], $punderway[]] | map(select(.project == $n)))[] | .owner]
                        | unique | join(",")) | if . == "" then "-" else . end),
               decisions:$nd, underway:$nu, startable:$ns, waiting:$nw,
-              _order:[(if $nd > 0 or $ns > 0 then 0 elif $nu > 0 or $nw > 0 then 1 else 2 end),
-                      -$nd, -$ns, -$nu, -$nw, (if $n == "(unassigned)" then 1 else 0 end),
+              captain_issues:$nci, next_issues:$nni,
+              _order:[(if $nd > 0 or $ns > 0 or $nci > 0 or $nni > 0 then 0
+                       elif $nu > 0 or $nw > 0 then 1 else 2 end),
+                      -($nd + $nci), -($ns + $nni), -$nu, -$nw, (if $n == "(unassigned)" then 1 else 0 end),
                       ($n | ascii_downcase)]} ]
          | sort_by(._order) | map(del(._order))) as $summary
       | ($summary | map(.project)) as $order
@@ -830,7 +861,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          summary:$summary,
          decisions:($pdecisions | by_project_order),
          underway:($punderway | by_project_order),
-         next:($next_ranked | by_project_order)}}
+         next:($next_ranked | by_project_order),
+         issues:($pissues | by_project_order)}}
     end)
   | . + (if $f_bodies then {bodies:[ $snap.backlog.records[] | select(.structured and (.state == "queued" or .state == "done")) | {id, body:((.body_excerpt // .raw // "-") | trunc(200))} ]} else {} end)
   | . + (if $f_paths then {paths:[ $snap.tasks[] | {id, worktree:(.paths.worktree.path // "-"), home:(.paths.home.path // "-"), status:.paths.status_log.path, report:.paths.report.path} ]} else {} end)
