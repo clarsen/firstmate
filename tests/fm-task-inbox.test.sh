@@ -309,42 +309,78 @@ test_ring_skips_dead_agent() {
   pass "inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints"
 }
 
-# A fake tmux whose pane is a Claude-style composer that keeps its content in
-# FM_FAKE_COMPOSER: literal input appends to it, capture renders it wrapped
-# between rules, and Enter submits it (logged as SUBMIT) unless
-# FM_FAKE_DROP_ENTERS still holds a count of Enters to swallow.
-make_composer_stub() {  # <dir>
-  mkdir -p "$1/fakebin"
-  cat > "$1/fakebin/tmux" <<'SH'
+# A fake Claude Code input model shared by the tmux and Herdr composer fakes.
+# The composer text lives in FM_FAKE_COMPOSER. Each terminal write is one input
+# chunk, or, while FM_FAKE_FROZEN names an existing file (Claude not reading
+# input, as during SessionStart hooks), it is queued in FM_FAKE_COMPOSER.input
+# until `claude-model thaw` delivers the whole queue as ONE chunk. A chunk is
+# read the way the probes measured Claude 2.1.319: a bracketed paste
+# (ESC[200~ ... ESC[201~) inserts its text, a lone CR submits a non-empty
+# composer (logged as SUBMIT, unless FM_FAKE_DROP_ENTERS still holds a count of
+# Enters to swallow), and any other multi-character run is typed text whose CR
+# is dropped. Ctrl+U (0x15) deletes one wrapped 60-column row from the end.
+make_claude_model() {  # <fakebin>
+  cat > "$1/claude-model" <<'SH'
 #!/usr/bin/env bash
 set -u
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    if [ "$literal" = 1 ]; then
-      printf '%s' "$1" >> "$FM_FAKE_COMPOSER"
-    elif [ "${1:-}" = Enter ]; then
-      drops=$(cat "$FM_FAKE_DROP_ENTERS" 2>/dev/null || echo 0)
-      if [ "$drops" -gt 0 ]; then
-        echo $((drops - 1)) > "$FM_FAKE_DROP_ENTERS"
-      elif [ -s "$FM_FAKE_COMPOSER" ]; then
-        printf 'SUBMIT: %s\n' "$(cat "$FM_FAKE_COMPOSER")" >> "$FM_SEND_LOG"
-        : > "$FM_FAKE_COMPOSER"
-      fi
+P=$'\e[200~'
+E=$'\e[201~'
+submit() {
+  local drops
+  drops=$(cat "$FM_FAKE_DROP_ENTERS" 2>/dev/null || echo 0)
+  if [ "$drops" -gt 0 ]; then
+    echo $((drops - 1)) > "$FM_FAKE_DROP_ENTERS"
+  elif [ -s "$FM_FAKE_COMPOSER" ]; then
+    printf 'SUBMIT: %s\n' "$(cat "$FM_FAKE_COMPOSER")" >> "$FM_SEND_LOG"
+    : > "$FM_FAKE_COMPOSER"
+  fi
+}
+erase_row() {
+  local text rows
+  text=$(cat "$FM_FAKE_COMPOSER")
+  rows=$(( (${#text} + 59) / 60 ))
+  [ "$rows" -gt 0 ] || return 0
+  printf '%s' "${text:0:$(( (rows - 1) * 60 ))}" > "$FM_FAKE_COMPOSER"
+}
+process() {  # <chunk>
+  local chunk=$1 run rest
+  while [ -n "$chunk" ]; do
+    if [ "${chunk#"$P"}" != "$chunk" ]; then
+      rest=${chunk#"$P"}
+      printf '%s' "${rest%%"$E"*}" >> "$FM_FAKE_COMPOSER"
+      chunk=${rest#*"$E"}
+      continue
     fi
-    exit 0 ;;
-  display-message)
-    case "$*" in *cursor_y*) printf '2\n'; exit 0 ;; esac
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane)
+    if [ "$chunk" = $'\r' ]; then
+      submit
+      return 0
+    fi
+    run=${chunk%%"$P"*}
+    chunk=${chunk#"$run"}
+    run=${run//$'\r'/}
+    while [ "${run#*$'\x15'}" != "$run" ]; do
+      printf '%s' "${run%%$'\x15'*}" >> "$FM_FAKE_COMPOSER"
+      erase_row
+      run=${run#*$'\x15'}
+    done
+    printf '%s' "$run" >> "$FM_FAKE_COMPOSER"
+  done
+}
+case "$1" in
+  write)
+    if [ -n "${FM_FAKE_FROZEN:-}" ] && [ -e "$FM_FAKE_FROZEN" ]; then
+      printf '%s' "$2" >> "$FM_FAKE_COMPOSER.input"
+    else
+      process "$2"
+    fi ;;
+  thaw)
+    rm -f "${FM_FAKE_FROZEN:-/nonexistent}"
+    if [ -s "$FM_FAKE_COMPOSER.input" ]; then
+      chunk=$(cat "$FM_FAKE_COMPOSER.input"; printf x)
+      : > "$FM_FAKE_COMPOSER.input"
+      process "${chunk%x}"
+    fi ;;
+  render)
     rule=$(printf '─%.0s' $(seq 64))
     printf '● done\n%s\n' "$rule"
     if [ -s "$FM_FAKE_COMPOSER" ]; then
@@ -352,13 +388,114 @@ case "${1:-}" in
     else
       printf '❯ \n'
     fi
-    printf '%s\n  ? for shortcuts\n' "$rule"
+    printf '%s\n  ? for shortcuts\n' "$rule" ;;
+esac
+SH
+  chmod +x "$1/claude-model"
+}
+
+# A fake tmux whose pane runs the Claude input model: literal send-keys,
+# a `paste-buffer -p` of a loaded buffer (bracketed, since Claude requests
+# that mode), and Enter or C-u are model writes; a chained `; send-keys`
+# after a paste is a second write; capture renders the composer.
+make_composer_stub() {  # <dir>
+  mkdir -p "$1/fakebin"
+  make_claude_model "$1/fakebin"
+  cat > "$1/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+model="$(dirname "$0")/claude-model"
+send_keys() {
+  local literal=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -t) shift 2 ;;
+      -l) literal=1; shift ;;
+      *) break ;;
+    esac
+  done
+  if [ "$literal" = 1 ]; then
+    "$model" write "$1"
+  else
+    case "${1:-}" in
+      Enter) "$model" write $'\r' ;;
+      C-u) "$model" write $'\x15' ;;
+    esac
+  fi
+}
+case "${1:-}" in
+  send-keys) shift; send_keys "$@"; exit 0 ;;
+  load-buffer)
+    [ "${2:-}" = -b ] || exit 1
+    cat > "$FM_FAKE_COMPOSER.buffer.$3"
     exit 0 ;;
+  paste-buffer)
+    shift
+    buf=
+    while [ $# -gt 0 ] && [ "$1" != ';' ]; do
+      [ "$1" = -b ] && buf=$2
+      shift
+    done
+    [ -f "$FM_FAKE_COMPOSER.buffer.$buf" ] || exit 1
+    printf 'PASTE\n' >> "$FM_SEND_LOG.calls"
+    "$model" write $'\e[200~'"$(cat "$FM_FAKE_COMPOSER.buffer.$buf")"$'\e[201~'
+    rm -f "$FM_FAKE_COMPOSER.buffer.$buf"
+    if [ "${1:-}" = ';' ]; then
+      shift
+      [ "${1:-}" = send-keys ] && { shift; send_keys "$@"; }
+    fi
+    exit 0 ;;
+  display-message)
+    case "$*" in *cursor_y*) printf '2\n'; exit 0 ;; esac
+    printf 'fakepane\n'; exit 0 ;;
+  capture-pane) "$model" render; exit 0 ;;
   list-windows) printf 'fm-t1\n'; exit 0 ;;
 esac
 exit 0
 SH
   chmod +x "$1/fakebin/tmux"
+}
+
+# A fake Herdr whose pane runs the same Claude input model. `agent get`
+# reports a claude agent with FM_FAKE_HERDR_STATUS (default idle), or
+# agent_not_found when FM_FAKE_HERDR_NOAGENT=1, which `agent prompt` then
+# shares; `agent prompt` writes a bracketed paste and a CR as one chunk, the
+# ordered submission Herdr documents. Every call is logged by name to
+# FM_SEND_LOG.calls.
+make_herdr_composer_stub() {  # <dir>
+  mkdir -p "$1/fakebin"
+  make_claude_model "$1/fakebin"
+  cat > "$1/fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+model="$(dirname "$0")/claude-model"
+printf '%s %s\n' "${1:-}" "${2:-}" >> "$FM_SEND_LOG.calls"
+case "${1:-} ${2:-}" in
+  "status --json") printf '{"server":{"running":true}}\n' ;;
+  "agent get")
+    if [ "${FM_FAKE_HERDR_NOAGENT:-0}" = 1 ]; then
+      printf '{"error":{"code":"agent_not_found","message":"agent target %s not found"}}\n' "$3"
+      exit 1
+    fi
+    printf '{"result":{"agent":{"agent":"claude","agent_status":"%s"}}}\n' "${FM_FAKE_HERDR_STATUS:-idle}" ;;
+  "agent prompt")
+    if [ "${FM_FAKE_HERDR_NOAGENT:-0}" = 1 ]; then
+      printf '{"error":{"code":"agent_not_found","message":"agent target %s not found"}}\n' "$3"
+      exit 1
+    fi
+    "$model" write $'\e[200~'"$4"$'\e[201~\r' ;;
+  "pane read") "$model" render ;;
+  "pane send-text") "$model" write "$4" ;;
+  "pane send-keys")
+    case "$4" in
+      enter) "$model" write $'\r' ;;
+      ctrl+u) "$model" write $'\x15' ;;
+    esac ;;
+  *) exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$1/fakebin/herdr"
 }
 
 # The stuck-doorbell deadlock: a doorbell whose Enter never landed sits in the
@@ -408,6 +545,147 @@ test_ring_submits_its_own_stuck_doorbell() {
     || fail "the retry Enter should submit the doorbell once:"$'\n'"$(cat "$log")"
   [ ! -s "$composer" ] || fail "a lost Enter left the doorbell unsubmitted"
   pass "inbox: the ring submits its own stuck doorbell, skips other pending text, and retries a lost Enter once on both paths"
+}
+
+# The startup-freeze regression. Claude Code reads no input while its
+# SessionStart hooks run, so a typed doorbell and its separate Enter reach it
+# as one unbracketed chunk and the Enter is dropped, leaving the doorbell held
+# in the composer. The typed ring must reproduce that held doorbell against
+# the model (so the paste case below cannot pass vacuously), and the paste ring
+# a verified harness gets must submit it once Claude reads input again.
+test_ring_pastes_doorbell_through_startup_freeze() {
+  local dir state rec doorbell log composer frozen rc
+  dir="$TMP_ROOT/ring-freeze"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  log="$dir/send.log"; composer="$dir/composer"; frozen="$dir/frozen"
+  model_env() {
+    env PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_FROZEN="$frozen" FM_FAKE_DROP_ENTERS="$dir/drops" "$@"
+  }
+  ring_as() {  # <harness>
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_FROZEN="$frozen" FM_FAKE_DROP_ENTERS="$dir/drops" FM_COMPOSER_HARNESS="$1" \
+      inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
+  }
+
+  : > "$log"; : > "$composer"; : > "$log.calls"; touch "$frozen"
+  rc=0; ring_as '' || rc=$?
+  model_env "$dir/fakebin/claude-model" thaw
+  [ "$(cat "$composer")" = "$doorbell" ] \
+    || fail "the frozen typed ring should leave the doorbell held, got composer: $(cat "$composer")"
+  [ ! -s "$log" ] || fail "the frozen typed ring should not submit:"$'\n'"$(cat "$log")"
+  ! grep -q PASTE "$log.calls" || fail "a ring without a verified harness must keep the typed submission"
+
+  : > "$log"; : > "$composer"; : > "$log.calls"; touch "$frozen"
+  rc=0; ring_as claude || rc=$?
+  [ "$rc" = 0 ] || fail "a paste ring during the freeze should report rung, got rc $rc"
+  grep -q PASTE "$log.calls" || fail "a verified harness should get the bracketed-paste ring"
+  model_env "$dir/fakebin/claude-model" thaw
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] \
+    || fail "the paste ring should submit the doorbell once Claude reads input:"$'\n'"$(cat "$log")"
+  [ ! -s "$composer" ] || fail "the paste ring left the doorbell in the composer: $(cat "$composer")"
+
+  : > "$log"; : > "$composer"; rm -f "$frozen"; echo 1 > "$dir/drops"
+  rc=0; ring_as claude || rc=$?
+  [ "$rc" = 0 ] || fail "an idle paste ring whose Enter is lost should still report rung, got rc $rc"
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] \
+    || fail "an idle paste ring should retry a lost Enter once, never retype:"$'\n'"$(cat "$log")"
+  pass "inbox: a verified harness gets the doorbell as one bracketed-paste submission that survives the startup freeze"
+}
+
+# A ring cut short can leave only the start of our doorbell: Claude's Ctrl+U
+# deletes one wrapped row per press, from the end. Such a prefix is still ours
+# and is submitted, while text shorter than the doorbell's constant head, or
+# anything that is not a prefix, stays someone else's.
+test_ring_submits_a_partly_erased_doorbell() {
+  local dir state rec doorbell log composer rc other
+  dir="$TMP_ROOT/ring-prefix"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  log="$dir/send.log"; composer="$dir/composer"
+  ring() {
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_DROP_ENTERS="$dir/drops" inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
+  }
+  # The real shape: the typed doorbell and one Ctrl+U in a single chunk.
+  : > "$composer"
+  env FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+    "$dir/fakebin/claude-model" write "$doorbell"$'\x15'
+  [ -s "$composer" ] && [ "$(cat "$composer")" != "$doorbell" ] \
+    || fail "the Ctrl+U model should leave a strict prefix, got: $(cat "$composer")"
+  other=$(cat "$composer")
+  : > "$log"
+  rc=0; ring || rc=$?
+  [ "$rc" = 0 ] || fail "a partly erased doorbell should be submitted, got rc $rc"
+  [ "$(cat "$log")" = "SUBMIT: $other" ] \
+    || fail "the partly erased doorbell should be submitted as it stands:"$'\n'"$(cat "$log")"
+
+  for other in ': Firstmate' "x$doorbell" "${doorbell:0:70}typed on"; do
+    : > "$log"; printf '%s' "$other" > "$composer"
+    rc=0; ring || rc=$?
+    [ "$rc" = 1 ] || fail "text that is not our doorbell's prefix should skip, got rc $rc for: $other"
+    [ ! -s "$log" ] || fail "text that is not our doorbell's prefix was submitted: $other"
+    [ "$(cat "$composer")" = "$other" ] || fail "text that is not our doorbell's prefix was changed: $other"
+  done
+  pass "inbox: a partly erased doorbell is recognised and submitted, and other text still skips"
+}
+
+# On Herdr the paste ring is Herdr's own ordered submission, `agent prompt`;
+# a pane with no detected agent falls back to typing. A held doorbell on a
+# busy agent is submitted only for a verified harness, which queues the Enter.
+test_ring_herdr_paste_and_busy_recovery() {
+  local dir state rec doorbell log composer frozen rc
+  dir="$TMP_ROOT/ring-herdr"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_herdr_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  log="$dir/send.log"; composer="$dir/composer"; frozen="$dir/frozen"
+  ring_as() {  # <harness> [herdr-status] [no-agent]
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_FROZEN="$frozen" FM_COMPOSER_HARNESS="$1" FM_FAKE_HERDR_STATUS="${2:-idle}" \
+      FM_FAKE_HERDR_NOAGENT="${3:-0}" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+      inbox_lib "$state" fm_task_inbox_ring herdr sess:w1:p1 "$rec"
+  }
+  thaw() {
+    env FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" FM_FAKE_FROZEN="$frozen" \
+      "$dir/fakebin/claude-model" thaw
+  }
+
+  : > "$log"; : > "$composer"; : > "$log.calls"; touch "$frozen"
+  rc=0; ring_as claude || rc=$?
+  [ "$rc" = 0 ] || fail "a Herdr paste ring should report rung, got rc $rc"
+  grep -qx 'agent prompt' "$log.calls" || fail "a verified harness on Herdr should ring through agent prompt"
+  ! grep -qx 'pane send-text' "$log.calls" || fail "an accepted agent prompt must not also type the doorbell"
+  thaw
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] \
+    || fail "the Herdr paste ring should submit through the freeze:"$'\n'"$(cat "$log")"
+
+  : > "$log"; : > "$composer"; : > "$log.calls"; rm -f "$frozen"
+  rc=0; ring_as claude idle 1 || rc=$?
+  [ "$rc" = 0 ] || fail "a pane with no detected agent should fall back and ring, got rc $rc"
+  grep -qx 'pane send-text' "$log.calls" || fail "agent_not_found should fall back to the typed submission"
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] \
+    || fail "the typed fallback should submit the doorbell once:"$'\n'"$(cat "$log")"
+
+  : > "$log"; printf '%s' "$doorbell" > "$composer"
+  rc=0; ring_as '' working || rc=$?
+  [ "$rc" = 1 ] || fail "a held doorbell on a busy unverified harness should skip, got rc $rc"
+  [ ! -s "$log" ] || fail "a busy unverified harness was submitted to:"$'\n'"$(cat "$log")"
+  [ "$(cat "$composer")" = "$doorbell" ] || fail "a skipped held doorbell was changed: $(cat "$composer")"
+  rc=0; ring_as claude working || rc=$?
+  [ "$rc" = 0 ] || fail "a held doorbell on a busy verified harness should be submitted, got rc $rc"
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] \
+    || fail "the busy verified harness should get one Enter for its held doorbell:"$'\n'"$(cat "$log")"
+  pass "inbox: Herdr rings through agent prompt, falls back to typing without a detected agent, and submits a held doorbell on a busy verified harness"
 }
 
 test_idempotent_write_dedups_exact_body() {
@@ -1377,6 +1655,9 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
+test_ring_pastes_doorbell_through_startup_freeze
+test_ring_submits_a_partly_erased_doorbell
+test_ring_herdr_paste_and_busy_recovery
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_prefilters_history
 test_idempotent_write_prefilter_preserves_exact_bodies

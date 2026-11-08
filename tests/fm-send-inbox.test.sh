@@ -42,7 +42,7 @@ SEND="$ROOT/bin/fm-send.sh"
 TMP_ROOT=$(fm_test_tmproot fm-send-inbox)
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 
-# Stub tmux: logs literal typed text to FM_SEND_LOG and lets the submit and
+# Stub tmux: logs literal typed or pasted text to FM_SEND_LOG and lets the submit and
 # composer paths reach clean verdicts. FM_FAKE_TMUX_COMPOSER=pending renders a
 # composer visibly holding text; FM_FAKE_TMUX_SEND_FAIL=1 fails send-keys.
 make_stubs() { # <dir> -> echoes fakebin dir
@@ -66,6 +66,24 @@ case "${1:-}" in
     if [ "$literal" = 1 ]; then
       printf '%s\n' "${1:-}" >> "$FM_SEND_LOG"
     fi
+    exit 0 ;;
+  load-buffer)
+    [ "${FM_FAKE_TMUX_SEND_FAIL:-0}" = 1 ] && exit 1
+    [ "${2:-}" = -b ] || exit 1
+    cat > "$FM_SEND_LOG.buffer.$3"
+    exit 0 ;;
+  paste-buffer)
+    # A paste logs its buffer like typed text, so a doorbell reads the same
+    # whichever plane delivered it.
+    [ "${FM_FAKE_TMUX_SEND_FAIL:-0}" = 1 ] && exit 1
+    buf=
+    while [ $# -gt 0 ] && [ "$1" != ';' ]; do
+      [ "$1" = -b ] && buf=$2
+      shift
+    done
+    [ -f "$FM_SEND_LOG.buffer.$buf" ] || exit 1
+    printf '%s\n' "$(cat "$FM_SEND_LOG.buffer.$buf")" >> "$FM_SEND_LOG"
+    rm -f "$FM_SEND_LOG.buffer.$buf"
     exit 0 ;;
   display-message)
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done

@@ -10,7 +10,7 @@
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# A fake tmux (window ops are logged to FM_FAKE_TMUX_LOG, list-windows returns
+# A fake tmux (window ops and doorbell pastes are logged to FM_FAKE_TMUX_LOG, list-windows returns
 # FM_FAKE_TMUX_WINDOW, capture-pane echoes FM_FAKE_TMUX_CAPTURE) plus a fake
 # treehouse (durable lease of FM_FAKE_TREEHOUSE_HOME, recording the lease holder
 # to FM_FAKE_TREEHOUSE_LEASE_FILE; `return` removes the target and lease unless
@@ -119,6 +119,16 @@ EOF
   capture-pane)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     cat "$FM_FAKE_TMUX_CAPTURE"
+    exit 0
+    ;;
+  load-buffer)
+    # The doorbell paste (bin/backends/tmux.sh fm_backend_tmux_paste_submit):
+    # the buffer arrives on stdin and is logged with its paste.
+    printf '%s %s\n' "$*" "$(cat)" >> "$FM_FAKE_TMUX_LOG"
+    exit 0
+    ;;
+  paste-buffer)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     exit 0
     ;;
 esac

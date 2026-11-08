@@ -165,7 +165,7 @@ EOF
   basebin=$(make_fake_tmux "$TMP_ROOT/known-fail-fake")
   cat > "$rejectbin/tmux" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}" != send-keys ] || exit 1
+case "${1:-}" in send-keys|paste-buffer) exit 1 ;; esac
 exec "$FM_BASE_TMUX" "$@"
 SH
   chmod +x "$rejectbin/tmux"
@@ -211,7 +211,7 @@ EOF
   basebin=$(make_fake_tmux "$TMP_ROOT/reconcile-race-fake")
   cat > "$blockbin/tmux" <<'SH'
 #!/usr/bin/env bash
-if [ "${1:-}" = send-keys ]; then
+if [ "${1:-}" = send-keys ] || [ "${1:-}" = paste-buffer ]; then
   touch "$FM_RECONCILE_RACE_ENTERED"
   while [ ! -f "$FM_RECONCILE_RACE_RELEASE" ]; do sleep 0.02; done
   exit 1
@@ -559,7 +559,7 @@ EOF
   cat > "$blockbin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
-  *"Firstmate instruction waiting:"*)
+  load-buffer*|*"Firstmate instruction waiting:"*)
     if mkdir "$FM_BLOCK_WAKE_ONCE" 2>/dev/null; then
       touch "$FM_BLOCK_WAKE_ENTERED"
       while [ ! -f "$FM_BLOCK_WAKE_RELEASE" ]; do sleep 0.02; done
@@ -633,7 +633,7 @@ EOF
   cat > "$blockbin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
-  *"Firstmate instruction waiting:"*)
+  load-buffer*|*"Firstmate instruction waiting:"*)
     touch "$FM_BLOCK_WAKE_ENTERED"
     while [ ! -f "$FM_BLOCK_WAKE_RELEASE" ]; do sleep 0.02; done
     ;;
