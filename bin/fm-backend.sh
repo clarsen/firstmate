@@ -1076,26 +1076,19 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
   esac
 }
 
-# fm_backend_send_text_submit: submit and verify through the selected adapter.
-# Pane backends type once and retry only submission; T3 uses a native send.
-# Echoes the backend's verdict; callers require exact empty for confirmed delivery.
-# A pane that already shows the recognised dialog is refused before any
-# adapter types, so that submit neither types the text nor sends Enter.
-fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
-  local backend=$1 rc=0 target label dialog
-  shift
-  target=$1
-  label=${6:-}
-  fm_backend_source "$backend" || return 1
-  # Every Enter loop below reads the dialog sink, so it must exist before
-  # any adapter types: a sink that fails here leaves the composer untouched.
+# fm_backend_submit_dialog_precheck: prepare the dialog sink, then take one
+# composer read before anything is typed. The classify writes the sink, and a
+# named dialog means the next Enter would answer it, so that refusal releases
+# the sink and fails with nothing typed. On success the sink stays open for the
+# caller's Enter loops, and the caller owns fm_composer_dialog_sink_release.
+fm_backend_submit_dialog_precheck() {  # <backend> <target> [expected-label]
+  local backend=$1 target=$2 label=${3:-} dialog
+  # Every Enter loop reads the dialog sink, so it must exist before any
+  # adapter types: a sink that fails here leaves the composer untouched.
   fm_composer_dialog_sink_prepare || {
     echo "error: the dialog check for a $backend submit could not be recorded" >&2
     return 1
   }
-  # One composer read after the sink exists and before the adapter types.
-  # The classify writes the sink; a named dialog means the next Enter would
-  # answer it.
   if [ -n "$label" ]; then
     fm_backend_composer_state "$backend" "$target" "$label" >/dev/null || true
   else
@@ -1106,6 +1099,50 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
     echo "error: blocked on a prompt: $dialog" >&2
     return 1
   fi
+}
+
+# Backends whose adapter delivers one short line as a single ordered
+# bracketed-paste submission (fm_backend_paste_submit). tmux pastes with
+# `paste-buffer -p` and presses Enter in the same tmux command; herdr uses its
+# native `agent prompt`.
+FM_BACKEND_PASTE_SUBMIT="tmux herdr"
+
+# fm_backend_paste_submit: deliver <text> as ONE ordered submission, the text
+# framed as a bracketed paste whenever the pane's application enabled that
+# mode, followed by Enter. The framing keeps an application that is not reading
+# input at that moment from receiving raw text and a separate Enter as one
+# undifferentiated chunk, which Claude Code reads as typed text and so drops
+# the trailing Enter (docs/verification/runtime-backends.md "Doorbell paste
+# submission"). The adapter writes both and reports no turn proof; the caller
+# owns any confirmation.
+# Returns 0 when the adapter wrote the paste and the Enter, 2 when this backend
+# or target has no paste submission and nothing was sent (the caller may type
+# instead), and 1 for a refusal or failure, including a recognised dialog, that
+# leaves delivery unproven.
+fm_backend_paste_submit() {  # <backend> <target> <text> [expected-label]
+  local backend=$1 rc=0
+  shift
+  fm_backend_list_contains "$FM_BACKEND_PASTE_SUBMIT" "$backend" || return 2
+  fm_backend_source "$backend" || return 1
+  fm_backend_submit_dialog_precheck "$backend" "$1" "${3:-}" || return 1
+  case "$backend" in
+    tmux) fm_backend_tmux_paste_submit "$1" "$2" || rc=$? ;;
+    herdr) fm_backend_herdr_paste_submit "$1" "$2" || rc=$? ;;
+  esac
+  fm_composer_dialog_sink_release
+  return "$rc"
+}
+
+# fm_backend_send_text_submit: submit and verify through the selected adapter.
+# Pane backends type once and retry only submission; T3 uses a native send.
+# Echoes the backend's verdict; callers require exact empty for confirmed delivery.
+# A pane that already shows the recognised dialog is refused before any
+# adapter types, so that submit neither types the text nor sends Enter.
+fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
+  local backend=$1 rc=0
+  shift
+  fm_backend_source "$backend" || return 1
+  fm_backend_submit_dialog_precheck "$backend" "$1" "${6:-}" || return 1
   case "$backend" in
     tmux) fm_backend_tmux_send_text_submit "$@" || rc=$? ;;
     herdr) fm_backend_herdr_send_text_submit "$@" || rc=$? ;;

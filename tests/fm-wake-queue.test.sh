@@ -922,6 +922,29 @@ case "${1:-}" in
       shift
     done
     ;;
+  load-buffer)
+    # The doorbell paste: keep the buffer beside the sent log.
+    [ "${2:-}" = -b ] || exit 1
+    cat > "${FM_FAKE_TMUX_SENT:-${TMPDIR:-/tmp}/fm-fake-tmux-sent}.buffer.$3"
+    ;;
+  paste-buffer)
+    # A paste logs its buffer like typed text, then runs the chained
+    # `; send-keys ... Enter` the paste submission sends in the same command.
+    shift
+    buf=
+    while [ "$#" -gt 0 ] && [ "$1" != ';' ]; do
+      [ "$1" = -b ] && buf=$2
+      shift
+    done
+    sent=${FM_FAKE_TMUX_SENT:-${TMPDIR:-/tmp}/fm-fake-tmux-sent}
+    [ -f "$sent.buffer.$buf" ] || exit 1
+    printf '%s\n' "$(cat "$sent.buffer.$buf")" >> "$sent"
+    rm -f "$sent.buffer.$buf"
+    if [ "${1:-}" = ';' ]; then
+      shift
+      exec "$0" "$@"
+    fi
+    ;;
   *) exit 0 ;;
 esac
 SH

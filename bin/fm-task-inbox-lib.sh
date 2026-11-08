@@ -52,7 +52,8 @@
 # Re-ring ladder (fm_task_inbox_due_action): an unhandled message older than
 # FM_TASK_INBOX_GRACE_SECS is due one delivery attempt per grace period; an
 # attempt may ring or be skipped to protect another draft in a proven pending
-# composer; an unsubmitted copy of this doorbell is retried. After
+# composer; an unsubmitted or partly erased copy of this doorbell is submitted
+# (fm_task_inbox_ring owns delivery and that recognition). After
 # FM_TASK_INBOX_RING_MAX attempts without an acknowledgement it escalates. The
 # caller owns the busy and recovery-grade endpoint checks: due actions deferred
 # by the caller's delivery guard consume a separate durable consecutive-poll budget,
@@ -108,6 +109,8 @@ FM_TASK_INBOX_GRACE_DEFAULT=90
 FM_TASK_INBOX_RING_MAX_DEFAULT=3
 FM_TASK_INBOX_BUSY_MAX_DEFAULT=2
 FM_TASK_INBOX_LOCK_WAIT_DEFAULT=5
+# The doorbell line's constant opening (fm_task_inbox_doorbell_line).
+FM_TASK_INBOX_DOORBELL_HEAD=': Firstmate instruction waiting:'
 
 fm_task_inbox_grace_secs() {
   local g=${FM_TASK_INBOX_GRACE_SECS:-$FM_TASK_INBOX_GRACE_DEFAULT}
@@ -364,13 +367,28 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     ''|*[![:print:]]*) return 1 ;;
   esac
   quoted=$(printf '%s' "$name" | sed "s/'/'\\\\''/g")
-  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, read and act on each in numeric order, then mv each into its handled/." \
-    "$quoted"
+  printf "%s list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, read and act on each in numeric order, then mv each into its handled/." \
+    "$FM_TASK_INBOX_DOORBELL_HEAD" "$quoted"
+}
+
+# Harnesses verified live to submit a doorbell delivered as one bracketed-paste
+# submission, including while they are not reading input, and to queue an
+# Enter pressed during a busy turn and run it after the turn
+# (docs/verification/runtime-backends.md "Doorbell paste submission"). The
+# caller names the target's recorded harness in FM_COMPOSER_HARNESS; an unset
+# or unlisted harness keeps the typed ring and the not-busy gate below.
+FM_TASK_INBOX_PASTE_HARNESSES='claude'
+
+fm_task_inbox_paste_harness() {
+  [ -n "${FM_COMPOSER_HARNESS:-}" ] || return 1
+  case " $FM_TASK_INBOX_PASTE_HARNESSES " in
+    *" $FM_COMPOSER_HARNESS "*) return 0 ;;
+  esac
+  return 1
 }
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
-# composer pre-check, then the backend's submit machinery with a minimal retry
-# budget, verdict discarded.
+# composer pre-check, then one backend submission, verdict discarded.
 # Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
 # other than our own doorbell (the watcher re-rings later), 2 the backend send
 # failed, 3 skipped because the endpoint is positively dead or missing (nothing
@@ -382,12 +400,18 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
 # verdicts would starve a harness whose idle screen the classifier cannot
 # positively identify (that classifier is advisory here by design).
-# A pending composer holding exactly our own doorbell line is a previous ring
-# whose Enter never landed, so on an agent not reported busy it is submitted
-# rather than skipped; skipping it would block every later ring. On both paths
-# a lost first Enter gets one confirmed retry.
+# A pending composer holding our own doorbell (fm_task_inbox_composer_holds) is
+# a previous ring whose Enter never landed, so it is submitted rather than
+# skipped; skipping it would block every later ring. That submit waits for an
+# agent not reported busy, except on a verified paste harness, which queues
+# the Enter and runs it after the turn.
+# A verified paste harness on a backend with fm_backend_paste_submit gets the
+# line as one ordered bracketed-paste submission, so text and Enter cannot
+# reach a harness that is not reading input as one chunk whose Enter it drops;
+# a target without that primitive falls back to the typed submission. On every
+# path a lost first Enter gets one confirmed retry.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
-  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
+  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict paste_rc
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
   esac
@@ -397,16 +421,28 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
     pending)
-      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" \
-        && [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
+      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 1
+      fm_task_inbox_paste_harness \
+        || [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
         || return 1
-      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      sleep 0.3
-      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      return 0
+      fm_task_inbox_submit_held "$backend" "$target" "$line" "$label"
+      return
       ;;
   esac
+  if fm_task_inbox_paste_harness; then
+    paste_rc=0
+    fm_backend_paste_submit "$backend" "$target" "$line" "$label" >/dev/null 2>&1 || paste_rc=$?
+    case "$paste_rc" in
+      0)
+        sleep 0.3
+        fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
+        fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+        return 0
+        ;;
+      2) ;;
+      *) return 2 ;;
+    esac
+  fi
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare
   # shell only a suffix; the `: ` prefix protects complete lines only. Do not
@@ -420,13 +456,31 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   return 0
 }
 
-# Whether the composer's content, ignoring line wrapping, is exactly <line>.
+# Submit a doorbell already held in the composer: Enter, then one more Enter
+# only while the composer still holds it.
+fm_task_inbox_submit_held() {  # <backend> <target> <line> [expected-label]
+  fm_backend_send_key "$1" "$2" Enter "${4:-}" >/dev/null 2>&1 || return 2
+  sleep 0.3
+  fm_task_inbox_composer_holds "$1" "$2" "$3" "${4:-}" || return 0
+  fm_backend_send_key "$1" "$2" Enter "${4:-}" >/dev/null 2>&1 || return 2
+  return 0
+}
+
+# Whether the composer, ignoring line wrapping, holds our own doorbell <line>:
+# the whole line, or a prefix of it at least as long as its constant head
+# (FM_TASK_INBOX_DOORBELL_HEAD). A prefix is what a partly erased ring leaves,
+# because Claude's Ctrl+U deletes one wrapped row per press from the end, and
+# it still names the instruction, so submitting it lets the worker recover.
+# Anything longer than the line, or differing from it, is someone else's text.
 fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
-  local cap held
+  local cap held want head
   fm_backend_source "$1" || return 1
   cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
   held=$(fm_composer_extract_selected_content styled=0 "$cap") || return 1
-  [ -n "$held" ] && [ "$(printf '%s' "$held" | tr -d '[:space:]')" = "$(printf '%s' "$3" | tr -d '[:space:]')" ]
+  held=$(printf '%s' "$held" | tr -d '[:space:]')
+  want=$(printf '%s' "$3" | tr -d '[:space:]')
+  head=$(printf '%s' "$FM_TASK_INBOX_DOORBELL_HEAD" | tr -d '[:space:]')
+  [ "${#held}" -ge "${#head}" ] && [ "${want:0:${#held}}" = "$held" ]
 }
 
 fm_task_inbox_is_fire_and_forget() {  # <record-path>

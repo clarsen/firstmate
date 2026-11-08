@@ -3283,6 +3283,27 @@ fm_backend_herdr_send_literal() {  # <target> <text>
   return "$rc"
 }
 
+# fm_backend_herdr_paste_submit: Herdr's native ordered submission, `agent
+# prompt`, which honors the pane's live bracketed-paste mode and writes the
+# text and an encoded Enter as one sequence, rejecting an agent already at a
+# dialog (agent_blocked) before it sends anything. It accepts only a pane where
+# Herdr detected an agent: agent_not_found returns 2 with nothing sent, so the
+# caller can type instead, and a CLI that rejects the `prompt` subcommand as
+# unrecognized is treated the same way. Every other failure replays Herdr's
+# message and returns 1
+# (bin/fm-backend.sh fm_backend_paste_submit owns the contract).
+fm_backend_herdr_paste_submit() {  # <target> <text>
+  local out rc=0
+  fm_backend_herdr_target_ready "$1" || return 1
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent prompt "$FM_BACKEND_HERDR_PANE" "$2" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  case "$out" in
+    *agent_not_found*|*"unrecognized subcommand"*) return 2 ;;
+  esac
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  return 1
+}
+
 # fm_backend_herdr_normalize_key: map firstmate's key vocabulary (Enter,
 # Escape, C-c, as used by fm-send.sh --key and stuck-crewmate-recovery) onto
 # herdr's `pane send-keys` names. Verified empirically: enter, escape/esc, and

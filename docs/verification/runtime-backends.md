@@ -1120,6 +1120,42 @@ ok - opencode (1.18.33): the doorbell reached a real worker, which acted and ack
 OpenCode needed `FM_SEND_INBOX_LIVE_TIMEOUT=560` because its configured model was still mid-turn at the default 240 seconds.
 Pi 0.87.1 was installed but not verified: its configured model returned an account error (`The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account`) before it read the inbox.
 
+### Doorbell paste submission
+
+Measured 2026-11-07 against Claude Code 2.1.319 on Herdr 0.9.3, in an isolated `fm-lab-` session, and on tmux 3.6a, on a private socket, macOS arm64, with fixture inboxes only.
+Claude Code reads no input while its SessionStart hooks run.
+A doorbell typed as raw text with a separate Enter in that window reaches Claude as one unbracketed chunk: Claude keeps the text and drops the Enter, so the doorbell stays held in the composer.
+The same line sent as one bracketed-paste submission (Herdr `agent prompt`, or tmux `paste-buffer -p` with Enter in the same command) is queued and submitted once the hooks finish.
+An Enter pressed while Claude is busy, after the doorbell has rendered in the composer, is queued and runs after the turn.
+`bin/fm-task-inbox-lib.sh` owns the resulting ring, and Claude is the only harness listed as verified for it.
+Herdr `agent prompt` accepts only a pane where Herdr detected an agent; on a bare shell pane it printed:
+
+```text
+{"error":{"code":"agent_not_found","message":"agent target w1:p1 not found"},"id":"cli:agent:prompt"}
+```
+
+Refresh the live proof with:
+
+```sh
+FM_DOORBELL_PASTE_LIVE=1 tests/fm-task-inbox-doorbell-paste-live-e2e.test.sh
+```
+
+Observed 2026-11-07:
+
+```text
+ok - doorbell paste: 2.1.319 (Claude Code) on herdr (herdr 0.9.3) submits a doorbell rung during SessionStart hooks
+ok - doorbell paste: 2.1.319 (Claude Code) on herdr (herdr 0.9.3) submits our held doorbell on a busy agent
+# 2.1.319 (Claude Code) on herdr (herdr 0.9.3): the worker also acted on the partly erased doorbell and acknowledged it
+ok - doorbell paste: 2.1.319 (Claude Code) on herdr (herdr 0.9.3) submits a partly erased doorbell of ours
+ok - doorbell paste: 2.1.319 (Claude Code) on tmux (tmux 3.6a) submits a doorbell rung during SessionStart hooks
+ok - doorbell paste: 2.1.319 (Claude Code) on tmux (tmux 3.6a) submits our held doorbell on a busy agent
+# 2.1.319 (Claude Code) on tmux (tmux 3.6a): the worker also acted on the partly erased doorbell and acknowledged it
+ok - doorbell paste: 2.1.319 (Claude Code) on tmux (tmux 3.6a) submits a partly erased doorbell of ours
+```
+
+The portable regressions in `tests/fm-task-inbox.test.sh` pin the logic against a fake Claude input model that drops the Enter of an unbracketed multi-character chunk.
+Other harnesses keep the typed doorbell and the not-busy recovery gate until this guard covers them.
+
 ## Waiting-worker command ceilings
 
 The `# Waiting` section of the ship and scout briefs (`bin/fm-brief.sh`) has a worker hold every external wait inside one blocking shell command, bounded by what its harness lets one command run.

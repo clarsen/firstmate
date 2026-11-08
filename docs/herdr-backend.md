@@ -664,6 +664,7 @@ Explicit named-session routing and unrelated launch environment remain intact.
 
 Literal text and Enter are separate operations on `fm-send.sh`'s typed plane.
 Ordinary local text steers instead use the durable steering inbox and send only its best-effort constant doorbell through this adapter.
+For a verified harness that doorbell is one native `agent prompt` submission, and a pane with no detected agent falls back to the typed path ([`bin/fm-task-inbox-lib.sh`](../bin/fm-task-inbox-lib.sh) owns the ring).
 Spawn-time fixed commands may use Herdr's atomic run primitive.
 Enter, Escape, and Ctrl-C are supported.
 

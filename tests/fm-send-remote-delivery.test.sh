@@ -97,6 +97,23 @@ SH
 exit 0
 SH
   chmod +x "$fb/sleep"
+  # A fake Herdr for the remote leg's doorbell, so no test reaches a real
+  # Herdr: it logs each call beside the ssh log, reports a running server,
+  # and refuses `agent prompt` as an agent at a dialog, so the ring still
+  # fails without typing anything.
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "${FM_SSH_LOG:-/dev/null}.herdr"
+case "${1:-} ${2:-}" in
+  "status --json") printf '{"server":{"running":true}}\n' ;;
+  "agent prompt")
+    printf '{"error":{"code":"agent_blocked","message":"agent is blocked"}}\n'
+    exit 1 ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$fb/herdr"
   cat > "$fb/fake-ssh" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -277,8 +294,12 @@ test_remote_steer_lands_in_remote_inbox() {
     *"$FM_FROMFIRST_MARK"*) : ;;
     *) fail "the remote record must carry the from-firstmate marker: $body" ;;
   esac
-  # The doorbell could not reach the fixture pane (no herdr CLI here); that
-  # never fails the send, and the notice still names the durable record.
+  # The remote leg rings the recorded Claude endpoint with Herdr's paste
+  # submission; the fake Herdr refuses it, so the doorbell did not reach the
+  # fixture pane. That never fails the send, and the notice still names the
+  # durable record.
+  assert_grep 'agent prompt p1 ' "$ssh_log.herdr" \
+    "the remote leg should ring its recorded claude endpoint through agent prompt"
   assert_contains "$err" "durably recorded" \
     "a failed doorbell must be reported as a notice on a durably sent steer"
   assert_not_contains "$err" "error:" "a durably recorded steer must not carry an error report"
