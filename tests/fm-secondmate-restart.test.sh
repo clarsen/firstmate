@@ -53,57 +53,86 @@ make_stub() {  # <case-dir>
 #!/usr/bin/env bash
 set -u
 D=$FM_FAKE_DIR
+# Literal input the pane receives, typed with `send-keys -l` or pasted from a
+# loaded buffer (the doorbell paste submission); both read the same.
+literal_input() {  # <target> <payload>
+  local target=$1 payload=$2 inbox corr
+  case "$payload" in
+    ". '"*"'")
+      staged=${payload#". '"}
+      staged=${staged%"'"}
+      [ ! -f "$staged" ] || payload=$(cat "$staged")
+      ;;
+  esac
+  printf '%s\n' "$payload" >> "$D/literal"
+  case "$payload" in
+    /exit|/quit)
+      if [ -e "$D/remote-relaunch-start" ] && [ ! -e "$D/remote-relaunch-end" ]; then
+        : > "$D/local-relaunch-during-remote"
+      fi
+      printf 'zsh' > "$D/command.$target"
+      ;;
+    *'encode launch-brief'* | *'Firstmate operational input waiting: read'*) cat "$D/becomes" > "$D/command.$target" ;;
+    ': Firstmate instruction waiting: list '*)
+      printf 'doorbell\n' >> "$D/rings"
+      if [ -x "$D/on-doorbell" ]; then
+        "$D/on-doorbell" "$payload"
+      fi
+      if [ -f "$D/answer-inbox" ]; then
+        # Model the mate: read the newest instruction it was handed and
+        # report back on the parent channel, carrying the correlation token
+        # the request itself embedded.
+        inbox=$(cat "$D/answer-inbox")
+        corr=$(cat "$inbox"/*.msg 2>/dev/null \
+          | grep -oE 'corr=[0-9a-f]{16}' | head -1)
+        if [ -n "$corr" ]; then
+          printf 'done [%s]: open records written down\n' "$corr" \
+            >> "$(cat "$D/answer-status")"
+        fi
+      fi
+      ;;
+  esac
+}
+send_keys() {
+  local literal=0 target=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -t) target=$2; shift 2 ;;
+      -l) literal=1; shift ;;
+      *) break ;;
+    esac
+  done
+  if [ "$literal" = 1 ]; then
+    literal_input "$target" "${1:-}"
+  else
+    printf '%s\n' "${1:-}" >> "$D/keys"
+  fi
+}
 case "${1:-}" in
   send-keys)
     shift
-    literal=0
-    target=
-    while [ $# -gt 0 ]; do
+    send_keys "$@"
+    exit 0 ;;
+  load-buffer)
+    [ "${2:-}" = -b ] || exit 1
+    cat > "$D/buffer.$3"
+    exit 0 ;;
+  paste-buffer)
+    shift
+    buf= target=
+    while [ $# -gt 0 ] && [ "$1" != ';' ]; do
       case "$1" in
+        -b) buf=$2; shift 2 ;;
         -t) target=$2; shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
+        *) shift ;;
       esac
     done
-    payload=${1:-}
-    if [ "$literal" = 1 ]; then
-      case "$payload" in
-        ". '"*"'")
-          staged=${payload#". '"}
-          staged=${staged%"'"}
-          [ ! -f "$staged" ] || payload=$(cat "$staged")
-          ;;
-      esac
-      printf '%s\n' "$payload" >> "$D/literal"
-      case "$payload" in
-        /exit|/quit)
-          if [ -e "$D/remote-relaunch-start" ] && [ ! -e "$D/remote-relaunch-end" ]; then
-            : > "$D/local-relaunch-during-remote"
-          fi
-          printf 'zsh' > "$D/command.$target"
-          ;;
-        *'encode launch-brief'* | *'Firstmate operational input waiting: read'*) cat "$D/becomes" > "$D/command.$target" ;;
-        ': Firstmate instruction waiting: list '*)
-          printf 'doorbell\n' >> "$D/rings"
-          if [ -x "$D/on-doorbell" ]; then
-            "$D/on-doorbell" "$payload"
-          fi
-          if [ -f "$D/answer-inbox" ]; then
-            # Model the mate: read the newest instruction it was handed and
-            # report back on the parent channel, carrying the correlation token
-            # the request itself embedded.
-            inbox=$(cat "$D/answer-inbox")
-            corr=$(cat "$inbox"/*.msg 2>/dev/null \
-              | grep -oE 'corr=[0-9a-f]{16}' | head -1)
-            if [ -n "$corr" ]; then
-              printf 'done [%s]: open records written down\n' "$corr" \
-                >> "$(cat "$D/answer-status")"
-            fi
-          fi
-          ;;
-      esac
-    else
-      printf '%s\n' "$payload" >> "$D/keys"
+    [ -f "$D/buffer.$buf" ] || exit 1
+    literal_input "$target" "$(cat "$D/buffer.$buf")"
+    rm -f "$D/buffer.$buf"
+    if [ "${1:-}" = ';' ]; then
+      shift
+      [ "${1:-}" != send-keys ] || { shift; send_keys "$@"; }
     fi
     exit 0 ;;
   display-message)
