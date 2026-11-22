@@ -19,28 +19,49 @@ import json
 import os
 from pathlib import Path
 import sys
+from datetime import datetime
 from urllib.parse import parse_qs, urlsplit
+
+# GitLab list filters: updated_after/updated_before compare against each pipeline's updated_at.
+def stamp(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 args = sys.argv[1:]
 if len(args) < 4 or args[0] != "api" or args[2:4] != ["--hostname", "lsg-git.lbl.gov"]:
     sys.exit(2)
-if Path(os.environ["MOCK_GLAB_MODE_FILE"]).exists():
+mode_file = Path(os.environ["MOCK_GLAB_MODE_FILE"])
+mode = mode_file.read_text().strip() if mode_file.exists() else None
+if mode == "fail":
     sys.exit(1)
 url = urlsplit(args[1])
 path = url.path
-prefix = "projects/lblnet%2Flblnet_hostupdate/pipelines"
+project = "projects/lblnet%2Flblnet_hostupdate"
+prefix = project + "/pipelines"
 fixture = json.loads(Path(os.environ["MOCK_GLAB_FIXTURE"]).read_text())
 records = fixture["pipelines"]
+if mode == "bad-url":
+    for record in records:
+        if record["id"] == 900003:
+            record["web_url"] = "https://example.invalid/pipelines/900003"
 if path == prefix:
     query = parse_qs(url.query)
     if (args[4:] != ["--paginate", "--output", "ndjson"]
             or query.get("source") != ["merge_request_event"]
             or query.get("status") != ["success"]
             or query.get("per_page") != ["100"]
-            or not query.get("updated_after") or not query.get("updated_before")):
+            or not query.get("updated_after")):
         sys.exit(2)
+    after = stamp(query["updated_after"][0])
+    before = stamp(query["updated_before"][0]) if "updated_before" in query else None
     for record in records:
-        print(json.dumps({"id": record["id"]}))
+        updated = stamp(record["updated_at"])
+        if updated > after and (before is None or updated < before):
+            print(json.dumps({"id": record["id"]}))
+elif path.startswith(project + "/merge_requests/") and len(args) == 4:
+    iid = path.removeprefix(project + "/merge_requests/")
+    if iid not in fixture["merge_requests"]:
+        sys.exit(2)
+    print(json.dumps(fixture["merge_requests"][iid]))
 elif path.startswith(prefix + "/") and path.endswith("/jobs"):
     pipeline_id = path.removeprefix(prefix + "/").removesuffix("/jobs")
     if (args[4:] != ["--paginate", "--output", "ndjson"]
@@ -176,10 +197,21 @@ jq -e --arg day "$POST" '
   and .coverage.signals.ships == {"status": "measured", "count": 8}
   and .coverage.signals.scouts == {"status": "measured", "count": 2}
   and .coverage.signals.decisions == {"status": "measured", "count": 2}
-  and .coverage.signals.hostupdate_mr_pipeline_wall_time == {"status": "measured", "count": 10}
-  and .hostupdate_mr_pipeline_wall_time.summary == {"count": 10, "median_seconds": 55, "p90_seconds": 90}
-  and .hostupdate_mr_pipeline_wall_time.initial_summary == {"count": 9, "median_seconds": 50, "p90_seconds": 90}
-  and ([.hostupdate_mr_pipeline_wall_time.pipelines[].id] == [900001,900002,900003,900004,900005,900006,900007,900008,900009,900010])
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time == {"status": "measured", "count": 11}
+  and .hostupdate_mr_pipeline_wall_time.summary == {"count": 11, "median_seconds": 50, "p90_seconds": 90, "share_under_60s": 0.5455}
+  and .hostupdate_mr_pipeline_wall_time.initial_summary == {"count": 10, "median_seconds": 47.5, "p90_seconds": 80, "share_under_60s": 0.6}
+  and .hostupdate_mr_pipeline_wall_time.initial_by_change_class == {
+    "image_build": {"count": 2, "median_seconds": 37.5, "p90_seconds": 45, "share_under_60s": 1},
+    "full_unit": {"count": 1, "median_seconds": 10, "p90_seconds": 10, "share_under_60s": 1},
+    "other": {"count": 7, "median_seconds": 60, "p90_seconds": 90, "share_under_60s": 0.4286}
+  }
+  and ([.hostupdate_mr_pipeline_wall_time.pipelines[].id] == [900001,900002,900003,900004,900005,900006,900007,900008,900009,900010,900013])
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].merge_request_iid == 101
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].source_branch == "fm/change-101"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].change_class == "full_unit"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[2].change_class == "image_build"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[10].change_class == "image_build"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[10].wall_seconds == 45
   and .hostupdate_mr_pipeline_wall_time.pipelines[0].wall_seconds == 10
   and .hostupdate_mr_pipeline_wall_time.pipelines[0].created_at == "2026-11-22T07:59:50Z"
   and .hostupdate_mr_pipeline_wall_time.pipelines[0].finished_at == "2026-11-22T08:00:00Z"
@@ -221,15 +253,27 @@ jq -e --arg day "$PRE" '
   and .contributions.projects[0].ships == [{"task": "old-ship", "title": "Old ship", "evidence": "data/done-archive.md#old-ship", "merged_at": $day, "time_precision": "day"}]
 ' "$pre_record" >/dev/null || fail "pre-cutoff ships did not come from done-archive dates"
 
-touch "$MOCK_GLAB_MODE_FILE"
+printf 'fail\n' > "$MOCK_GLAB_MODE_FILE"
 collect "$POST" >/dev/null || fail "unreachable GitLab run failed"
 jq -e '
-  .hostupdate_mr_pipeline_wall_time.summary == {"count": null, "median_seconds": null, "p90_seconds": null}
-  and .hostupdate_mr_pipeline_wall_time.initial_summary == {"count": null, "median_seconds": null, "p90_seconds": null}
+  .hostupdate_mr_pipeline_wall_time.summary == {"count": null, "median_seconds": null, "p90_seconds": null, "share_under_60s": null}
+  and .hostupdate_mr_pipeline_wall_time.initial_summary == {"count": null, "median_seconds": null, "p90_seconds": null, "share_under_60s": null}
+  and ([.hostupdate_mr_pipeline_wall_time.initial_by_change_class[].count] == [null, null, null])
   and .coverage.signals.hostupdate_mr_pipeline_wall_time.status == "not_measurable"
   and .coverage.signals.hostupdate_mr_pipeline_wall_time.count == null
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time.error == "GitLab API request failed (glab exit 1)"
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time.pipeline_id == null
   and .coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].status == "not_measurable"
 ' "$record" >/dev/null || fail "unreachable GitLab was counted as zero"
+printf 'bad-url\n' > "$MOCK_GLAB_MODE_FILE"
+collect "$POST" >/dev/null || fail "invalid GitLab detail run failed"
+jq -e '
+  .coverage.signals.hostupdate_mr_pipeline_wall_time.status == "not_measurable"
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time.count == null
+  and .coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].error == "invalid pipeline URL"
+  and .coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].pipeline_id == 900003
+  and .hostupdate_mr_pipeline_wall_time.pipelines == []
+' "$record" >/dev/null || fail "invalid GitLab detail lost its diagnostic"
 rm "$MOCK_GLAB_MODE_FILE"
 
 cmp -s "$TMP_ROOT/backlog-saved.md" "$CASE_HOME/data/backlog.md" || fail "backlog changed"

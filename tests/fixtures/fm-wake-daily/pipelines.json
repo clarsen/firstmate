@@ -4,111 +4,230 @@
       "id": 900001,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/101/head",
       "created_at": "2026-11-22T07:59:50Z",
       "finished_at": "2026-11-22T08:00:00Z",
+      "updated_at": "2026-11-22T08:00:00Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900001"
     },
     {
       "id": 900002,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/102/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:00:20Z",
+      "updated_at": "2026-11-22T20:00:20Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900002"
     },
     {
       "id": 900003,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/103/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:00:30Z",
+      "updated_at": "2026-11-22T20:00:30Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900003"
     },
     {
       "id": 900004,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/104/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:00:40Z",
+      "updated_at": "2026-11-22T20:00:40Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900004"
     },
     {
       "id": 900005,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/105/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:00:50Z",
+      "updated_at": "2026-11-22T20:00:50Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900005"
     },
     {
       "id": 900006,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/106/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:01:00Z",
+      "updated_at": "2026-11-22T20:01:00Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900006"
     },
     {
       "id": 900007,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/107/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:01:10Z",
+      "updated_at": "2026-11-22T20:01:10Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900007"
     },
     {
       "id": 900008,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/108/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:01:20Z",
+      "updated_at": "2026-11-22T20:01:20Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900008"
     },
     {
       "id": 900009,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/109/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:01:30Z",
+      "updated_at": "2026-11-22T20:01:30Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900009"
     },
     {
       "id": 900010,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/110/head",
       "created_at": "2026-11-22T20:00:00Z",
       "finished_at": "2026-11-22T20:01:40Z",
+      "updated_at": "2026-11-22T20:01:40Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900010"
     },
     {
       "id": 900011,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/111/head",
       "created_at": "2026-11-22T07:59:00Z",
       "finished_at": "2026-11-22T07:59:59Z",
+      "updated_at": "2026-11-22T07:59:59Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900011"
     },
     {
       "id": 900012,
       "status": "success",
       "source": "merge_request_event",
+      "ref": "refs/merge-requests/112/head",
       "created_at": "2026-11-23T07:59:00Z",
       "finished_at": "2026-11-23T08:00:00Z",
+      "updated_at": "2026-11-23T08:00:00Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900012"
+    },
+    {
+      "id": 900013,
+      "status": "success",
+      "source": "merge_request_event",
+      "ref": "refs/merge-requests/113/head",
+      "created_at": "2026-11-23T07:58:15Z",
+      "finished_at": "2026-11-23T07:59:00Z",
+      "updated_at": "2026-11-24T18:00:00Z",
+      "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900013"
     }
   ],
+  "merge_requests": {
+    "101": {
+      "iid": 101,
+      "source_branch": "fm/change-101"
+    },
+    "102": {
+      "iid": 102,
+      "source_branch": "fm/change-102"
+    },
+    "103": {
+      "iid": 103,
+      "source_branch": "fm/change-103"
+    },
+    "104": {
+      "iid": 104,
+      "source_branch": "fm/change-104"
+    },
+    "105": {
+      "iid": 105,
+      "source_branch": "fm/change-105"
+    },
+    "106": {
+      "iid": 106,
+      "source_branch": "fm/change-106"
+    },
+    "107": {
+      "iid": 107,
+      "source_branch": "fm/change-107"
+    },
+    "108": {
+      "iid": 108,
+      "source_branch": "fm/change-108"
+    },
+    "109": {
+      "iid": 109,
+      "source_branch": "fm/change-109"
+    },
+    "110": {
+      "iid": 110,
+      "source_branch": "fm/change-110"
+    },
+    "111": {
+      "iid": 111,
+      "source_branch": "fm/change-111"
+    },
+    "112": {
+      "iid": 112,
+      "source_branch": "fm/change-112"
+    },
+    "113": {
+      "iid": 113,
+      "source_branch": "fm/change-113"
+    }
+  },
   "jobs": {
-    "900001": ["pipeline-sanity", "test-unit-checkout"],
-    "900002": ["pipeline-sanity"],
-    "900003": ["pipeline-sanity", "build-lblnet_hostupdate"],
-    "900004": ["pipeline-sanity"],
-    "900005": ["pipeline-sanity"],
-    "900006": ["pipeline-sanity"],
-    "900007": ["pipeline-sanity"],
-    "900008": ["pipeline-sanity"],
-    "900009": ["pipeline-sanity"],
-    "900010": ["generated-followup-verify"],
-    "900011": ["pipeline-sanity"],
-    "900012": ["pipeline-sanity"]
+    "900001": [
+      "pipeline-sanity",
+      "test-unit-checkout"
+    ],
+    "900002": [
+      "pipeline-sanity"
+    ],
+    "900003": [
+      "pipeline-sanity",
+      "build-lblnet_hostupdate"
+    ],
+    "900004": [
+      "pipeline-sanity"
+    ],
+    "900005": [
+      "pipeline-sanity"
+    ],
+    "900006": [
+      "pipeline-sanity"
+    ],
+    "900007": [
+      "pipeline-sanity"
+    ],
+    "900008": [
+      "pipeline-sanity"
+    ],
+    "900009": [
+      "pipeline-sanity"
+    ],
+    "900010": [
+      "generated-followup-verify"
+    ],
+    "900011": [
+      "pipeline-sanity"
+    ],
+    "900012": [
+      "pipeline-sanity"
+    ],
+    "900013": [
+      "pipeline-sanity",
+      "build-lblnet_hostupdate",
+      "test-unit-checkout"
+    ]
   }
 }

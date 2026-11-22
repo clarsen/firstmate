@@ -44,13 +44,14 @@ It does not refresh project clones or change forge state.
 `coverage.signals` reports a rework count as `not_measurable` when a required clone or forge read fails or reaches a page limit; its `observed` value is only the partial count.
 `coverage.inputs` names the affected clone or forge URL, so an unreachable forge cannot appear as a measured zero.
 `hostupdate_mr_pipeline_wall_time` lists successful `lblnet/lblnet_hostupdate` merge request pipelines whose `finished_at` falls on the requested Pacific day.
-Each row records the GitLab pipeline ID and URL, creation and finish times in UTC, and creation-to-finish wall time in seconds.
+Each row records the GitLab pipeline ID and URL, the merge request IID and source branch, creation and finish times in UTC, and creation-to-finish wall time in seconds.
 The `kind` is `generated_followup` when the pipeline has a `generated-followup-verify` job, and `initial` otherwise.
-`job_signals` records the presence of `build-lblnet_hostupdate` and `test-unit-checkout` jobs so an initial-pipeline comparison can separate the measured pipeline shapes.
-`summary` gives the count, median, and nearest-rank 90th percentile for all listed pipelines; `initial_summary` gives those figures for initial pipelines only.
-Both summaries use seconds and return null median and percentile when their count is zero.
-The collector uses read-only GitLab API calls through `glab` against `lsg-git.lbl.gov`, selecting candidate successful pipelines by their GitLab update time before checking each finish time.
-If the forge is unreachable or its response is invalid, the section has no rows, summary values are null, and `coverage.signals.hostupdate_mr_pipeline_wall_time` is `not_measurable` rather than a zero count.
+`job_signals` records the presence of `build-lblnet_hostupdate` and `test-unit-checkout` jobs.
+`change_class` is `image_build` when `build-lblnet_hostupdate` ran, otherwise `full_unit` when `test-unit-checkout` ran, otherwise `other`.
+`summary` gives the count, median, nearest-rank 90th percentile, and share under 60 seconds for all listed pipelines; `initial_summary` gives those figures for initial pipelines only, and `initial_by_change_class` gives them for initial pipelines of each change class.
+Summaries use seconds and return null median, percentile, and share when their count is zero.
+The collector uses read-only GitLab API calls through `glab` against `lsg-git.lbl.gov`, listing successful merge request pipelines updated since the start of the requested day, so a pipeline whose record was updated on a later day still counts on its finish day.
+If the forge is unreachable or its response is invalid, the section has no rows, summary values are null, and `coverage.signals.hostupdate_mr_pipeline_wall_time` is `not_measurable` rather than a zero count; its `error` names the failed check and `pipeline_id` names the pipeline being read, or is null.
 Other Wake signal sections are absent until their stories add them.
 
 The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, and GitLab pipeline and job records.
