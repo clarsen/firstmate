@@ -114,7 +114,7 @@ test_flag_on_records_the_task_lifecycle() {
   rows=$(ledger_rows '[.event, .task] + (del(.v, .ts, .event, .task) | to_entries | map(.value))')
   assert_equals "$(cat <<EOF
 ["task.dispatched","$TASK","ship","sample","claude",null]
-["task.status","$TASK","working",null," setup done"]
+["task.status","$TASK","working",null," setup done",1790000000]
 ["task.status","$TASK","needs-decision","pick-one"," choose \"a\"\\\\b or c"]
 ["task.status","$TASK","resolved","pick-one"," [key=pick-one]  chose a"]
 ["task.status","$TASK",null,null,"partial line without its newline finished"]
@@ -125,6 +125,8 @@ EOF
 )" "$rows" "ledger rows"
   assert_not_contains "$LEDGER_AFTER_POLL" "partial line" "the poll recorded a line before its newline arrived"
   assert_contains "$LEDGER_AFTER_POLL" '"state":"needs-decision"' "the watcher poll did not record the status lines"
+  jq -e -s 'any(.[]; .event == "task.relaunched") | not' "$HOME_DIR/state/fleet-ledger.jsonl" >/dev/null \
+    || fail "a fresh dispatch recorded a relaunch"
   assert_absent "$HOME_DIR/state/.$TASK.fleet-ledger-offset" "cleanup left the task's ledger offset behind"
   pass "flag on: dispatch, polled status lines, the local merge after its task's pending lines, and cleanup are recorded in order"
 }
@@ -208,10 +210,29 @@ test_worker_status_line_is_recorded_when_written() {
     "$(cat "$HOME_DIR/state/$TASK.status")" "status log"
   assert_equals '["task.status","needs-decision"," pick a lamp colour"]' \
     "$(ledger_rows '[.event, .state, .text]')" "ledger rows right after the append"
+  jq -e --arg task "$TASK" 'select(.event == "task.status" and .task == $task and .state == "needs-decision" and .key == null and .text == " pick a lamp colour" and .at == 1790000000)' \
+    "$HOME_DIR/state/fleet-ledger.jsonl" >/dev/null || fail "the status record lost a member or its worker event time"
   out=$(in_home "$ROOT/bin/fm-fleet-ledger.sh" capture 2>&1) || fail "backstop capture failed: $out"
   assert_equals 1 "$(wc -l < "$HOME_DIR/state/fleet-ledger.jsonl" | tr -d ' ')" \
     "ledger records after the backstop capture"
   pass "flag on: a worker's status command records its line at once, and the watcher backstop does not record it again"
+}
+
+test_status_time_is_optional_and_rejects_malformed_stamps() {
+  local out
+  make_case on-status-time on
+  {
+    printf 'working: no stamp\n'
+    printf 'working [at=invalid]: malformed stamp\n'
+    printf 'working [at=1790000001] [key=choice]: valid stamp\n'
+  } > "$HOME_DIR/state/$TASK.status"
+  out=$(in_home "$ROOT/bin/fm-fleet-ledger.sh" capture 2>&1) || fail "status capture failed: $out"
+  assert_equals '[["working",null," no stamp",false],["working",null," malformed stamp",false],["working","choice"," valid stamp",true]]' \
+    "$(jq -sc '[.[] | [.state, .key, .text, has("at")]]' "$HOME_DIR/state/fleet-ledger.jsonl")" \
+    "status records keep their existing members and add time only for a valid stamp"
+  assert_equals 1790000001 "$(jq -r 'select(has("at")) | .at' "$HOME_DIR/state/fleet-ledger.jsonl")" \
+    "worker event time"
+  pass "status records carry valid worker event times without changing the existing members"
 }
 
 test_worker_status_line_is_recorded_under_a_state_override() {
@@ -292,6 +313,7 @@ test_flag_on_records_the_task_lifecycle
 test_flag_on_records_a_pr_merge_once
 test_flag_on_records_a_pr_registration
 test_worker_status_line_is_recorded_when_written
+test_status_time_is_optional_and_rejects_malformed_stamps
 test_worker_status_line_is_recorded_under_a_state_override
 test_worker_status_line_is_recorded_under_a_relative_config_override
 test_worker_status_command_fails_when_the_append_fails

@@ -17,6 +17,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-fleet-snapshot.sh`   | Print structured fleet snapshot JSON and refresh only its parent-side remote-ledger cache (schema `fm-fleet-snapshot.v1`) |
 | `fm-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `fm-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
+| `fm-wake-daily.py`       | Write one completed Pacific day's [Wake outcome record](wake-daily.md)               |
 | `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view                                   |
 | `fm-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment and `--projects` adds the per-project drilldown of ranked next actions; always reads each project's open `captain`/`next-step` GitHub issues |
 | `fm-project-issues.sh`   | Read each registered project's open `captain` and `next-step` GitHub issues for Bearings, reporting unreadable projects explicitly |

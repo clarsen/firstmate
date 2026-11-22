@@ -422,6 +422,35 @@ SH
   pass "fm-control relaunch: a recorded PR stays valid to the armed merge poll"
 }
 
+test_relaunch_records_one_ledger_event() {
+  local dir out rc
+  dir=$(new_case ledger-relaunch rl80)
+  add_ship_task "$dir" rl80 claude
+  mkdir -p "$dir/home/config"
+  : > "$dir/home/config/fleet-ledger"
+  out=$(run_control "$dir" rl80 relaunch --note "resume the fixture task"); rc=$?
+  expect_code 0 "$rc" "a ledger-enabled relaunch should succeed"$'\n'"$out"
+  assert_equals '["task.relaunched","rl80"]' \
+    "$(jq -sc '[.[] | [.event, .task]] | .[]' "$dir/home/state/fleet-ledger.jsonl")" \
+    "a completed relaunch writes exactly one event for its task"
+  pass "fm-control relaunch records exactly one task.relaunched event"
+}
+
+test_direct_spawn_relaunch_records_one_ledger_event() {
+  local dir out rc
+  dir=$(new_case ledger-spawn-relaunch rl81)
+  add_ship_task "$dir" rl81 claude
+  mkdir -p "$dir/home/config"
+  : > "$dir/home/config/fleet-ledger"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl81 --relaunch); rc=$?
+  expect_code 0 "$rc" "a ledger-enabled direct relaunch should succeed"$'\n'"$out"
+  assert_equals '["task.relaunched","rl81"]' \
+    "$(jq -sc '[.[] | [.event, .task]] | .[]' "$dir/home/state/fleet-ledger.jsonl")" \
+    "a direct fm-spawn relaunch writes exactly one event for its task"
+  pass "fm-spawn --relaunch records exactly one task.relaunched event"
+}
+
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
   local dir out rc
   dir=$(new_case pending-exit rl43)
@@ -2100,7 +2129,9 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  # The merged relaunch runs account and worktree proofs before this endpoint
+  # check; leave enough fixture time for those checks on a loaded runner.
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 1000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -2908,6 +2939,10 @@ test_herdr_relaunch_resumes_only_the_registered_pi_session() {
       return 0
     }
     dir=$HERDR_CASE_DIR
+    # The launch proof checks Pi's CLI shape; Herdr records the command without
+    # invoking a real Pi process.
+    printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
+    chmod +x "$dir/fakebin/pi"
     rm -f "$dir/fake/herdr-stopped"
     # -i.bak is the one in-place spelling GNU and BSD sed share.
     sed -i.bak 's/^harness=claude$/harness=pi/' "$dir/home/state/resume-$registered.meta"
@@ -3257,6 +3292,8 @@ test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_keeps_a_recorded_pr_valid_for_the_merge_poll
+test_relaunch_records_one_ledger_event
+test_direct_spawn_relaunch_records_one_ledger_event
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree

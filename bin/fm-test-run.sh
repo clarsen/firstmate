@@ -736,10 +736,12 @@ list_portable_serial() {
   done < <(all_repo_tests)
 }
 
-# Measured portable-serial script durations in milliseconds, from the CI timing
-# artifacts recorded in docs/fm-test-portable-shards.md. Each value is the
-# slowest successful sample in the referenced complete/partial CI runs, with
-# the version-specific host and native-Windows exceptions documented there.
+# Measured portable-serial script durations in milliseconds, mostly from the CI
+# timing artifacts recorded in docs/fm-test-portable-shards.md. A new test may
+# use a local successful sample until its first CI timing artifact exists. Each
+# established value is the slowest successful sample in the referenced
+# complete/partial CI runs, with the version-specific host and native-Windows
+# exceptions documented there.
 # These are balance hints only: the shard
 # partition stays complete and disjoint whatever they say, so a stale hint costs
 # balance rather than coverage. That doc owns the refresh procedure.
@@ -994,6 +996,7 @@ tests/fm-update.test.sh 11894
 tests/fm-vendor-auth-probe.test.sh 43278
 tests/fm-voice-relay.test.sh 28917
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 7345
+tests/fm-wake-daily.test.sh 1600
 tests/fm-wake-drain-open-decisions-cursor.test.sh 47677
 tests/fm-wake-drain-open-decisions.test.sh 8781
 tests/fm-wake-drain-outcome-backstop.test.sh 46316
