@@ -20,11 +20,26 @@ git -C "$CLONE" add fixture.txt
 GIT_AUTHOR_DATE=2026-11-19T12:00:00-08:00 GIT_COMMITTER_DATE=2026-11-19T12:00:00-08:00 \
   git -C "$CLONE" commit -qm 'Revert "fixture change"' || fail "fixture revert commit failed"
 SHA=$(git -C "$CLONE" rev-parse HEAD)
+LOCAL="$CASE_HOME/projects/localonly"
+mkdir -p "$LOCAL"
+git -C "$LOCAL" init -q || fail "local-only clone init failed"
+git -C "$LOCAL" config user.name Fixture
+git -C "$LOCAL" config user.email fixture@example.org
+printf 'fixture\n' > "$LOCAL/fixture.txt"
+git -C "$LOCAL" add fixture.txt
+GIT_AUTHOR_DATE=2026-11-19T10:00:00-08:00 GIT_COMMITTER_DATE=2026-11-19T10:00:00-08:00 \
+  git -C "$LOCAL" commit -qm 'Revert "local change"' || fail "local-only revert commit failed"
+LOCAL_SHA=$(git -C "$LOCAL" rev-parse HEAD)
 
 cat > "$CASE_HOME/data/backlog.md" <<'EOF'
+## In flight
+- [ ] task-open - Open GitHub task https://github.com/clarsen/firstmate/pull/9 (repo: firstmate) (kind: ship) (since 2026-11-15)
+
 ## Done
-- [x] task-mr - GitLab task https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42 (repo: lblnet_hostupdate) (kind: ship) (done 2026-11-19)
-- [x] task-gh - GitHub task https://github.com/clarsen/firstmate/pull/7 (repo: firstmate) (kind: ship) (done 2026-11-19)
+- [x] task-mr - GitLab task https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42#note_1 (repo: lblnet_hostupdate) (kind: ship) (done 2026-11-19)
+- [x] task-gh - GitHub task https://github.com/clarsen/firstmate/pull/7, follow-up (repo: firstmate) (kind: ship) (done 2026-11-19)
+- [x] task-merged - Merged GitHub task https://github.com/clarsen/firstmate/pull/8/files (repo: firstmate) (kind: ship) (merged 2026-11-19)
+- [x] task-old - Historical GitHub task https://github.com/clarsen/firstmate/pull/3 (repo: firstmate) (kind: ship) (done 2026-11-10)
 EOF
 printf '## Done\n' > "$CASE_HOME/data/done-archive.md"
 cat > "$CASE_HOME/data/captain-questions.json" <<'EOF'
@@ -55,6 +70,21 @@ case "${*: -1}" in
   */actions/runs\?head_sha=abc123\&per_page=100)
     printf '%s\n' '{"total_count":1,"workflow_runs":[{"id":10,"conclusion":"failure","event":"pull_request","updated_at":"2026-11-19T23:30:00Z","html_url":"https://github.com/clarsen/firstmate/actions/runs/10"}]}'
     ;;
+  */pulls/8/commits\?per_page=100)
+    printf '%s\n' '[{"sha":"aaa888"}]'
+    ;;
+  */actions/runs\?head_sha=aaa888\&per_page=100)
+    printf '%s\n' '{"total_count":1,"workflow_runs":[{"id":12,"conclusion":"success","event":"pull_request","updated_at":"2026-11-19T19:00:00Z","html_url":"https://github.com/clarsen/firstmate/actions/runs/12"}]}'
+    ;;
+  */pulls/9)
+    printf '%s\n' '{"state":"open","closed_at":null,"merged_at":null}'
+    ;;
+  */pulls/9/commits\?per_page=100)
+    printf '%s\n' '[{"sha":"def999"}]'
+    ;;
+  */actions/runs\?head_sha=def999\&per_page=100)
+    printf '%s\n' '{"total_count":1,"workflow_runs":[{"id":11,"conclusion":"failure","event":"pull_request","updated_at":"2026-11-19T18:30:00Z","html_url":"https://github.com/clarsen/firstmate/actions/runs/11"}]}'
+    ;;
   *) exit 2 ;;
 esac
 EOF
@@ -62,17 +92,30 @@ chmod +x "$BIN/glab" "$BIN/gh"
 
 PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$DAY" --home "$CASE_HOME" >/dev/null || fail "fixture collection failed"
 record="$CASE_HOME/data/wake/daily/$DAY.json"
-jq -e --arg sha "$SHA" '
-  .rework.reverts == [{"project":"lblnet_hostupdate","commit":$sha,"subject":"Revert \"fixture change\"","at":"2026-11-19T20:00:00Z","evidence":("https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/commit/" + $sha)}]
+jq -e --arg sha "$SHA" --arg local "$LOCAL_SHA" '
+  .rework.reverts == [
+    {"project":"localonly","commit":$local,"subject":"Revert \"local change\"","at":"2026-11-19T18:00:00Z","evidence":("projects/localonly@" + $local)},
+    {"project":"lblnet_hostupdate","commit":$sha,"subject":"Revert \"fixture change\"","at":"2026-11-19T20:00:00Z","evidence":("https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/commit/" + $sha)}]
   and ([.rework.closed_unmerged[].url] == ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42","https://github.com/clarsen/firstmate/pull/7"])
   and ([.rework.closed_unmerged[].at] == ["2026-11-19T22:00:00Z","2026-11-19T23:00:00Z"])
-  and ([.rework.failed_pipelines[].url] == ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/9","https://github.com/clarsen/firstmate/actions/runs/10"])
-  and ([.rework.failed_pipelines[].at] == ["2026-11-19T21:00:00Z","2026-11-19T23:30:00Z"])
-  and .coverage.signals.reverts == {"status":"measured","count":1}
+  and ([.rework.failed_pipelines[].url] == ["https://github.com/clarsen/firstmate/actions/runs/11","https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/9","https://github.com/clarsen/firstmate/actions/runs/10"])
+  and ([.rework.failed_pipelines[].at] == ["2026-11-19T18:30:00Z","2026-11-19T21:00:00Z","2026-11-19T23:30:00Z"])
+  and .coverage.signals.reverts == {"status":"measured","count":2}
   and .coverage.signals.closed_unmerged == {"status":"measured","count":2}
-  and .coverage.signals.failed_pipelines == {"status":"measured","count":2}
+  and .coverage.signals.failed_pipelines == {"status":"measured","count":3}
+  and .coverage.inputs["forge:https://github.com/clarsen/firstmate/pull/8"].status == "readable"
+  and (.coverage.inputs | has("forge:https://github.com/clarsen/firstmate/pull/3") | not)
   and (.rework | has("relaunch") | not)
 ' "$record" >/dev/null || fail "rework signals missing events, times, or URLs"
+
+OLD_DAY=2026-11-10
+PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$OLD_DAY" --home "$CASE_HOME" >/dev/null || fail "historical day collection failed"
+jq -e '
+  .coverage.signals.closed_unmerged.status == "not_measurable"
+  and .coverage.signals.closed_unmerged.inputs == ["forge:https://github.com/clarsen/firstmate/pull/3"]
+  and .coverage.signals.failed_pipelines.status == "not_measurable"
+  and ([.coverage.inputs | keys[] | select(startswith("forge:"))] == ["forge:https://github.com/clarsen/firstmate/pull/3"])
+' "$CASE_HOME/data/wake/daily/$OLD_DAY.json" >/dev/null || fail "historical unreadable PR not confined to its own days"
 
 cp "$record" "$TMP_ROOT/first.json"
 PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$DAY" --home "$CASE_HOME" >/dev/null || fail "fixture repeat failed"
@@ -89,7 +132,7 @@ jq -e '
   and .coverage.signals.closed_unmerged.count == null
   and .coverage.signals.failed_pipelines.status == "not_measurable"
   and .coverage.inputs["forge:https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"].status == "not_measurable"
-  and .coverage.signals.reverts == {"status":"measured","count":1}
+  and .coverage.signals.reverts == {"status":"measured","count":2}
 ' "$record" >/dev/null || fail "unreachable forge was counted as zero"
 
 printf 'ok: Wake daily rework collector\n'

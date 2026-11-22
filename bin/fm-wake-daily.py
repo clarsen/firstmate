@@ -29,6 +29,7 @@ URL = re.compile(r"https?://[^\s)<>]+")
 PR_URL = re.compile(r"https?://[^\s)<>]+/(?:pull|merge_requests)/\d+[^\s)<>]*")
 REPORT = re.compile(r"(?:^|\s)(data/[^\s)]+/report\.md)(?:\s|$)")
 DONE = re.compile(r"\((merged|reported|done) (\d{4}-\d{2}-\d{2})\)")
+SINCE = re.compile(r"\(since (\d{4}-\d{2}-\d{2})\)")
 HOLD_KIND = re.compile(r"\(hold-kind: ([^)]+)\)")
 LOCAL_NOTE = re.compile(r"(?:^|\s)local main$")
 KIND = re.compile(r"\(kind: ([^)]+)\)")
@@ -38,8 +39,8 @@ ORIGIN = re.compile(r"^\s*Captain hold origin:\s*([A-Za-z0-9._-]+)\s*$")
 REFERENCE = re.compile(r"\b(story|epic)\s+([0-9]+(?:[.-][0-9A-Za-z]+)*)\b", re.I)
 REPORT_PATH = re.compile(r"data/([A-Za-z0-9._-]+)/report\.md\b")
 DELIVERY_URL = re.compile(r"^\s*(?:merge|pull) request\s+(https?://\S+)", re.I)
-GITLAB_MR = re.compile(r"^https://([^/]+)/(.+)/-/merge_requests/(\d+)$")
-GITHUB_PR = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)$")
+GITLAB_MR = re.compile(r"https://([^/\s)<>]+)/([^\s)<>]+?)/-/merge_requests/(\d+)(?!\d)")
+GITHUB_PR = re.compile(r"https://github\.com/([^/\s)<>]+)/([^/\s)<>]+)/pull/(\d+)(?!\d)")
 REVERT = re.compile(r"^Revert\s+", re.IGNORECASE)
 
 
@@ -70,6 +71,7 @@ def parse_rows(text, source):
             kind_match = KIND.search(raw)
             project_match = PROJECT.search(raw)
             day_match = DONE.search(raw)
+            since_match = SINCE.search(raw)
             hold_kind_match = HOLD_KIND.search(raw)
             kind = kind_match.group(1) if kind_match else None
             if kind is None:
@@ -96,6 +98,7 @@ def parse_rows(text, source):
                 "kind": kind,
                 "verb": day_match.group(1) if day_match else None,
                 "day": day_match.group(2) if day_match else None,
+                "since": since_match.group(1) if since_match else None,
                 "hold_kind": hold_kind_match.group(1) if hold_kind_match else None,
                 "local_note": local_note,
                 "url": (URL.search(raw).group(0) if URL.search(raw) else None),
@@ -257,16 +260,64 @@ def read_json_command(args):
         return None
 
 
+def pr_key(text):
+    """Reduce a PR or MR reference to its canonical URL; keep other forge URLs whole."""
+    for pattern in (GITLAB_MR, GITHUB_PR):
+        match = pattern.search(text)
+        if match:
+            return match.group(0)
+    match = PR_URL.search(text)
+    return match.group(0).rstrip("/") if match else None
+
+
+def task_spans(rows, ledger):
+    """Map each task to its first known start day and last known done day; None marks unknown or open."""
+    starts, ends, open_tasks = {}, {}, set()
+
+    def note(table, task, day, pick):
+        if day:
+            table[task] = pick(table[task], day) if task in table else day
+
+    for row in rows:
+        note(starts, row["task"], row["since"], min)
+        if not row["completed"]:
+            open_tasks.add(row["task"])
+        elif row["day"]:
+            note(ends, row["task"], row["day"], max)
+    for event in ledger:
+        task = event.get("task")
+        if not isinstance(task, str):
+            continue
+        if event.get("event") == "task.dispatched":
+            note(starts, task, local_day(event.get("ts")), min)
+        elif event.get("event") in ("task.merged", "task.cleaned_up"):
+            note(ends, task, local_day(event.get("ts")), max)
+    spans = {}
+    for task in set(starts) | set(ends) | open_tasks:
+        end = None if task in open_tasks else ends.get(task)
+        spans[task] = (starts.get(task) or end, end)
+    return spans
+
+
+def merged_prs(rows, ledger):
+    found = {pr_key(row["pr_url"]) for row in rows if row["verb"] == "merged" and row["pr_url"]}
+    found |= {pr_key(event["pr"]) for event in ledger
+              if event.get("event") == "task.merged" and isinstance(event.get("pr"), str)}
+    found.discard(None)
+    return found
+
+
 def task_prs(home, rows, ledger, coverage):
     """Find task delivery URLs, without treating references in notes as task PRs."""
     found = {}
     for row in rows:
         if row["kind"] == "ship" and row["pr_url"]:
-            found.setdefault(row["pr_url"].rstrip("/"), row["task"])
+            found.setdefault(pr_key(row["pr_url"]), row["task"])
     for event in ledger:
         url, task = event.get("pr"), event.get("task")
-        if isinstance(url, str) and isinstance(task, str) and PR_URL.fullmatch(url.rstrip("/")):
-            found.setdefault(url.rstrip("/"), task)
+        key = pr_key(url) if isinstance(url, str) else None
+        if key and isinstance(task, str):
+            found.setdefault(key, task)
     state = home / "state"
     try:
         metas = sorted(state.glob("*.meta"))
@@ -280,9 +331,9 @@ def task_prs(home, rows, ledger, coverage):
         for line in content.splitlines():
             if not re.match(r"^(?:pr|anchor_pr|member\.[^.]+\.pr)=", line):
                 continue
-            url = line.split("=", 1)[1].rstrip("/")
-            if PR_URL.fullmatch(url):
-                found.setdefault(url, task)
+            key = pr_key(line.split("=", 1)[1])
+            if key:
+                found.setdefault(key, task)
     return found
 
 
@@ -303,16 +354,18 @@ def clone_reverts(day, home, coverage):
             result = subprocess.run(["git", "-C", source, "log", "--all", "--format=%H%x09%cI%x09%s", "--grep=^Revert ",
                                      f"--since={start.isoformat()}", f"--until={end.isoformat()}"],
                                     capture_output=True, text=True, timeout=30, check=False)
-            remote = subprocess.run(["git", "-C", source, "remote", "get-url", "origin"],
-                                    capture_output=True, text=True, timeout=10, check=False)
         except (OSError, subprocess.TimeoutExpired):
-            coverage[source] = {"status": "not_measurable", "reason": "git read failed"}
-            continue
-        if result.returncode or remote.returncode:
+            result = None
+        if result is None or result.returncode:
             coverage[source] = {"status": "not_measurable", "reason": "git read failed"}
             continue
         coverage[source] = {"status": "readable"}
-        base = remote.stdout.strip().removesuffix(".git")
+        try:
+            remote = subprocess.run(["git", "-C", source, "remote", "get-url", "origin"],
+                                    capture_output=True, text=True, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            remote = None
+        base = remote.stdout.strip().removesuffix(".git") if remote is not None and not remote.returncode else ""
         if base.startswith("git@") and ":" in base:
             host, path = base[4:].split(":", 1)
             base = f"https://{host}/{path}"
@@ -335,23 +388,29 @@ def clone_reverts(day, home, coverage):
 
 def forge_rework(day, home, rows, ledger, coverage):
     closed, failed = [], []
+    spans = task_spans(rows, ledger)
+    merged = merged_prs(rows, ledger)
     for url, task in sorted(task_prs(home, rows, ledger, coverage).items()):
+        start, end = spans.get(task, (None, None))
+        if (start is not None and day < start) or (end is not None and day > end):
+            continue
+        known_merged = url in merged
         source = f"forge:{url}"
         gitlab = GITLAB_MR.fullmatch(url)
         github = GITHUB_PR.fullmatch(url)
         if gitlab:
             host, project, number = gitlab.groups()
             api = f"projects/{quote(project, safe='')}/merge_requests/{number}"
-            detail = read_json_command(["glab", "api", "--hostname", host, api])
+            detail = None if known_merged else read_json_command(["glab", "api", "--hostname", host, api])
             pipelines = read_json_command(["glab", "api", "--hostname", host, f"{api}/pipelines?per_page=100"])
-            if not isinstance(detail, dict) or not isinstance(pipelines, list):
+            if (not known_merged and not isinstance(detail, dict)) or not isinstance(pipelines, list):
                 coverage[source] = {"status": "not_measurable", "reason": "forge unreachable or invalid response"}
                 continue
             if len(pipelines) == 100:
                 coverage[source] = {"status": "not_measurable", "reason": "pipeline page limit reached"}
                 continue
             coverage[source] = {"status": "readable"}
-            if detail.get("state") == "closed" and not detail.get("merged_at") and timestamp_day(detail.get("closed_at")) == day:
+            if detail and detail.get("state") == "closed" and not detail.get("merged_at") and timestamp_day(detail.get("closed_at")) == day:
                 closed.append({"task": task, "url": url, "at": utc_time(detail["closed_at"])})
             for pipeline in pipelines:
                 when = pipeline.get("finished_at") or pipeline.get("updated_at")
@@ -366,9 +425,9 @@ def forge_rework(day, home, rows, ledger, coverage):
         elif github:
             owner, repo, number = github.groups()
             api = f"/repos/{owner}/{repo}"
-            detail = read_json_command(["gh", "api", f"{api}/pulls/{number}"])
+            detail = None if known_merged else read_json_command(["gh", "api", f"{api}/pulls/{number}"])
             commits = read_json_command(["gh", "api", f"{api}/pulls/{number}/commits?per_page=100"])
-            if not isinstance(detail, dict) or not isinstance(commits, list) or len(commits) == 100:
+            if (not known_merged and not isinstance(detail, dict)) or not isinstance(commits, list) or len(commits) == 100:
                 coverage[source] = {"status": "not_measurable", "reason": "forge unreachable or commit page limit reached"}
                 continue
             runs = []
@@ -383,7 +442,7 @@ def forge_rework(day, home, rows, ledger, coverage):
                 coverage[source] = {"status": "not_measurable", "reason": "forge unreachable or run page limit reached"}
                 continue
             coverage[source] = {"status": "readable"}
-            if detail.get("state") == "closed" and not detail.get("merged_at") and timestamp_day(detail.get("closed_at")) == day:
+            if detail and detail.get("state") == "closed" and not detail.get("merged_at") and timestamp_day(detail.get("closed_at")) == day:
                 closed.append({"task": task, "url": url, "at": utc_time(detail["closed_at"])})
             for run in runs:
                 when = run.get("updated_at")

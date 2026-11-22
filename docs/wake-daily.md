@@ -32,10 +32,14 @@ Before 2026-11-21, done-archive and backlog dates are authoritative for ships, e
 From 2026-11-21 onward, the ledger is a required input and its `task.merged` time is preferred over a backlog or archive row for the same task, counting each task once; ledger merges stamped before 2026-11-21 are ignored; `coverage.merge_time_source` names which applies.
 Backlog decision blocks have no answer timestamp, so a decision counts on its task's Done date with `date_source` marking that close date.
 Answered decisions on still-open tasks count on no day; `coverage.uncounted_decisions` reports how many, with the reason "answer time unknown (task still open)".
-`rework.reverts` lists commits whose subject begins `Revert` in local project clone history, with the commit time and a commit URL where the clone's origin provides one.
+`rework.reverts` lists commits whose subject begins `Revert` in local project clone history, with the commit time and a commit URL where the clone's origin provides one, otherwise `projects/<clone>@<sha>`.
 `rework.closed_unmerged` lists fleet task PRs and MRs currently closed without a merge, on the Pacific day of their forge close time.
 `rework.failed_pipelines` lists failed GitLab MR pipelines and failed GitHub pull request workflow runs on the Pacific day of their reported finish or update time, with the pipeline or run URL and task PR or MR URL.
 The collector reads task delivery URLs from ship rows, fleet ledger entries, and task metadata, then uses read-only GitLab and GitHub API requests.
+Each PR or MR URL is reduced to its canonical form, so a trailing path, fragment, or punctuation does not change which PR is read.
+For a given day the collector reads only PRs and MRs whose task was in flight that day: from its earliest `since` row date or ledger dispatch through its latest done date or ledger merge or cleanup, or still open.
+A done task with no recorded start is read only on its done day.
+A PR or MR already recorded as merged is not read for `closed_unmerged`, only for its pipelines.
 It does not refresh project clones or change forge state.
 `coverage.signals` reports a rework count as `not_measurable` when a required clone or forge read fails or reaches a page limit; its `observed` value is only the partial count.
 `coverage.inputs` names the affected clone or forge URL, so an unreachable forge cannot appear as a measured zero.
