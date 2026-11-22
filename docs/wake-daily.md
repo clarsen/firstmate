@@ -8,7 +8,7 @@ Run it with a Pacific date and optionally `--home HOME`; `FM_HOME` is the defaul
 The script refuses today and future dates in `America/Los_Angeles`.
 It replaces the output atomically and leaves a byte-identical file alone on a repeat run with unchanged inputs.
 
-The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, and `coverage` sections.
+The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, and `coverage` sections.
 `contributions.projects` groups ships, scouts, and closed decisions by recorded project, using `none recorded` when a project was not recorded.
 Rows with no recorded kind appear in `unclassified` under their recorded project or `none recorded`.
 A ship includes its task, title, evidence, merge time, and time precision; a backlog-only merge has day precision.
@@ -54,6 +54,6 @@ The collector uses read-only GitLab API calls through `glab` against `lsg-git.lb
 If the forge is unreachable or its response is invalid, the section has no rows, summary values are null, and `coverage.signals.hostupdate_mr_pipeline_wall_time` is `not_measurable` rather than a zero count; its `error` names the failed check and `pipeline_id` names the pipeline being read, or is null.
 Other Wake signal sections are absent until their stories add them.
 
-The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, and GitLab pipeline and job records.
+The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, and GitLab pipeline, job, and merge request records.
 It changes no source file and writes only beneath `data/wake/`.
 Sessions outside Firstmate are invisible to this record.
