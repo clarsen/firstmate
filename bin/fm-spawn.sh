@@ -2836,11 +2836,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
         echo "warning: task $ID's reference member $m_name copy '$m_wt' is missing; relaunching without it" >&2
       fi
     done < <(fm_member_records "$RELAUNCH_META")
-    while IFS= read -r m_row; do
-      IFS=$FM_MEMBER_FS read -r m_name _ <<<"$m_row"
-      [ -n "$m_name" ] || continue
-      SPAWN_MEMBER_ENV_NAMES="${SPAWN_MEMBER_ENV_NAMES:+$SPAWN_MEMBER_ENV_NAMES }$(fm_member_env_name "$m_name")"
-    done <<<"$SPAWN_MEMBER_ROWS"
     # The recorded worker must still be in a disposable copy. A stale or
     # incorrect record cannot authorize a relaunch in the primary checkout.
     relaunch_wt_real=$(cd "$RELAUNCH_WT" 2>/dev/null && pwd -P) || relaunch_wt_real=$RELAUNCH_WT

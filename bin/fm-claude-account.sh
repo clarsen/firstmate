@@ -151,13 +151,33 @@ cmd_get() {
   token=
 }
 
+# Print the configured Keychain slots. Return 2 when config/claude-accounts is
+# a config-directory account list rather than Keychain slots.
+configured_keychain_slots() {
+  local slots
+  if fm_claude_account_keychain_list "$CONFIG"; then
+    fm_claude_account_configured_slots "$CONFIG"
+    return
+  fi
+  if slots=$(fm_claude_account_configured_slots "$CONFIG" 2>/dev/null) && [ -z "$slots" ]; then
+    return 0
+  fi
+  return 2
+}
+
+CONFIG_DIRECTORY_LIST_NOTE="config/claude-accounts is a config-directory account list, not Keychain slots; measure its accounts with bin/fm-claude-account-quota.sh"
+
 cmd_list() {
   local account slot slots=""
   account=$(id -un 2>/dev/null) || account=${USER:-}
   if [ "$#" -gt 0 ]; then
     slots=$(printf '%s\n' "$@")
   else
-    slots=$(fm_claude_account_configured_slots "$CONFIG") || return 1
+    slots=$(configured_keychain_slots) || {
+      [ "$?" -eq 2 ] || return 1
+      echo "$CONFIG_DIRECTORY_LIST_NOTE"
+      return 0
+    }
   fi
   [ -n "$slots" ] || {
     echo "no slots configured (config/claude-accounts is absent or empty)"
@@ -222,7 +242,11 @@ cmd_status() {
   if [ "$#" -gt 0 ]; then
     slots=$(printf '%s\n' "$@")
   else
-    slots=$(fm_claude_account_configured_slots "$CONFIG") || return 1
+    slots=$(configured_keychain_slots) || {
+      [ "$?" -eq 2 ] || return 1
+      echo "$CONFIG_DIRECTORY_LIST_NOTE"
+      return 0
+    }
   fi
   [ -n "$slots" ] || {
     echo "no slots configured (config/claude-accounts is absent or empty)"

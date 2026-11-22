@@ -215,6 +215,29 @@ EOF
   pass "status reports no configured slots when config/claude-accounts is absent or empty"
 }
 
+test_list_and_status_point_config_directory_lists_at_the_quota_tool() {
+  local rec fakebin store home out status name cmd
+  rec=$(new_case config-dir-list)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  for name in ordinary-only ordinary-then-path; do
+    home="$TMP_ROOT/config-dir-list/$name"
+    mkdir -p "$home/config" "$home/state"
+    case "$name" in
+      ordinary-only) printf 'ordinary\n' ;;
+      ordinary-then-path) printf 'ordinary\n/Users/me/.claude-work\n' ;;
+    esac > "$home/config/claude-accounts"
+    for cmd in list status; do
+      out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" "$cmd" 2>&1) status=$?
+      expect_code 0 "$status" "$cmd on the $name list should succeed: $out"
+      assert_contains "$out" "bin/fm-claude-account-quota.sh" "$cmd on the $name list should point at the config-directory quota tool"
+      assert_not_contains "$out" "ordinary:" "$cmd on the $name list must not report ordinary as a Keychain slot"
+    done
+  done
+  pass "list and status treat ordinary and config-directory lists as config-directory lists, not Keychain slots"
+}
+
 test_add_then_get_roundtrips
 test_add_rejects_empty_or_whitespace_token
 test_get_missing_slot_names_the_slot_only
@@ -227,3 +250,4 @@ test_status_reports_mark_and_reading_without_values
 test_status_reports_a_past_reset_window_as_reset
 test_status_reports_no_reading_for_a_never_recorded_slot
 test_status_with_no_configured_slots
+test_list_and_status_point_config_directory_lists_at_the_quota_tool
