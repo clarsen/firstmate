@@ -2141,9 +2141,14 @@ assert_autoarm_commits_attended_alarm_on_exhausted_continuation() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-autoarm-alarm-$variant")
   : > "$dir/state/task1.meta"
   install_integrated_autoarm "$dir"
+  # The arm (or host park) holds the generation claim until this Stop's guard
+  # has finished. With a fixed sleep a slow guard on a loaded host found the
+  # auto-arm already inside its alarm commit holding the budget lock, so its
+  # single-attempt charge was skipped and the budget never exhausted.
+  local hold_claim='w=0; while [ ! -e "$FM_HOME/guard-done" ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done'
   case "$variant" in
     arm|alarm-signal)
-      printf '#!/usr/bin/env bash\nsleep 1\nprintf '"'"'watcher: FAILED - persistent fixture failure\\n'"'"'\nexit 1\n' > "$dir/bin/fm-watch-arm.sh"
+      printf '#!/usr/bin/env bash\n%s\nprintf '"'"'watcher: FAILED - persistent fixture failure\\n'"'"'\nexit 1\n' "$hold_claim" > "$dir/bin/fm-watch-arm.sh"
       ;;
     signal)
       printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$dir/bin/fm-watch-arm.sh"
@@ -2153,7 +2158,7 @@ assert_autoarm_commits_attended_alarm_on_exhausted_continuation() {
       [ "$variant" = lost-handback ] || marker=announced
       rm -f "$dir/config/supervision-host-off"
       {
-        printf '#!/usr/bin/env bash\nsleep 1\n'
+        printf '#!/usr/bin/env bash\n%s\n' "$hold_claim"
         printf "printf '%s:handling:fixture-generation\\\\n' > \"\$FM_HOME/state/.watcher-down\"\n" "$marker"
         cat <<'SH'
 printf 'signal: fixture.status\n'
@@ -2195,6 +2200,7 @@ i=$1 variant=$2
 # The session lock sidecar is what makes those Stops the same session, so an
 # interrupted episode can still exhaust its budget instead of resetting.
 export CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=sess-claude-mode CLAUDE_PID=$$
+rm -f "$FM_HOME/guard-done"
 printf '%s\n' "$$" > "$FM_HOME/state/.lock"
 printf '%s\n' "$CLAUDE_CODE_SESSION_ID" > "$FM_HOME/state/.lock-session"
 printf '{"session_id":"sess-claude-mode","stop_hook_active":false}\n' \
@@ -2213,6 +2219,7 @@ done
 printf '{"stop_hook_active":false,"session_id":"sess-claude-mode"}' \
   | CLAUDECODE=1 FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 bash "$FM_HOME/bin/fm-turnend-guard.sh" --claude > "$FM_HOME/guard-$i.out" 2>&1
 printf '%s' "$?" > "$FM_HOME/guard-$i.status"
+: > "$FM_HOME/guard-done"
 [ "$variant" != signal ] || kill -TERM "$auto_pid" 2>/dev/null || : > "$FM_HOME/nokill-$i"
 wait "$auto_pid"
 printf '%s' "$?" > "$FM_HOME/auto-$i.status"
