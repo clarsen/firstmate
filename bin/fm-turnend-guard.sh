@@ -355,17 +355,8 @@ fi
 #     never became reachable.
 BUDGET_CHARGED_EPOCH=
 budget_account_current_epoch() {  # [observe|block]
-  local mode=${1:-observe} current_epoch outcome old_session old_count old_epoch tmp initialized charged i=0
-  # The auto-arm's alarm decision holds this lock briefly (owner lock, then
-  # budget lock); wait out that hold, with the auto-arm's own bound, so a
-  # concurrent generation's charge is not silently dropped and the attended
-  # alarm is not delayed. This path never holds the owner lock, so the
-  # documented lock order is unaffected.
-  while ! fm_lock_try_acquire "$BUDGET_LOCK"; do
-    [ "$i" -lt 20 ] || return 1
-    sleep 0.02
-    i=$((i + 1))
-  done
+  local mode=${1:-observe} current_epoch outcome old_session old_count old_epoch tmp initialized charged
+  fm_lock_try_acquire "$BUDGET_LOCK" || return 1
   current_epoch=$(sed -n '1s/^epoch=\([0-9][0-9]*\) .*/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   outcome=$(sed -n '1s/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   initialized=0
