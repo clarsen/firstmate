@@ -25,7 +25,9 @@ ROW = re.compile(r"^- \[[ xX]\] ([A-Za-z0-9._-]+) - (.*)$")
 META = re.compile(r"\s+\((?:repo|kind|priority|hold|hold-kind|hold-until): [^)]*\)$|\s+\((?:since|merged|reported|done) \d{4}-\d{2}-\d{2}\)$")
 URL = re.compile(r"https?://[^\s)<>]+")
 REPORT = re.compile(r"(?:^|\s)(data/[^\s)]+/report\.md)(?:\s|$)")
-DONE = re.compile(r"\((?:merged|reported|done) (\d{4}-\d{2}-\d{2})\)")
+DONE = re.compile(r"\((merged|reported|done) (\d{4}-\d{2}-\d{2})\)")
+HOLD_KIND = re.compile(r"\(hold-kind: ([^)]+)\)")
+LOCAL_NOTE = re.compile(r"(?:^|\s)local main$")
 KIND = re.compile(r"\(kind: ([^)]+)\)")
 PROJECT = re.compile(r"\(repo: ([^)]+)\)")
 
@@ -57,6 +59,7 @@ def parse_rows(text, source):
             kind_match = KIND.search(raw)
             project_match = PROJECT.search(raw)
             day_match = DONE.search(raw)
+            hold_kind_match = HOLD_KIND.search(raw)
             kind = kind_match.group(1) if kind_match else None
             if kind is None:
                 if re.match(r"^SHIP\b", raw):
@@ -69,6 +72,7 @@ def parse_rows(text, source):
                 if shorter == title:
                     break
                 title = shorter
+            local_note = bool(LOCAL_NOTE.search(title))
             title = URL.sub("", title).strip()
             report = REPORT.search(title)
             if report:
@@ -78,7 +82,10 @@ def parse_rows(text, source):
                 "title": title or task,
                 "project": project_match.group(1) if project_match else "none recorded",
                 "kind": kind,
-                "day": day_match.group(1) if day_match else None,
+                "verb": day_match.group(1) if day_match else None,
+                "day": day_match.group(2) if day_match else None,
+                "hold_kind": hold_kind_match.group(1) if hold_kind_match else None,
+                "local_note": local_note,
                 "url": (URL.search(raw).group(0) if URL.search(raw) else None),
                 "report": report.group(1) if report else None,
                 "source": source,
@@ -91,6 +98,24 @@ def parse_rows(text, source):
         else:
             current = None
     return rows
+
+
+def has_local_note(row):
+    body = [line.strip() for line in row["lines"] if line.strip()]
+    if row["local_note"]:
+        return True
+    if any(re.match(r"^Resolution recorded by fm-(captain|decision)-hold\.$", line) for line in body):
+        return False
+    return bool(body) and body[-1] == "local main"
+
+
+def ship_delivered(row):
+    """Mirror landed_record in bin/fm-landed-lib.sh for a ship row's merge."""
+    if row["hold_kind"] == "captain" or row["verb"] not in ("merged", "done"):
+        return False
+    local = has_local_note(row)
+    artifact = row["url"] if row["verb"] == "merged" else local
+    return bool(artifact) or (row["url"] is None and row["report"] is None and not local)
 
 
 def decision_pairs(row):
@@ -230,14 +255,14 @@ def build(day, home):
                 "evidence": row["url"] or row["report"] or f"data/{row['source']}.md#{row['task']}",
                 "recorded_on": day,
             })
-        if row["kind"] == "ship" and row["task"] not in ledger_merged_tasks:
+        if row["kind"] == "ship" and row["task"] not in ledger_merged_tasks and ship_delivered(row):
             section(row["project"], "ships").append({
                 "task": row["task"], "title": row["title"],
                 "evidence": row["url"] or f"data/{row['source']}.md#{row['task']}",
                 "merged_at": day, "time_precision": "day",
             })
-        if row["kind"] == "scout":
-            report = row["report"] or f"data/{row['task']}/report.md"
+        report = row["report"] or f"data/{row['task']}/report.md"
+        if row["kind"] == "scout" and (row["report"] or (home / report).is_file()):
             section(row["project"], "scouts").append({
                 "task": row["task"], "title": row["title"], "evidence": report,
                 "reported_on": day,

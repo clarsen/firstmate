@@ -73,6 +73,11 @@ cat > "$CASE_HOME/data/done-archive.md" <<EOF
 - [x] unknown-b - Unknown merged title (done $POST)
 - [x] ship-c - Reordered merge ship https://example.org/a/pull/3 (repo: alpha) (kind: ship) (merged $POST)
 - [x] late-ship - Merged before midnight, booked after (repo: beta) (kind: ship) (merged $POST)
+- [x] done-pr-nondelivery - Closed without merge https://example.org/a/pull/5 (repo: alpha) (kind: ship) (done $POST)
+- [x] reported-ship - Reported not merged (repo: alpha) (kind: ship) (reported $POST)
+- [x] held-ship - Captain kept this https://example.org/a/pull/6 (repo: alpha) (kind: ship) (merged $POST) (hold-kind: captain)
+- [x] local-ship - Landed locally - local main (repo: beta) (kind: ship) (done $POST)
+- [x] scout-none - Scout with no report anywhere (repo: alpha) (kind: scout) (reported $POST)
 
 ## Archived $PRE
 - [x] old-ship - Old ship (repo: alpha) (kind: ship) (merged $PRE)
@@ -98,6 +103,9 @@ cat > "$CASE_HOME/data/captain-questions.json" <<EOF
 ]}
 EOF
 
+mkdir -p "$CASE_HOME/data/scout-b"
+printf '# Scout B report\n' > "$CASE_HOME/data/scout-b/report.md"
+
 cp "$CASE_HOME/data/backlog.md" "$TMP_ROOT/backlog-saved.md"
 cp "$CASE_HOME/data/done-archive.md" "$TMP_ROOT/archive-saved.md"
 cp "$CASE_HOME/state/fleet-ledger.jsonl" "$TMP_ROOT/ledger-saved.jsonl"
@@ -110,7 +118,7 @@ jq -e --arg day "$POST" '
   and .day == $day
   and .coverage.ledger_duplicates_dropped == 3
   and .coverage.merge_time_source == "fleet-ledger"
-  and .coverage.signals.ships == {"status": "measured", "count": 5}
+  and .coverage.signals.ships == {"status": "measured", "count": 6}
   and .coverage.signals.scouts == {"status": "measured", "count": 2}
   and .coverage.signals.decisions == {"status": "measured", "count": 2}
   and .coverage.uncounted_decisions == {"count": 1, "reason": "answer time unknown (task still open)"}
@@ -118,11 +126,13 @@ jq -e --arg day "$POST" '
   and .contributions.projects[0].ships == [
     {"task": "ship-a", "title": "Ship title with exact words", "evidence": "https://example.org/a/pull/1", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"},
     {"task": "ship-c", "title": "Reordered merge ship", "evidence": "https://example.org/a/pull/3", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]
+  and ([.contributions.projects[0].scouts[].task] == ["scout-a", "scout-b"])
   and .contributions.projects[0].scouts[0].evidence == "data/scout-a/report.md"
   and .contributions.projects[0].scouts[1] == {"task": "scout-b", "title": "Scout without path", "evidence": "data/scout-b/report.md", "reported_on": $day}
   and .contributions.projects[0].decisions == [{"task": "ship-a", "title": "Ship title with exact words", "question": "Which route?", "answer": "Use the route, exactly.", "evidence": "data/backlog.md#ship-a:decision:1", "closed_on": $day, "time_precision": "day", "date_source": "task close date, not answer time"}]
   and .contributions.projects[1].ships == [
     {"task": "late-ship", "title": "Merged before midnight, booked after", "evidence": "data/done-archive.md#late-ship", "merged_at": $day, "time_precision": "day"},
+    {"task": "local-ship", "title": "Landed locally - local main", "evidence": "data/done-archive.md#local-ship", "merged_at": $day, "time_precision": "day"},
     {"task": "ship-b", "title": "Backlog only ship", "evidence": "data/backlog.md#ship-b", "merged_at": $day, "time_precision": "day"}]
   and .contributions.projects[2].ships == [{"task": "unknown-b", "title": "Unknown merged title", "evidence": "state/fleet-ledger.jsonl#task.merged:unknown-b", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]
   and .contributions.projects[2].decisions == [{"task": "q-20261122-0000abcd", "title": "Ship the route today?", "question": "Ship the route today?", "answer": "Yes, ship it today.", "evidence": "data/captain-questions.json#q-20261122-0000abcd", "closed_at": "2026-11-22T18:30:00Z", "time_precision": "second", "date_source": "captain close time"}]
