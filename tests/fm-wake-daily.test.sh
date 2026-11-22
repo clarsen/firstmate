@@ -175,6 +175,8 @@ jq -e '.coverage.signals.ships == {"status": "measured", "count": 1} and .covera
 collect "$POST" >/dev/null || fail "invalid-ledger run failed"
 jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "invalid JSON line 13"' "$record" >/dev/null || fail "invalid ledger reported as measured"
 
+# TODAY can equal a fixed fixture day collected above; clear it so the check sees only this run.
+rm -f "$CASE_HOME/data/wake/daily/$TODAY.json"
 if python3 "$ROOT/bin/fm-wake-daily.py" "$TODAY" --home "$CASE_HOME" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"; then
   fail "incomplete day was accepted"
 fi
