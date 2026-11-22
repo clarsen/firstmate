@@ -11,8 +11,10 @@
 # Producers:
 #   bin/fm-brief.sh              appended (in every worker's status command,
 #                                right after its unchanged plain append)
-#   bin/fm-spawn.sh              dispatched (fresh spawns only, never relaunch)
-#   bin/fm-control.sh            relaunched (successful replacement only)
+#   bin/fm-spawn.sh              dispatched (fresh spawns), relaunched (every
+#                                --relaunch, including bin/fm-control.sh
+#                                relaunch, once the replacement is launched and
+#                                before the control plane confirms it alive)
 #   bin/fm-watch.sh              capture, once per poll cycle
 #   bin/fm-pr-check.sh           pr_ready (a PR registered for review, not the
 #                                merge-time re-record from bin/fm-pr-merge.sh)

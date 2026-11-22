@@ -30,7 +30,7 @@ Readers must ignore members and events they do not recognize, so later versions 
 | Event              | Extra members                                  | Written when |
 | ------------------ | ---------------------------------------------- | ------------ |
 | `task.dispatched`  | `kind`, `project`, `harness`, `model`          | A new worker or second mate is launched. |
-| `task.relaunched`  | none                                           | An existing task's replacement worker is confirmed running. |
+| `task.relaunched`  | none                                           | A replacement worker for an existing task is launched, by `bin/fm-control.sh relaunch` or directly by `bin/fm-spawn.sh --relaunch`. It is written once the launch succeeds, before the control plane confirms the worker is running, so a relaunch whose replacement then fails to come up is still recorded. |
 | `task.status`      | `state`, `key`, `text`, optional `at`          | A complete, nonblank line in the task's status log is captured. |
 | `task.pr_ready`    | `pr`                                           | Firstmate records the task's PR as ready for review. |
 | `task.merged`      | `via` (`"pr"` or `"local"`), plus `pr` when `via` is `"pr"` | The task's PR merge is recorded, or its local-only branch landed. |
