@@ -12,12 +12,14 @@ section in this version of the record.
 import argparse
 from datetime import date, datetime, timedelta, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
+import statistics
 import subprocess
 import tempfile
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 
@@ -43,6 +45,8 @@ DELIVERY_URL = re.compile(r"^\s*(?:merge|pull) request\s+(https?://\S+)", re.I)
 GITLAB_MR = re.compile(r"https://([^/\s)<>]+)/([^\s)<>]+?)/-/merge_requests/(\d+)(?!\d)")
 GITHUB_PR = re.compile(r"https://github\.com/([^/\s)<>]+)/([^/\s)<>]+)/pull/(\d+)(?!\d)")
 REVERT = re.compile(r"^Revert\s+", re.IGNORECASE)
+HOSTUPDATE_PIPELINES = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"
+HOSTUPDATE_API = "projects/lblnet%2Flblnet_hostupdate/pipelines"
 
 
 def read_text(path, coverage):
@@ -467,10 +471,102 @@ def forge_rework(day, home, rows, ledger, coverage):
     window = {"count": candidates, "assumed_start": assumed_starts,
               "assumed_start_rule": f"done day minus {ASSUMED_LOOKBACK_DAYS} days when no start is recorded"}
     return closed, failed, window
+def gitlab_json(endpoint, *, ndjson=False):
+    command = ["glab", "api", endpoint, "--hostname", "lsg-git.lbl.gov"]
+    if ndjson:
+        command += ["--paginate", "--output", "ndjson"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        if result.returncode:
+            raise ValueError("GitLab API request failed")
+        if ndjson:
+            return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+        return json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        raise ValueError("GitLab API unavailable or returned invalid data") from error
+
+
+def gitlab_time(value):
+    if not isinstance(value, str):
+        raise ValueError("missing pipeline timestamp")
+    timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        raise ValueError("pipeline timestamp lacks timezone")
+    return timestamp.astimezone(timezone.utc)
+
+
+def pipeline_summary(pipelines):
+    durations = sorted(item["wall_seconds"] for item in pipelines)
+    summary = {"count": len(durations), "median_seconds": None, "p90_seconds": None}
+    if durations:
+        summary["median_seconds"] = round(statistics.median(durations), 3)
+        summary["p90_seconds"] = durations[math.ceil(0.9 * len(durations)) - 1]
+    return summary
+
+
+def hostupdate_pipeline_wall_time(day, coverage):
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), PACIFIC)
+    end = start + timedelta(days=1)
+    query = urlencode({
+        "source": "merge_request_event", "status": "success", "per_page": 100,
+        "updated_after": (start - timedelta(microseconds=1)).isoformat(),
+        "updated_before": end.isoformat(),
+    })
+    pipelines = []
+    try:
+        listed = gitlab_json(f"{HOSTUPDATE_API}?{query}", ndjson=True)
+        seen = set()
+        for entry in listed:
+            if not isinstance(entry, dict) or type(entry.get("id")) is not int:
+                raise ValueError("invalid pipeline list entry")
+            pipeline_id = entry["id"]
+            if pipeline_id in seen:
+                continue
+            seen.add(pipeline_id)
+            detail = gitlab_json(f"{HOSTUPDATE_API}/{pipeline_id}")
+            if (not isinstance(detail, dict) or detail.get("id") != pipeline_id
+                    or detail.get("source") != "merge_request_event" or detail.get("status") != "success"):
+                raise ValueError("invalid pipeline detail")
+            created = gitlab_time(detail.get("created_at"))
+            finished = gitlab_time(detail.get("finished_at"))
+            if finished.astimezone(PACIFIC).date().isoformat() != day:
+                continue
+            seconds = (finished - created).total_seconds()
+            if seconds < 0:
+                raise ValueError("pipeline finished before creation")
+            url = detail.get("web_url")
+            if url != f"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/{pipeline_id}":
+                raise ValueError("invalid pipeline URL")
+            jobs = gitlab_json(f"{HOSTUPDATE_API}/{pipeline_id}/jobs?per_page=100&include_retried=false", ndjson=True)
+            if not all(isinstance(job, dict) and isinstance(job.get("name"), str) for job in jobs):
+                raise ValueError("invalid pipeline jobs")
+            names = {job["name"] for job in jobs}
+            kind = "generated_followup" if "generated-followup-verify" in names else "initial"
+            pipelines.append({
+                "id": pipeline_id, "url": url,
+                "created_at": created.isoformat().replace("+00:00", "Z"),
+                "finished_at": finished.isoformat().replace("+00:00", "Z"),
+                "wall_seconds": round(seconds, 3),
+                "kind": kind,
+                "job_signals": sorted(names & {"build-lblnet_hostupdate", "test-unit-checkout"}),
+            })
+    except ValueError:
+        coverage[HOSTUPDATE_PIPELINES] = {"status": "not_measurable", "reason": "GitLab API unavailable or invalid"}
+        unknown = {"count": None, "median_seconds": None, "p90_seconds": None}
+        return {"pipelines": [], "summary": unknown, "initial_summary": unknown}, {
+            "status": "not_measurable", "count": None, "reason": "GitLab API unavailable or invalid",
+            "inputs": [HOSTUPDATE_PIPELINES],
+        }
+    pipelines.sort(key=lambda item: item["id"])
+    coverage[HOSTUPDATE_PIPELINES] = {"status": "readable"}
+    initial = [item for item in pipelines if item["kind"] == "initial"]
+    return {"pipelines": pipelines, "summary": pipeline_summary(pipelines),
+            "initial_summary": pipeline_summary(initial)}, {"status": "measured", "count": len(pipelines)}
 
 
 def build(day, home):
     coverage = {}
+    hostupdate_pipelines, hostupdate_coverage = hostupdate_pipeline_wall_time(day, coverage)
     ledger_path = home / "state/fleet-ledger.jsonl"
     backlog_path = home / "data/backlog.md"
     archive_path = home / "data/done-archive.md"
@@ -655,6 +751,7 @@ def build(day, home):
         counts[signal] = ({"status": "not_measurable", "count": None, "observed": observed,
                            "reason": "missing or unreadable input", "inputs": missing}
                           if missing else {"status": "measured", "count": observed})
+    counts["hostupdate_mr_pipeline_wall_time"] = hostupdate_coverage
     return {
         "schema": "fm-wake-daily.v1",
         "day": day,
@@ -662,6 +759,7 @@ def build(day, home):
         "contributions": {"projects": ordered_projects},
         "links": {"items": link_items},
         "rework": rework,
+        "hostupdate_mr_pipeline_wall_time": hostupdate_pipelines,
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,

@@ -9,6 +9,55 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-wake-daily)
 CASE_HOME="$TMP_ROOT/home"
 mkdir -p "$CASE_HOME/data" "$CASE_HOME/state"
+mkdir -p "$TMP_ROOT/bin"
+export MOCK_GLAB_FIXTURE="$ROOT/tests/fixtures/fm-wake-daily/pipelines.json"
+export MOCK_GLAB_MODE_FILE="$TMP_ROOT/glab-mode"
+export PATH="$TMP_ROOT/bin:$PATH"
+cat > "$TMP_ROOT/bin/glab" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+from urllib.parse import parse_qs, urlsplit
+
+args = sys.argv[1:]
+if len(args) < 4 or args[0] != "api" or args[2:4] != ["--hostname", "lsg-git.lbl.gov"]:
+    sys.exit(2)
+if Path(os.environ["MOCK_GLAB_MODE_FILE"]).exists():
+    sys.exit(1)
+url = urlsplit(args[1])
+path = url.path
+prefix = "projects/lblnet%2Flblnet_hostupdate/pipelines"
+fixture = json.loads(Path(os.environ["MOCK_GLAB_FIXTURE"]).read_text())
+records = fixture["pipelines"]
+if path == prefix:
+    query = parse_qs(url.query)
+    if (args[4:] != ["--paginate", "--output", "ndjson"]
+            or query.get("source") != ["merge_request_event"]
+            or query.get("status") != ["success"]
+            or query.get("per_page") != ["100"]
+            or not query.get("updated_after") or not query.get("updated_before")):
+        sys.exit(2)
+    for record in records:
+        print(json.dumps({"id": record["id"]}))
+elif path.startswith(prefix + "/") and path.endswith("/jobs"):
+    pipeline_id = path.removeprefix(prefix + "/").removesuffix("/jobs")
+    if (args[4:] != ["--paginate", "--output", "ndjson"]
+            or parse_qs(url.query) != {"per_page": ["100"], "include_retried": ["false"]}
+            or pipeline_id not in fixture["jobs"]):
+        sys.exit(2)
+    for name in fixture["jobs"][pipeline_id]:
+        print(json.dumps({"name": name}))
+elif path.startswith(prefix + "/") and len(args) == 4:
+    selected = [record for record in records if str(record["id"]) == path.removeprefix(prefix + "/")]
+    if len(selected) != 1:
+        sys.exit(2)
+    print(json.dumps(selected[0]))
+else:
+    sys.exit(2)
+PY
+chmod +x "$TMP_ROOT/bin/glab"
 PRE=2026-11-20
 POST=2026-11-22
 NOW=2026-11-30T12:00:00-08:00
@@ -127,6 +176,17 @@ jq -e --arg day "$POST" '
   and .coverage.signals.ships == {"status": "measured", "count": 8}
   and .coverage.signals.scouts == {"status": "measured", "count": 2}
   and .coverage.signals.decisions == {"status": "measured", "count": 2}
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time == {"status": "measured", "count": 10}
+  and .hostupdate_mr_pipeline_wall_time.summary == {"count": 10, "median_seconds": 55, "p90_seconds": 90}
+  and .hostupdate_mr_pipeline_wall_time.initial_summary == {"count": 9, "median_seconds": 50, "p90_seconds": 90}
+  and ([.hostupdate_mr_pipeline_wall_time.pipelines[].id] == [900001,900002,900003,900004,900005,900006,900007,900008,900009,900010])
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].wall_seconds == 10
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].created_at == "2026-11-22T07:59:50Z"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].finished_at == "2026-11-22T08:00:00Z"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].kind == "initial"
+  and .hostupdate_mr_pipeline_wall_time.pipelines[0].job_signals == ["test-unit-checkout"]
+  and .hostupdate_mr_pipeline_wall_time.pipelines[2].job_signals == ["build-lblnet_hostupdate"]
+  and .hostupdate_mr_pipeline_wall_time.pipelines[9].kind == "generated_followup"
   and .coverage.uncounted_decisions == {"count": 1, "reason": "answer time unknown (task still open)"}
   and ([.contributions.projects[].project] == ["alpha", "beta", "none recorded"])
   and .contributions.projects[0].ships == [
@@ -157,8 +217,20 @@ jq -e --arg day "$PRE" '
   .coverage.merge_time_source == "done-archive"
   and .coverage.ledger_duplicates_dropped == 0
   and .coverage.signals.ships == {"status": "measured", "count": 1}
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time == {"status": "measured", "count": 0}
   and .contributions.projects[0].ships == [{"task": "old-ship", "title": "Old ship", "evidence": "data/done-archive.md#old-ship", "merged_at": $day, "time_precision": "day"}]
 ' "$pre_record" >/dev/null || fail "pre-cutoff ships did not come from done-archive dates"
+
+touch "$MOCK_GLAB_MODE_FILE"
+collect "$POST" >/dev/null || fail "unreachable GitLab run failed"
+jq -e '
+  .hostupdate_mr_pipeline_wall_time.summary == {"count": null, "median_seconds": null, "p90_seconds": null}
+  and .hostupdate_mr_pipeline_wall_time.initial_summary == {"count": null, "median_seconds": null, "p90_seconds": null}
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time.status == "not_measurable"
+  and .coverage.signals.hostupdate_mr_pipeline_wall_time.count == null
+  and .coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].status == "not_measurable"
+' "$record" >/dev/null || fail "unreachable GitLab was counted as zero"
+rm "$MOCK_GLAB_MODE_FILE"
 
 cmp -s "$TMP_ROOT/backlog-saved.md" "$CASE_HOME/data/backlog.md" || fail "backlog changed"
 cmp -s "$TMP_ROOT/archive-saved.md" "$CASE_HOME/data/done-archive.md" || fail "archive changed"
