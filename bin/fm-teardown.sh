@@ -1799,10 +1799,16 @@ gitlab_mr_landing_opted_in() {
 # Is the worktree's PR merged for local work at <rev> contained in that PR?
 # Resolves the PR from the recorded pr= URL first, then from the branch name,
 # and asks the forge for both the PR state and head: a recorded Forgejo URL is
-# read through tea (fm_pr_forgejo_read_record), and everything else through
-# GitHub. Returns non-zero when the PR is not merged, the current work is not
-# contained in the PR head, no PR is found, or any forge read error occurs - the
-# caller then falls back to the content check.
+# read through tea (fm_pr_forgejo_read_record), a recorded GitLab merge request
+# through glab (fm_pr_gitlab_read_record, whose head is the MR's own head rather
+# than the squash or merge-train commit main received) when
+# gitlab_mr_landing_opted_in, and everything else through GitHub. Returns
+# non-zero when the PR is not merged, the current work is not contained in the
+# PR head, no PR is found, or any forge read error occurs - the caller then
+# falls back to the content check.
+# The GitLab merged-MR read is opt-in with the park-on-review flags
+# (bin/fm-park.sh, docs/configuration.md "Park on review"); without either a
+# GitLab MR goes through the GitHub read like any other target.
 pr_is_merged() {  # <branch> <rev>
   local branch=$1 rev=$2 target view state remainder head resolved_url current landed=0
   if [ -n "$PR_URL" ]; then
