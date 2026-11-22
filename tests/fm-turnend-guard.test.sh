@@ -2145,6 +2145,7 @@ assert_autoarm_commits_attended_alarm_on_exhausted_continuation() {
   # has finished. With a fixed sleep a slow guard on a loaded host found the
   # auto-arm already inside its alarm commit holding the budget lock, so its
   # single-attempt charge was skipped and the budget never exhausted.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the fixture arm shell expands these
   local hold_claim='w=0; while [ ! -e "$FM_HOME/guard-done" ] && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done'
   case "$variant" in
     arm|alarm-signal)
