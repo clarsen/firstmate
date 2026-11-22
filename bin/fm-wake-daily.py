@@ -32,7 +32,7 @@ LOCAL_NOTE = re.compile(r"(?:^|\s)local main$")
 KIND = re.compile(r"\(kind: ([^)]+)\)")
 PROJECT = re.compile(r"\(repo: ([^)]+)\)")
 BLOCKED_BY = re.compile(r"\bblocked-by:\s*([A-Za-z0-9._-]+)")
-ORIGIN = re.compile(r"^\s*(?:Captain hold origin|Origin|Follow-up origin):\s*([A-Za-z0-9._-]+)\s*$", re.I)
+ORIGIN = re.compile(r"^\s*Captain hold origin:\s*([A-Za-z0-9._-]+)\s*$")
 REFERENCE = re.compile(r"\b(story|epic)\s+([0-9]+(?:[.-][0-9A-Za-z]+)*)\b", re.I)
 REPORT_PATH = re.compile(r"data/([A-Za-z0-9._-]+)/report\.md\b")
 DELIVERY_URL = re.compile(r"^\s*(?:merge|pull) request\s+(https?://\S+)", re.I)
@@ -186,7 +186,7 @@ def local_day(epoch):
 
 def task_family(task, tasks):
     parts = task.split("-")
-    for length in range(len(parts), 1, -1):
+    for length in range(2, len(parts) + 1):
         prefix = "-".join(parts[:length])
         members = [other for other in tasks if other == prefix or other.startswith(prefix + "-")]
         if len(members) > 1 and (length >= 3 or prefix in tasks):

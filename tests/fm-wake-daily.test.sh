@@ -201,7 +201,9 @@ cat > "$LINK_HOME/data/backlog.md" <<'EOF'
 - [x] flow-scout - Scout deployment data/flow-scout/report.md (repo: example) (kind: scout) (reported 2026-10-12)
 - [x] flow-decision - Choose deployment flow (repo: example) (kind: captain) (done 2026-10-13)
   Captain hold origin: flow-scout
-  Origin: flow-scout
+- [x] nest-ci-speed-impl - Ship nested impl (repo: example) (kind: ship) (done 2026-10-03)
+- [x] nest-ci-speed-impl-fix - Fix nested impl (repo: example) (kind: ship) (done 2026-10-03)
+- [x] nest-ci-speed-p5 - Ship nested P5 (repo: example) (kind: ship) (done 2026-10-03)
 EOF
 : > "$LINK_HOME/data/done-archive.md"
 cp "$LINK_HOME/data/backlog.md" "$TMP_ROOT/links-backlog-saved.md"
@@ -231,5 +233,12 @@ cmp -s "$TMP_ROOT/links-backlog-saved.md" "$LINK_HOME/data/backlog.md" || fail "
 collect 2026-10-13 "$LINK_HOME" >/dev/null || fail "origin fixture collection failed"
 jq -e '(.links.items[] | select(.id == "flow-decision") | .origin_tasks) == ["flow-scout"]' \
   "$LINK_HOME/data/wake/daily/2026-10-13.json" >/dev/null || fail "closed decision lost origin"
+collect 2026-10-03 "$LINK_HOME" >/dev/null || fail "nested family fixture collection failed"
+jq -e '
+  ([.links.items[] | select(.kind == "task") | .id_family] | unique) == ["nest-ci-speed"]
+  and (.links.items[] | select(.id == "nest-ci-speed-impl") | .family_tasks) == ["nest-ci-speed-impl-fix", "nest-ci-speed-p5"]
+  and (.links.items[] | select(.id == "nest-ci-speed-impl-fix") | .family_tasks) == ["nest-ci-speed-impl", "nest-ci-speed-p5"]
+  and (.links.items[] | select(.id == "nest-ci-speed-p5") | .family_tasks) == ["nest-ci-speed-impl", "nest-ci-speed-impl-fix"]
+' "$LINK_HOME/data/wake/daily/2026-10-03.json" >/dev/null || fail "nested family links were not symmetric"
 
 printf 'ok: Wake daily collector\n'
