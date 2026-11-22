@@ -2344,7 +2344,7 @@ make_finished_stale_case() {  # <name> <ship|scout>
       || fail "[$name] could not register the fixture merge poll"
   fi
   printf '%s' "$(seen_sig "$state/$name.status")" > "$state/.seen-${name}_status"
-  key=$(printf '%s' "test:fm-$name" | tr ':/.' '___')
+  key=$(watch_window_key "test:fm-$name")
   printf '%s' "$(hash_text 'idle, finished')" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   touch "$state/.last-check"
@@ -2365,7 +2365,7 @@ test_finished_handed_on_stale_absorbed() {
   for spec in ship-merge-watched:ship scout-report-written:scout; do
     name=${spec%%:*}; kind=${spec#*:}
     dir=$(make_finished_stale_case "$name" "$kind"); state="$dir/state"
-    key=$(printf '%s' "test:fm-$name" | tr ':/.' '___')
+    key=$(watch_window_key "test:fm-$name")
     finished_stale_watch "$dir" "$name" claude FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
     pid=$!
     # The first sighting, then two fresh pane hashes (a ticking idle display):
