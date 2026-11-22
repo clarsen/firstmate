@@ -56,7 +56,7 @@ if path == prefix:
     for record in records:
         updated = stamp(record["updated_at"])
         if updated > after and (before is None or updated < before):
-            print(json.dumps({"id": record["id"]}))
+            print(json.dumps({"id": record["id"], "created_at": record["created_at"]}))
 elif path.startswith(project + "/merge_requests/") and len(args) == 4:
     iid = path.removeprefix(project + "/merge_requests/")
     if iid not in fixture["merge_requests"]:
@@ -72,7 +72,7 @@ elif path.startswith(prefix + "/") and path.endswith("/jobs"):
         print(json.dumps({"name": name}))
 elif path.startswith(prefix + "/") and len(args) == 4:
     selected = [record for record in records if str(record["id"]) == path.removeprefix(prefix + "/")]
-    if len(selected) != 1:
+    if len(selected) != 1 or selected[0].get("list_only"):
         sys.exit(2)
     print(json.dumps(selected[0]))
 else:

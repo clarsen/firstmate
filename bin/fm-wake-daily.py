@@ -538,6 +538,7 @@ def pipeline_section(pipelines, summarize):
 
 def hostupdate_pipeline_wall_time(day, coverage):
     start = datetime.combine(date.fromisoformat(day), datetime.min.time(), PACIFIC)
+    end = start + timedelta(days=1)
     query = urlencode({
         "source": "merge_request_event", "status": "success", "per_page": 100,
         "updated_after": (start - timedelta(microseconds=1)).isoformat(),
@@ -552,7 +553,7 @@ def hostupdate_pipeline_wall_time(day, coverage):
             if not isinstance(entry, dict) or type(entry.get("id")) is not int:
                 raise ValueError("invalid pipeline list entry")
             pipeline_id = entry["id"]
-            if pipeline_id in seen:
+            if pipeline_id in seen or gitlab_time(entry.get("created_at")) >= end:
                 continue
             seen.add(pipeline_id)
             detail = gitlab_json(f"{HOSTUPDATE_API}/{pipeline_id}")

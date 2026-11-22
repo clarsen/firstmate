@@ -129,6 +129,17 @@
       "finished_at": "2026-11-23T07:59:00Z",
       "updated_at": "2026-11-24T18:00:00Z",
       "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900013"
+    },
+    {
+      "id": 900014,
+      "status": "success",
+      "source": "merge_request_event",
+      "ref": "refs/merge-requests/114/head",
+      "created_at": "2026-11-23T08:00:00Z",
+      "finished_at": "2026-11-23T08:00:30Z",
+      "updated_at": "2026-11-23T08:00:30Z",
+      "web_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/900014",
+      "list_only": true
     }
   ],
   "merge_requests": {

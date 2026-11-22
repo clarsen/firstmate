@@ -50,7 +50,7 @@ The `kind` is `generated_followup` when the pipeline has a `generated-followup-v
 `change_class` is `image_build` when `build-lblnet_hostupdate` ran, otherwise `full_unit` when `test-unit-checkout` ran, otherwise `other`.
 `summary` gives the count, median, nearest-rank 90th percentile, and share under 60 seconds for all listed pipelines; `initial_summary` gives those figures for initial pipelines only, and `initial_by_change_class` gives them for initial pipelines of each change class.
 Summaries use seconds and return null median, percentile, and share when their count is zero.
-The collector uses read-only GitLab API calls through `glab` against `lsg-git.lbl.gov`, listing successful merge request pipelines updated since the start of the requested day, so a pipeline whose record was updated on a later day still counts on its finish day.
+The collector uses read-only GitLab API calls through `glab` against `lsg-git.lbl.gov`, listing successful merge request pipelines updated since the start of the requested day, so a pipeline whose record was updated on a later day still counts on its finish day; listed pipelines created after the requested day are skipped without further requests.
 If the forge is unreachable or its response is invalid, the section has no rows, summary values are null, and `coverage.signals.hostupdate_mr_pipeline_wall_time` is `not_measurable` rather than a zero count; its `error` names the failed check and `pipeline_id` names the pipeline being read, or is null.
 Other Wake signal sections are absent until their stories add them.
 
