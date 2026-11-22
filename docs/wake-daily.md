@@ -20,7 +20,7 @@ These are contributions to assess in a retrospective, not claims that a change i
 `coverage.signals` gives each contribution count, or `not_measurable` with the missing sources and an observed partial count.
 `coverage.ledger_duplicates_dropped` counts repeated ledger records timestamped on this day and repeated merge outcomes removed from this record.
 Before 2026-11-21, done-archive and backlog dates are authoritative for ships, each at day precision, and the ledger is not read.
-From 2026-11-21 onward, the ledger is a required input and its `task.merged` time is preferred; `coverage.merge_time_source` names which applies.
+From 2026-11-21 onward, the ledger is a required input and its `task.merged` time is preferred over a backlog or archive row for the same task, counting each task once; ledger merges stamped before 2026-11-21 are ignored; `coverage.merge_time_source` names which applies.
 Backlog decision blocks have no answer timestamp, so a decision counts on its task's Done date with `date_source` marking that close date.
 Answered decisions on still-open tasks count on no day; `coverage.uncounted_decisions` reports how many, with the reason "answer time unknown (task still open)".
 Other Wake signal sections are absent until their stories add them.

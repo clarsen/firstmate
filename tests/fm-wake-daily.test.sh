@@ -19,6 +19,8 @@ epoch() {
 POST_NOON=$(epoch "${POST}T12:00:00")
 NEXT_NOON=$(epoch "2026-11-23T12:00:00")
 PRE_NOON=$(epoch "${PRE}T12:00:00")
+PRE_LATE=$(epoch "${PRE}T23:50:00")
+POST_LATER=$((POST_NOON + 60))
 
 # Run the real CLI entry point with its clock pinned to NOW so fixed days on both
 # sides of the 2026-11-21 ledger cutoff count as completed.
@@ -68,6 +70,9 @@ cat > "$CASE_HOME/data/done-archive.md" <<EOF
 - [x] scout-a - Scout title data/scout-a/report.md (repo: alpha) (kind: scout) (reported $POST)
 - [x] scout-b - Scout without path (repo: alpha) (kind: scout) (reported $POST)
 - [x] unknown-a - Unknown kind title (done $POST)
+- [x] unknown-b - Unknown merged title (done $POST)
+- [x] ship-c - Reordered merge ship https://example.org/a/pull/3 (repo: alpha) (kind: ship) (merged $POST)
+- [x] late-ship - Merged before midnight, booked after (repo: beta) (kind: ship) (merged $POST)
 
 ## Archived $PRE
 - [x] old-ship - Old ship (repo: alpha) (kind: ship) (merged $PRE)
@@ -81,6 +86,10 @@ cat > "$CASE_HOME/state/fleet-ledger.jsonl" <<EOF
 {"v":1,"ts":$POST_NOON,"event":"task.merged","task":"ship-a","via":"pr","pr":"https://example.org/a/pull/1"}
 {"v":1,"ts":$NEXT_NOON,"event":"task.dispatched","task":"later","kind":"ship","project":"alpha"}
 {"v":1,"ts":$NEXT_NOON,"event":"task.dispatched","task":"later","kind":"ship","project":"alpha"}
+{"v":1,"ts":$POST_LATER,"event":"task.merged","task":"ship-c","via":"pr","pr":"https://example.org/a/pull/3"}
+{"v":1,"ts":$POST_NOON,"event":"task.merged","task":"ship-c","via":"pr","pr":"https://example.org/a/pull/3"}
+{"v":1,"ts":$POST_NOON,"event":"task.merged","task":"unknown-b","via":"direct"}
+{"v":1,"ts":$PRE_LATE,"event":"task.merged","task":"late-ship","via":"direct"}
 EOF
 cat > "$CASE_HOME/data/captain-questions.json" <<EOF
 {"schema":"fm-captain-questions.v1","questions":[
@@ -99,20 +108,25 @@ record="$CASE_HOME/data/wake/daily/$POST.json"
 jq -e --arg day "$POST" '
   .schema == "fm-wake-daily.v1"
   and .day == $day
-  and .coverage.ledger_duplicates_dropped == 2
+  and .coverage.ledger_duplicates_dropped == 3
   and .coverage.merge_time_source == "fleet-ledger"
-  and .coverage.signals.ships == {"status": "measured", "count": 2}
+  and .coverage.signals.ships == {"status": "measured", "count": 5}
   and .coverage.signals.scouts == {"status": "measured", "count": 2}
   and .coverage.signals.decisions == {"status": "measured", "count": 2}
   and .coverage.uncounted_decisions == {"count": 1, "reason": "answer time unknown (task still open)"}
   and ([.contributions.projects[].project] == ["alpha", "beta", "none recorded"])
-  and .contributions.projects[0].ships == [{"task": "ship-a", "title": "Ship title with exact words", "evidence": "https://example.org/a/pull/1", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]
+  and .contributions.projects[0].ships == [
+    {"task": "ship-a", "title": "Ship title with exact words", "evidence": "https://example.org/a/pull/1", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"},
+    {"task": "ship-c", "title": "Reordered merge ship", "evidence": "https://example.org/a/pull/3", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]
   and .contributions.projects[0].scouts[0].evidence == "data/scout-a/report.md"
   and .contributions.projects[0].scouts[1] == {"task": "scout-b", "title": "Scout without path", "evidence": "data/scout-b/report.md", "reported_on": $day}
   and .contributions.projects[0].decisions == [{"task": "ship-a", "title": "Ship title with exact words", "question": "Which route?", "answer": "Use the route, exactly.", "evidence": "data/backlog.md#ship-a:decision:1", "closed_on": $day, "time_precision": "day", "date_source": "task close date, not answer time"}]
-  and .contributions.projects[1].ships == [{"task": "ship-b", "title": "Backlog only ship", "evidence": "data/backlog.md#ship-b", "merged_at": $day, "time_precision": "day"}]
+  and .contributions.projects[1].ships == [
+    {"task": "late-ship", "title": "Merged before midnight, booked after", "evidence": "data/done-archive.md#late-ship", "merged_at": $day, "time_precision": "day"},
+    {"task": "ship-b", "title": "Backlog only ship", "evidence": "data/backlog.md#ship-b", "merged_at": $day, "time_precision": "day"}]
+  and .contributions.projects[2].ships == [{"task": "unknown-b", "title": "Unknown merged title", "evidence": "state/fleet-ledger.jsonl#task.merged:unknown-b", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]
   and .contributions.projects[2].decisions == [{"task": "q-20261122-0000abcd", "title": "Ship the route today?", "question": "Ship the route today?", "answer": "Yes, ship it today.", "evidence": "data/captain-questions.json#q-20261122-0000abcd", "closed_at": "2026-11-22T18:30:00Z", "time_precision": "second", "date_source": "captain close time"}]
-  and .contributions.projects[2].unclassified[0].title == "Unknown kind title"
+  and ([.contributions.projects[2].unclassified[].task] == ["unknown-a"])
 ' "$record" >/dev/null || fail "outcomes lost evidence, titles, decision words, or per-day coverage"
 
 cp "$record" "$TMP_ROOT/first.json"
@@ -141,7 +155,7 @@ jq -e '.coverage.signals.ships == {"status": "measured", "count": 1}' "$pre_reco
 
 { cat "$TMP_ROOT/ledger-saved.jsonl"; printf '{not json\n'; } > "$CASE_HOME/state/fleet-ledger.jsonl"
 collect "$POST" >/dev/null || fail "invalid-ledger run failed"
-jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "invalid JSON line 9"' "$record" >/dev/null || fail "invalid ledger reported as measured"
+jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "invalid JSON line 13"' "$record" >/dev/null || fail "invalid ledger reported as measured"
 
 if python3 "$ROOT/bin/fm-wake-daily.py" "$TODAY" --home "$CASE_HOME" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"; then
   fail "incomplete day was accepted"

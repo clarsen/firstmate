@@ -197,15 +197,18 @@ def build(day, home):
     for event in ledger:
         if event.get("event") != "task.merged" or not isinstance(event.get("task"), str):
             continue
+        event_day = local_day(event.get("ts"))
+        if event_day is None or event_day < LEDGER_CUTOFF:
+            continue
         ledger_merged_tasks.add(event["task"])
-        if local_day(event.get("ts")) != day:
+        if event_day != day:
             continue
         task = event["task"]
         old = merges.get(task)
+        if old is not None:
+            dropped += 1
         if old is None or event["ts"] < old["ts"]:
             merges[task] = event
-        else:
-            dropped += 1
 
     for task, event in sorted(merges.items()):
         row = day_rows.get(task) or by_task.get(task)
@@ -221,7 +224,7 @@ def build(day, home):
         section(project, "ships").append(item)
 
     for row in sorted(day_rows.values(), key=lambda item: item["task"]):
-        if row["kind"] is None:
+        if row["kind"] is None and row["task"] not in ledger_merged_tasks:
             section(row["project"], "unclassified").append({
                 "task": row["task"], "title": row["title"],
                 "evidence": row["url"] or row["report"] or f"data/{row['source']}.md#{row['task']}",
