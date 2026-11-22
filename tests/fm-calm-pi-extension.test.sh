@@ -588,6 +588,8 @@ function makeHost(session) {
     // Pi reads its session through runtimeHost, which a session replacement swaps.
     runtimeHost: { session },
     compactionQueuedMessages: [],
+    // Pi 1.6 initializes this on constructed hosts; Object.create skips field initializers.
+    pendingBashComponents: [],
     statuses: [],
     warnings: [],
     editorText: "",
