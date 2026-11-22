@@ -24,6 +24,7 @@ LEDGER_CUTOFF = "2026-11-21"
 ROW = re.compile(r"^- \[[ xX]\] ([A-Za-z0-9._-]+) - (.*)$")
 META = re.compile(r"\s+\((?:repo|kind|priority|hold|hold-kind|hold-until): [^)]*\)$|\s+\((?:since|merged|reported|done) \d{4}-\d{2}-\d{2}\)$")
 URL = re.compile(r"https?://[^\s)<>]+")
+PR_URL = re.compile(r"https?://[^\s)<>]+/(?:pull|merge_requests)/\d+[^\s)<>]*")
 REPORT = re.compile(r"(?:^|\s)(data/[^\s)]+/report\.md)(?:\s|$)")
 DONE = re.compile(r"\((merged|reported|done) (\d{4}-\d{2}-\d{2})\)")
 HOLD_KIND = re.compile(r"\(hold-kind: ([^)]+)\)")
@@ -87,6 +88,7 @@ def parse_rows(text, source):
                 "hold_kind": hold_kind_match.group(1) if hold_kind_match else None,
                 "local_note": local_note,
                 "url": (URL.search(raw).group(0) if URL.search(raw) else None),
+                "pr_url": (PR_URL.search(raw).group(0) if PR_URL.search(raw) else None),
                 "report": report.group(1) if report else None,
                 "source": source,
                 "completed": source == "done-archive" or section == "Done",
@@ -114,8 +116,8 @@ def ship_delivered(row):
     if row["hold_kind"] == "captain" or row["verb"] not in ("merged", "done"):
         return False
     local = has_local_note(row)
-    artifact = row["url"] if row["verb"] == "merged" else local
-    return bool(artifact) or (row["url"] is None and row["report"] is None and not local)
+    artifact = row["pr_url"] if row["verb"] == "merged" else local
+    return bool(artifact) or (row["pr_url"] is None and row["report"] is None and not local)
 
 
 def decision_pairs(row):
@@ -238,7 +240,7 @@ def build(day, home):
     for task, event in sorted(merges.items()):
         row = day_rows.get(task) or by_task.get(task)
         project = row["project"] if row else "none recorded"
-        url = event.get("pr") or (row["url"] if row else None)
+        url = event.get("pr") or (row["pr_url"] if row else None)
         item = {
             "task": task,
             "title": row["title"] if row else task,
@@ -258,7 +260,7 @@ def build(day, home):
         if row["kind"] == "ship" and row["task"] not in ledger_merged_tasks and ship_delivered(row):
             section(row["project"], "ships").append({
                 "task": row["task"], "title": row["title"],
-                "evidence": row["url"] or f"data/{row['source']}.md#{row['task']}",
+                "evidence": row["pr_url"] or f"data/{row['source']}.md#{row['task']}",
                 "merged_at": day, "time_precision": "day",
             })
         report = row["report"] or f"data/{row['task']}/report.md"

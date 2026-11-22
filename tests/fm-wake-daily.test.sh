@@ -77,6 +77,12 @@ cat > "$CASE_HOME/data/done-archive.md" <<EOF
 - [x] reported-ship - Reported not merged (repo: alpha) (kind: ship) (reported $POST)
 - [x] held-ship - Captain kept this https://example.org/a/pull/6 (repo: alpha) (kind: ship) (merged $POST) (hold-kind: captain)
 - [x] local-ship - Landed locally - local main (repo: beta) (kind: ship) (done $POST)
+- [x] issue-ship - Fix linked issue https://example.org/a/issues/9 (repo: beta) (kind: ship) (done $POST)
+- [x] local-body-ship - Landed locally by teardown (repo: beta) (kind: ship) (done $POST)
+  local main
+- [x] local-held-ship - Captain resolution note https://example.org/a/pull/7 (repo: beta) (kind: ship) (done $POST)
+  Resolution recorded by fm-captain-hold.
+  local main
 - [x] scout-none - Scout with no report anywhere (repo: alpha) (kind: scout) (reported $POST)
 
 ## Archived $PRE
@@ -118,7 +124,7 @@ jq -e --arg day "$POST" '
   and .day == $day
   and .coverage.ledger_duplicates_dropped == 3
   and .coverage.merge_time_source == "fleet-ledger"
-  and .coverage.signals.ships == {"status": "measured", "count": 6}
+  and .coverage.signals.ships == {"status": "measured", "count": 8}
   and .coverage.signals.scouts == {"status": "measured", "count": 2}
   and .coverage.signals.decisions == {"status": "measured", "count": 2}
   and .coverage.uncounted_decisions == {"count": 1, "reason": "answer time unknown (task still open)"}
@@ -131,7 +137,9 @@ jq -e --arg day "$POST" '
   and .contributions.projects[0].scouts[1] == {"task": "scout-b", "title": "Scout without path", "evidence": "data/scout-b/report.md", "reported_on": $day}
   and .contributions.projects[0].decisions == [{"task": "ship-a", "title": "Ship title with exact words", "question": "Which route?", "answer": "Use the route, exactly.", "evidence": "data/backlog.md#ship-a:decision:1", "closed_on": $day, "time_precision": "day", "date_source": "task close date, not answer time"}]
   and .contributions.projects[1].ships == [
+    {"task": "issue-ship", "title": "Fix linked issue", "evidence": "data/done-archive.md#issue-ship", "merged_at": $day, "time_precision": "day"},
     {"task": "late-ship", "title": "Merged before midnight, booked after", "evidence": "data/done-archive.md#late-ship", "merged_at": $day, "time_precision": "day"},
+    {"task": "local-body-ship", "title": "Landed locally by teardown", "evidence": "data/done-archive.md#local-body-ship", "merged_at": $day, "time_precision": "day"},
     {"task": "local-ship", "title": "Landed locally - local main", "evidence": "data/done-archive.md#local-ship", "merged_at": $day, "time_precision": "day"},
     {"task": "ship-b", "title": "Backlog only ship", "evidence": "data/backlog.md#ship-b", "merged_at": $day, "time_precision": "day"}]
   and .contributions.projects[2].ships == [{"task": "unknown-b", "title": "Unknown merged title", "evidence": "state/fleet-ledger.jsonl#task.merged:unknown-b", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]

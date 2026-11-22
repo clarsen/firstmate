@@ -12,7 +12,7 @@ The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, and `cover
 `contributions.projects` groups ships, scouts, and closed decisions by recorded project, using `none recorded` when a project was not recorded.
 Rows with no recorded kind appear in `unclassified` under their recorded project or `none recorded`.
 A ship includes its task, title, evidence, merge time, and time precision; a backlog-only merge has day precision.
-A backlog or archive ship row counts only when it is a delivery under the Recently Landed rule in `bin/fm-landed-lib.sh`: `(merged D)` with its PR or MR URL, `(done D)` with a `local main` note, or a row with no artifact; a `(reported D)` row, a closed row whose artifact does not match its verb, and a row retaining `hold-kind: captain` are not merges.
+A backlog or archive ship row counts only when it is a delivery under the Recently Landed rule in `bin/fm-landed-lib.sh`: `(merged D)` with its PR or MR URL, `(done D)` with a `local main` note in its title or as its last body line (unless the body records an `fm-captain-hold` or `fm-decision-hold` resolution), or a row with no PR or MR URL, report path, or `local main` note; other links such as issue URLs are not artifacts; a `(reported D)` row, a closed row whose artifact does not match its verb, and a row retaining `hold-kind: captain` are not merges.
 A scout includes its task, title, report path, and reported day; a scout with no recorded report path counts only when `data/<task>/report.md` exists.
 A decision includes its task, title, exact recorded question and answer, evidence, and closing day or time.
 These are contributions to assess in a retrospective, not claims that a change is active or valuable in production.
