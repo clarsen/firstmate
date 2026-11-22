@@ -1,0 +1,3 @@
+fm_backend_tmux_paste_submit rc=0
+marker created after 5s: Claude received the pasted text and its Enter from one tmux command
+leftover fm-paste buffers: 0

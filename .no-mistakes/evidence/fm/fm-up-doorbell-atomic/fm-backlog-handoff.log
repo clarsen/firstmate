@@ -1,0 +1,5 @@
+ok - a routed handoff wakes once and a successful rerun stays idempotent
+ok - a cwd .tasks.toml for another backend does not redirect a markdown handoff
+ok - a failed receiver wake is loud and retries from an already-present handoff
+ok - a failed advisory doorbell leaves the inbox delivery successful and idempotent
+not ok - reconciliation-race handoff never reached backend delivery

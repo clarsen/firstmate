@@ -1,0 +1,7 @@
+ok - Claude 2.1.330 (Claude Code) on tmux: ordered doorbell submitted and acknowledged
+ok - Claude 2.1.330 (Claude Code) on tmux: held doorbell submitted without retyping
+ok - Claude 2.1.330 (Claude Code) on tmux: busy-turn doorbell submitted and acknowledged
+ok - Claude 2.1.330 (Claude Code) on herdr: ordered doorbell submitted and acknowledged
+ok - Claude 2.1.330 (Claude Code) on herdr: held doorbell submitted without retyping
+ok - Claude 2.1.330 (Claude Code) on herdr: busy-turn doorbell submitted and acknowledged
+ok - Claude 2.1.330 (Claude Code) on Herdr 0.9.3: both backend regressions passed

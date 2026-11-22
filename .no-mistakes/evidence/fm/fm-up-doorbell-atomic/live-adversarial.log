@@ -1,0 +1,7 @@
+ok - Claude 2.1.330 (Claude Code) on tmux: ring skipped (rc=1) and left a foreign draft untouched and unsubmitted
+# tmux has no native busy_state (always unknown); busy-held skip applies only to Herdr
+ok - Claude 2.1.330 (Claude Code) on herdr: ring skipped (rc=1) and left a foreign draft untouched and unsubmitted
+# herdr busy_state=busy
+ok - Claude 2.1.330 (Claude Code) on herdr: held doorbell on busy agent skipped (rc=1)
+ok - Claude 2.1.330 (Claude Code) on herdr: watcher re-ring after idle submitted the held doorbell and it was acknowledged
+ok - Claude 2.1.330 (Claude Code) on Herdr 0.9.3: both backend regressions passed

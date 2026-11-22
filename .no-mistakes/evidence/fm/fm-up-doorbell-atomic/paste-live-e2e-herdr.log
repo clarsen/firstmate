@@ -1,0 +1,3 @@
+ok - Claude 2.1.330 (Claude Code) on herdr: ordered doorbell submitted and acknowledged
+not ok - herdr could not submit the held doorbell
+rc=1

@@ -1,0 +1,5 @@
+
+composer state: unknown
+not ok - Claude 2.1.330 (Claude Code) on tmux did not reach an empty composer
+no server running on /tmp/fml.GY7pJE/tmux-20690/fm-inbox-paste
+rc=1
