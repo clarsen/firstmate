@@ -15,7 +15,9 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
 
@@ -36,6 +38,9 @@ ORIGIN = re.compile(r"^\s*Captain hold origin:\s*([A-Za-z0-9._-]+)\s*$")
 REFERENCE = re.compile(r"\b(story|epic)\s+([0-9]+(?:[.-][0-9A-Za-z]+)*)\b", re.I)
 REPORT_PATH = re.compile(r"data/([A-Za-z0-9._-]+)/report\.md\b")
 DELIVERY_URL = re.compile(r"^\s*(?:merge|pull) request\s+(https?://\S+)", re.I)
+GITLAB_MR = re.compile(r"^https://([^/]+)/(.+)/-/merge_requests/(\d+)$")
+GITHUB_PR = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)$")
+REVERT = re.compile(r"^Revert\s+", re.IGNORECASE)
 
 
 def read_text(path, coverage):
@@ -231,6 +236,167 @@ def link_fields(task, row, day_tasks, by_task, day):
     }
 
 
+def timestamp_day(value):
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(PACIFIC).date().isoformat()
+    except (AttributeError, ValueError):
+        return None
+
+
+def utc_time(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def read_json_command(args):
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+        if result.returncode:
+            return None
+        return json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError):
+        return None
+
+
+def task_prs(home, rows, ledger, coverage):
+    """Find task delivery URLs, without treating references in notes as task PRs."""
+    found = {}
+    for row in rows:
+        if row["kind"] == "ship" and row["pr_url"]:
+            found.setdefault(row["pr_url"].rstrip("/"), row["task"])
+    for event in ledger:
+        url, task = event.get("pr"), event.get("task")
+        if isinstance(url, str) and isinstance(task, str) and PR_URL.fullmatch(url.rstrip("/")):
+            found.setdefault(url.rstrip("/"), task)
+    state = home / "state"
+    try:
+        metas = sorted(state.glob("*.meta"))
+    except OSError:
+        metas = []
+    for path in metas:
+        content = read_text(path, coverage)
+        if content is None:
+            continue
+        task = path.stem
+        for line in content.splitlines():
+            if not re.match(r"^(?:pr|anchor_pr|member\.[^.]+\.pr)=", line):
+                continue
+            url = line.split("=", 1)[1].rstrip("/")
+            if PR_URL.fullmatch(url):
+                found.setdefault(url, task)
+    return found
+
+
+def clone_reverts(day, home, coverage):
+    root = home / "projects"
+    try:
+        clones = sorted(path for path in root.iterdir() if path.is_dir() and (path / ".git").exists())
+    except OSError:
+        coverage[str(root)] = {"status": "not_measurable", "reason": "unreadable or absent"}
+        return []
+    coverage[str(root)] = {"status": "readable", "clones": len(clones)}
+    found = []
+    for clone in clones:
+        source = str(clone)
+        start = datetime.fromisoformat(f"{day}T00:00:00").replace(tzinfo=PACIFIC)
+        end = datetime.fromordinal(start.date().toordinal() + 1).replace(tzinfo=PACIFIC)
+        try:
+            result = subprocess.run(["git", "-C", source, "log", "--all", "--format=%H%x09%cI%x09%s", "--grep=^Revert ",
+                                     f"--since={start.isoformat()}", f"--until={end.isoformat()}"],
+                                    capture_output=True, text=True, timeout=30, check=False)
+            remote = subprocess.run(["git", "-C", source, "remote", "get-url", "origin"],
+                                    capture_output=True, text=True, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            coverage[source] = {"status": "not_measurable", "reason": "git read failed"}
+            continue
+        if result.returncode or remote.returncode:
+            coverage[source] = {"status": "not_measurable", "reason": "git read failed"}
+            continue
+        coverage[source] = {"status": "readable"}
+        base = remote.stdout.strip().removesuffix(".git")
+        if base.startswith("git@") and ":" in base:
+            host, path = base[4:].split(":", 1)
+            base = f"https://{host}/{path}"
+        parsed = urlsplit(base)
+        base = f"https://{parsed.hostname}{':' + str(parsed.port) if parsed.port else ''}{parsed.path}" if parsed.scheme == "https" and parsed.hostname else None
+        seen = set()
+        for line in result.stdout.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            sha, when, subject = parts
+            if sha in seen or timestamp_day(when) != day or not REVERT.match(subject):
+                continue
+            seen.add(sha)
+            url = f"{base}/-/commit/{sha}" if base and "lsg-git.lbl.gov" in base else f"{base}/commit/{sha}" if base else None
+            found.append({"project": clone.name, "commit": sha, "subject": subject,
+                          "at": utc_time(when), "evidence": url or f"projects/{clone.name}@{sha}"})
+    return sorted(found, key=lambda item: (item["at"], item["project"], item["commit"]))
+
+
+def forge_rework(day, home, rows, ledger, coverage):
+    closed, failed = [], []
+    for url, task in sorted(task_prs(home, rows, ledger, coverage).items()):
+        source = f"forge:{url}"
+        gitlab = GITLAB_MR.fullmatch(url)
+        github = GITHUB_PR.fullmatch(url)
+        if gitlab:
+            host, project, number = gitlab.groups()
+            api = f"projects/{quote(project, safe='')}/merge_requests/{number}"
+            detail = read_json_command(["glab", "api", "--hostname", host, api])
+            pipelines = read_json_command(["glab", "api", "--hostname", host, f"{api}/pipelines?per_page=100"])
+            if not isinstance(detail, dict) or not isinstance(pipelines, list):
+                coverage[source] = {"status": "not_measurable", "reason": "forge unreachable or invalid response"}
+                continue
+            if len(pipelines) == 100:
+                coverage[source] = {"status": "not_measurable", "reason": "pipeline page limit reached"}
+                continue
+            coverage[source] = {"status": "readable"}
+            if detail.get("state") == "closed" and not detail.get("merged_at") and timestamp_day(detail.get("closed_at")) == day:
+                closed.append({"task": task, "url": url, "at": utc_time(detail["closed_at"])})
+            for pipeline in pipelines:
+                when = pipeline.get("finished_at") or pipeline.get("updated_at")
+                if pipeline.get("status") != "failed" or timestamp_day(when) != day:
+                    continue
+                pipeline_url = pipeline.get("web_url")
+                if not pipeline_url:
+                    coverage[source] = {"status": "not_measurable", "reason": "pipeline URL absent"}
+                    continue
+                failed.append({"task": task, "url": pipeline_url, "pr_url": url, "at": utc_time(when),
+                               "time_source": "finished_at" if pipeline.get("finished_at") else "updated_at"})
+        elif github:
+            owner, repo, number = github.groups()
+            api = f"/repos/{owner}/{repo}"
+            detail = read_json_command(["gh", "api", f"{api}/pulls/{number}"])
+            commits = read_json_command(["gh", "api", f"{api}/pulls/{number}/commits?per_page=100"])
+            if not isinstance(detail, dict) or not isinstance(commits, list) or len(commits) == 100:
+                coverage[source] = {"status": "not_measurable", "reason": "forge unreachable or commit page limit reached"}
+                continue
+            runs = []
+            for commit in commits:
+                sha = commit.get("sha")
+                response = read_json_command(["gh", "api", f"{api}/actions/runs?head_sha={sha}&per_page=100"]) if sha else None
+                if not isinstance(response, dict) or not isinstance(response.get("workflow_runs"), list) or response.get("total_count", 0) > 100:
+                    runs = None
+                    break
+                runs.extend(response["workflow_runs"])
+            if runs is None:
+                coverage[source] = {"status": "not_measurable", "reason": "forge unreachable or run page limit reached"}
+                continue
+            coverage[source] = {"status": "readable"}
+            if detail.get("state") == "closed" and not detail.get("merged_at") and timestamp_day(detail.get("closed_at")) == day:
+                closed.append({"task": task, "url": url, "at": utc_time(detail["closed_at"])})
+            for run in runs:
+                when = run.get("updated_at")
+                if run.get("conclusion") == "failure" and run.get("event") in ("pull_request", "pull_request_target") and timestamp_day(when) == day and run.get("html_url"):
+                    failed.append({"task": task, "url": run["html_url"], "pr_url": url, "at": utc_time(when),
+                                   "time_source": "updated_at"})
+        else:
+            coverage[source] = {"status": "not_measurable", "reason": "unsupported forge URL"}
+    closed = sorted({item["url"]: item for item in closed}.values(), key=lambda item: (item["at"], item["url"]))
+    failed = sorted({item["url"]: item for item in failed}.values(), key=lambda item: (item["at"], item["url"]))
+    return closed, failed
+
+
 def build(day, home):
     coverage = {}
     ledger_path = home / "state/fleet-ledger.jsonl"
@@ -243,6 +409,8 @@ def build(day, home):
         ledger, dropped = ledger_events(read_text(ledger_path, coverage), coverage, ledger_path, day)
     rows = parse_rows(read_text(backlog_path, coverage), "backlog")
     rows += parse_rows(read_text(archive_path, coverage), "done-archive")
+    reverts = clone_reverts(day, home, coverage)
+    closed_unmerged, failed_pipelines = forge_rework(day, home, rows, ledger, coverage)
     questions_text = read_text(questions_path, coverage)
     if questions_text is None and coverage[str(questions_path)]["reason"] == "absent":
         # The captain-question store defines an absent file as an empty store.
@@ -397,12 +565,31 @@ def build(day, home):
                               "reason": "missing or unreadable input", "inputs": missing}
         else:
             counts[signal] = {"status": "measured", "count": count}
+    rework = {"reverts": reverts, "closed_unmerged": closed_unmerged,
+              "failed_pipelines": failed_pipelines}
+    clone_missing = sorted(name for name, info in coverage.items()
+                           if (name == str(home / "projects") or name.startswith(str(home / "projects") + os.sep))
+                           and info["status"] != "readable")
+    forge_missing = sorted(name for name, info in coverage.items()
+                           if (name.startswith("forge:") or name.startswith(str(home / "state") + os.sep)
+                               or name in (str(backlog_path), str(archive_path)))
+                           and info["status"] != "readable")
+    if uses_ledger and not source_ok(ledger_path) and str(ledger_path) not in forge_missing:
+        forge_missing.append(str(ledger_path))
+        forge_missing.sort()
+    for signal, missing in (("reverts", clone_missing), ("closed_unmerged", forge_missing),
+                            ("failed_pipelines", forge_missing)):
+        observed = len(rework[signal])
+        counts[signal] = ({"status": "not_measurable", "count": None, "observed": observed,
+                           "reason": "missing or unreadable input", "inputs": missing}
+                          if missing else {"status": "measured", "count": observed})
     return {
         "schema": "fm-wake-daily.v1",
         "day": day,
         "timezone": "America/Los_Angeles",
         "contributions": {"projects": ordered_projects},
         "links": {"items": link_items},
+        "rework": rework,
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,
