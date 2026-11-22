@@ -39,9 +39,13 @@ cat > "$CASE_HOME/data/backlog.md" <<'EOF'
 - [x] task-mr - GitLab task https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42#note_1 (repo: lblnet_hostupdate) (kind: ship) (done 2026-11-19)
 - [x] task-gh - GitHub task https://github.com/clarsen/firstmate/pull/7, follow-up (repo: firstmate) (kind: ship) (done 2026-11-19)
 - [x] task-merged - Merged GitHub task https://github.com/clarsen/firstmate/pull/8/files (repo: firstmate) (kind: ship) (merged 2026-11-19)
-- [x] task-old - Historical GitHub task https://github.com/clarsen/firstmate/pull/3 (repo: firstmate) (kind: ship) (done 2026-11-10)
+- [x] task-red - GitLab task fixed after a red pipeline https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-19)
+- [x] task-old - Historical GitHub task https://github.com/clarsen/firstmate/pull/3 (repo: firstmate) (kind: ship) (done 2026-10-20)
 EOF
-printf '## Done\n' > "$CASE_HOME/data/done-archive.md"
+cat > "$CASE_HOME/data/done-archive.md" <<'EOF'
+## Done
+- [x] task-closed - GitLab task abandoned before archiving https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/44 (repo: lblnet_hostupdate) (kind: ship) (done 2026-11-19)
+EOF
 cat > "$CASE_HOME/data/captain-questions.json" <<'EOF'
 {"schema":"fm-captain-questions.v1","questions":[]}
 EOF
@@ -49,11 +53,20 @@ EOF
 cat > "$BIN/glab" <<'EOF'
 #!/usr/bin/env bash
 case "${*: -1}" in
-  */pipelines\?per_page=100)
+  */merge_requests/42/pipelines\?per_page=100)
     printf '%s\n' '[{"id":9,"status":"failed","updated_at":"2026-11-19T21:00:00Z","web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/9"},{"id":8,"status":"success","updated_at":"2026-11-19T20:00:00Z","web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/8"}]'
     ;;
   */merge_requests/42)
     printf '%s\n' '{"state":"closed","closed_at":"2026-11-19T22:00:00Z","merged_at":null}'
+    ;;
+  */merge_requests/43/pipelines\?per_page=100)
+    printf '%s\n' '[{"id":20,"status":"failed","finished_at":"2026-11-18T20:00:00Z","updated_at":"2026-11-18T20:00:00Z","web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/20"}]'
+    ;;
+  */merge_requests/44/pipelines\?per_page=100)
+    printf '%s\n' '[]'
+    ;;
+  */merge_requests/44)
+    printf '%s\n' '{"state":"closed","closed_at":"2026-11-17T20:00:00Z","merged_at":null}'
     ;;
   *) exit 2 ;;
 esac
@@ -105,10 +118,26 @@ jq -e --arg sha "$SHA" --arg local "$LOCAL_SHA" '
   and .coverage.signals.failed_pipelines == {"status":"measured","count":3}
   and .coverage.inputs["forge:https://github.com/clarsen/firstmate/pull/8"].status == "readable"
   and (.coverage.inputs | has("forge:https://github.com/clarsen/firstmate/pull/3") | not)
+  and .coverage.forge_candidates.count == 6
+  and .coverage.forge_candidates.assumed_start == 5
   and (.rework | has("relaunch") | not)
 ' "$record" >/dev/null || fail "rework signals missing events, times, or URLs"
 
-OLD_DAY=2026-11-10
+RED_DAY=2026-11-18
+PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$RED_DAY" --home "$CASE_HOME" >/dev/null || fail "red pipeline day collection failed"
+jq -e '
+  .rework.failed_pipelines == [{"task":"task-red","url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/20","pr_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43","at":"2026-11-18T20:00:00Z","time_source":"finished_at"}]
+  and .coverage.signals.failed_pipelines == {"status":"measured","count":1}
+' "$CASE_HOME/data/wake/daily/$RED_DAY.json" >/dev/null || fail "red pipeline before the merge day was dropped"
+
+CLOSED_DAY=2026-11-17
+PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$CLOSED_DAY" --home "$CASE_HOME" >/dev/null || fail "closed MR day collection failed"
+jq -e '
+  .rework.closed_unmerged == [{"task":"task-closed","url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/44","at":"2026-11-17T20:00:00Z"}]
+  and .coverage.signals.closed_unmerged == {"status":"measured","count":1}
+' "$CASE_HOME/data/wake/daily/$CLOSED_DAY.json" >/dev/null || fail "MR closed before its archive day was dropped"
+
+OLD_DAY=2026-10-20
 PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$OLD_DAY" --home "$CASE_HOME" >/dev/null || fail "historical day collection failed"
 jq -e '
   .coverage.signals.closed_unmerged.status == "not_measurable"

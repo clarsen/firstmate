@@ -10,7 +10,7 @@ section in this version of the record.
 """
 
 import argparse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 LEDGER_CUTOFF = "2026-11-21"
+ASSUMED_LOOKBACK_DAYS = 14
 ROW = re.compile(r"^- \[[ xX]\] ([A-Za-z0-9._-]+) - (.*)$")
 META = re.compile(r"\s+\((?:repo|kind|priority|hold|hold-kind|hold-until): [^)]*\)$|\s+\((?:since|merged|reported|done) \d{4}-\d{2}-\d{2}\)$")
 URL = re.compile(r"https?://[^\s)<>]+")
@@ -271,7 +272,10 @@ def pr_key(text):
 
 
 def task_spans(rows, ledger):
-    """Map each task to its first known start day and last known done day; None marks unknown or open."""
+    """Map each task to (start, end, assumed): first known start day, last known done day, None when open or unknown.
+
+    A done task with no recorded start is assumed to start ASSUMED_LOOKBACK_DAYS before its done day.
+    """
     starts, ends, open_tasks = {}, {}, set()
 
     def note(table, task, day, pick):
@@ -295,7 +299,11 @@ def task_spans(rows, ledger):
     spans = {}
     for task in set(starts) | set(ends) | open_tasks:
         end = None if task in open_tasks else ends.get(task)
-        spans[task] = (starts.get(task) or end, end)
+        start = starts.get(task)
+        assumed = start is None and end is not None
+        if assumed:
+            start = (date.fromisoformat(end) - timedelta(days=ASSUMED_LOOKBACK_DAYS)).isoformat()
+        spans[task] = (start, end, assumed)
     return spans
 
 
@@ -388,12 +396,15 @@ def clone_reverts(day, home, coverage):
 
 def forge_rework(day, home, rows, ledger, coverage):
     closed, failed = [], []
+    candidates, assumed_starts = 0, 0
     spans = task_spans(rows, ledger)
     merged = merged_prs(rows, ledger)
     for url, task in sorted(task_prs(home, rows, ledger, coverage).items()):
-        start, end = spans.get(task, (None, None))
+        start, end, assumed = spans.get(task, (None, None, False))
         if (start is not None and day < start) or (end is not None and day > end):
             continue
+        candidates += 1
+        assumed_starts += assumed
         known_merged = url in merged
         source = f"forge:{url}"
         gitlab = GITLAB_MR.fullmatch(url)
@@ -453,7 +464,9 @@ def forge_rework(day, home, rows, ledger, coverage):
             coverage[source] = {"status": "not_measurable", "reason": "unsupported forge URL"}
     closed = sorted({item["url"]: item for item in closed}.values(), key=lambda item: (item["at"], item["url"]))
     failed = sorted({item["url"]: item for item in failed}.values(), key=lambda item: (item["at"], item["url"]))
-    return closed, failed
+    window = {"count": candidates, "assumed_start": assumed_starts,
+              "assumed_start_rule": f"done day minus {ASSUMED_LOOKBACK_DAYS} days when no start is recorded"}
+    return closed, failed, window
 
 
 def build(day, home):
@@ -469,7 +482,7 @@ def build(day, home):
     rows = parse_rows(read_text(backlog_path, coverage), "backlog")
     rows += parse_rows(read_text(archive_path, coverage), "done-archive")
     reverts = clone_reverts(day, home, coverage)
-    closed_unmerged, failed_pipelines = forge_rework(day, home, rows, ledger, coverage)
+    closed_unmerged, failed_pipelines, forge_candidates = forge_rework(day, home, rows, ledger, coverage)
     questions_text = read_text(questions_path, coverage)
     if questions_text is None and coverage[str(questions_path)]["reason"] == "absent":
         # The captain-question store defines an absent file as an empty store.
@@ -654,6 +667,7 @@ def build(day, home):
             "signals": counts,
             "ledger_duplicates_dropped": dropped,
             "merge_time_source": "fleet-ledger" if uses_ledger else "done-archive",
+            "forge_candidates": forge_candidates,
             "uncounted_decisions": {"count": open_task_decisions, "reason": "answer time unknown (task still open)"},
             "limits": [
                 "Sessions outside firstmate are invisible.",

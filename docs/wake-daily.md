@@ -38,7 +38,7 @@ Answered decisions on still-open tasks count on no day; `coverage.uncounted_deci
 The collector reads task delivery URLs from ship rows, fleet ledger entries, and task metadata, then uses read-only GitLab and GitHub API requests.
 Each PR or MR URL is reduced to its canonical form, so a trailing path, fragment, or punctuation does not change which PR is read.
 For a given day the collector reads only PRs and MRs whose task was in flight that day: from its earliest `since` row date or ledger dispatch through its latest done date or ledger merge or cleanup, or still open.
-A done task with no recorded start is read only on its done day.
+A done task with no recorded start is assumed to start 14 days before its done day; `coverage.forge_candidates` reports the day's candidate count and how many used that assumed start.
 A PR or MR already recorded as merged is not read for `closed_unmerged`, only for its pipelines.
 It does not refresh project clones or change forge state.
 `coverage.signals` reports a rework count as `not_measurable` when a required clone or forge read fails or reaches a page limit; its `observed` value is only the partial count.
