@@ -10,6 +10,8 @@
 # projected model. The projection is view-specific: it DROPS fields from the bearings
 # output, it never removes them from - or otherwise weakens - the canonical snapshot,
 # which stays complete.
+# Open decision rows retain a bounded summary for overview use and a full question
+# for decision presentation, including all options recorded in the hold reason.
 #
 # By default the canonical snapshot performs bounded concurrent remote-ledger reads
 # for registered remote homes under one shared collection budget and may atomically
@@ -180,7 +182,7 @@ Default fields: schema, home, generated, prs, issues_status,
   crew_alerts{id,condition,checked_at},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner},
+  decisions_open{id,key,verb,summary,question,owner},
   captain_questions{id,question,status,opened,last_updated,links,state,stale}
     (null, disclosed in omitted, when the question record is invalid),
   landed{id,what,what_full,artifact,owner},
@@ -628,7 +630,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | select(.structured and .hold_bucket != null)
          | select(($all_decisions == 1) or live_captain_call)
          | {id,key:.id,verb:"captain-hold",
-            summary:hold_summary(.title; .hold_reason),owner:"(main)",
+            summary:hold_summary(.title; .hold_reason),
+            question:(.title + ": " + .hold_reason),owner:"(main)",
             _repo:(.repo // null),_title:(.title // null)} ]
      + [ (.secondmate_current.records // [])[] as $m
          | ([ $m.decisions_open[]?
@@ -638,7 +641,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
               | ([$m.queued[]? | select(.id == $did)][0] // {}) as $q
               | {id:($m.id + "/" + .id),key,verb,
                  summary:hold_summary((.summary // .id);
-                                      (.reason // "captain decision pending")),owner:$m.id,
+                                      (.reason // "captain decision pending")),
+                 question:(.question // ((.summary // .id) + ": " + (.reason // "captain decision pending"))),owner:$m.id,
                  _repo:($q.repo // null),_title:($q.title // .summary // null)} ]
             + [ $m.queued[]?
                 | select($all_decisions == 1 and .hold_kind == "captain")
@@ -649,7 +653,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                          | index($id) | not)
                 | {id:($m.id + "/" + .id),key:.id,verb:"captain-hold",
                    summary:hold_summary((.title // .id);
-                                        (.hold_reason // "captain decision pending")),owner:$m.id,
+                                        (.hold_reason // "captain decision pending")),
+                   question:(.question // ((.title // .id) + ": " + (.hold_reason // "captain decision pending"))),owner:$m.id,
                    _repo:(.repo // null),_title:(.title // null)} ])[] ]) as $decisions_all
   | ([ .backlog.records[]
          | . as $record
