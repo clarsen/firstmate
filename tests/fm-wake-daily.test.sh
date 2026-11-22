@@ -25,7 +25,7 @@ POST_LATER=$((POST_NOON + 60))
 # Run the real CLI entry point with its clock pinned to NOW so fixed days on both
 # sides of the 2026-11-21 ledger cutoff count as completed.
 collect() {
-  python3 - "$ROOT/bin/fm-wake-daily.py" "$NOW" "$1" --home "$CASE_HOME" <<'PY'
+  python3 - "$ROOT/bin/fm-wake-daily.py" "$NOW" "$1" --home "${2:-$CASE_HOME}" <<'PY'
 import importlib.util
 import sys
 from datetime import datetime
@@ -167,9 +167,9 @@ cmp -s "$TMP_ROOT/questions-saved.json" "$CASE_HOME/data/captain-questions.json"
 
 mv "$CASE_HOME/state/fleet-ledger.jsonl" "$TMP_ROOT/ledger-removed.jsonl"
 collect "$POST" >/dev/null || fail "missing-ledger run failed"
-jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "absent"' "$record" >/dev/null || fail "missing ledger reported as zero"
+jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.signals.links.status == "not_measurable" and .coverage.signals.links.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "absent"' "$record" >/dev/null || fail "missing ledger reported as zero"
 collect "$PRE" >/dev/null || fail "pre-cutoff missing-ledger run failed"
-jq -e '.coverage.signals.ships == {"status": "measured", "count": 1}' "$pre_record" >/dev/null || fail "pre-cutoff ships required the ledger"
+jq -e '.coverage.signals.ships == {"status": "measured", "count": 1} and .coverage.signals.links.status == "measured"' "$pre_record" >/dev/null || fail "pre-cutoff records required the ledger"
 
 { cat "$TMP_ROOT/ledger-saved.jsonl"; printf '{not json\n'; } > "$CASE_HOME/state/fleet-ledger.jsonl"
 collect "$POST" >/dev/null || fail "invalid-ledger run failed"
@@ -180,5 +180,65 @@ if python3 "$ROOT/bin/fm-wake-daily.py" "$TODAY" --home "$CASE_HOME" >"$TMP_ROOT
 fi
 grep -q 'not complete' "$TMP_ROOT/err" || fail "incomplete day reason missing"
 [ ! -e "$CASE_HOME/data/wake/daily/$TODAY.json" ] || fail "incomplete day wrote a record"
+
+LINK_HOME="$TMP_ROOT/links-home"
+mkdir -p "$LINK_HOME/data"
+cat > "$LINK_HOME/data/backlog.md" <<'EOF'
+## Done
+- [x] batch-ci-speed - Scout pipeline speed data/batch-ci-speed/report.md (repo: example) (kind: scout) (reported 2026-10-02)
+- [x] batch-ci-speed-impl - Ship P0 from data/batch-ci-speed/report.md (repo: example) (kind: ship) (reported 2026-10-02)
+  merge request https://example.org/example/-/merge_requests/10
+- [x] batch-ci-speed-stages - Ship P1+P2 for story 2.1 in epic 4 blocked-by: batch-ci-speed-impl (repo: example) (kind: ship) (done 2026-10-02)
+  merge request https://example.org/example/-/merge_requests/11
+- [x] batch-ci-speed-p3p4 - Ship P3+P4 (repo: example) (kind: ship) (done 2026-10-02)
+- [x] batch-ci-speed-p5 - Ship P5 (repo: example) (kind: ship) (done 2026-10-02)
+  Follow-up to scout task older-scout.
+- [x] batch-ci-speed-p6 - Ship P6 (repo: example) (kind: ship) (done 2026-10-02)
+- [x] batch-unit-test-scout - Scout unit tests data/batch-unit-test-scout/report.md (repo: example) (kind: scout) (reported 2026-10-02)
+- [x] batch-ci-chain-trim - Ship xdist and chain trim (repo: example) (kind: ship) (done 2026-10-02)
+  From scout report data/batch-unit-test-scout/report.md.
+- [x] older-scout - Earlier investigation data/older-scout/report.md (repo: example) (kind: scout) (reported 2026-10-01)
+- [x] flow-scout - Scout deployment data/flow-scout/report.md (repo: example) (kind: scout) (reported 2026-10-12)
+- [x] flow-decision - Choose deployment flow (repo: example) (kind: captain) (done 2026-10-13)
+  Captain hold origin: flow-scout
+- [x] nest-ci-speed-impl - Ship nested impl (repo: example) (kind: ship) (done 2026-10-03)
+- [x] nest-ci-speed-impl-fix - Fix nested impl (repo: example) (kind: ship) (done 2026-10-03)
+- [x] nest-ci-speed-p5 - Ship nested P5 (repo: example) (kind: ship) (done 2026-10-03)
+EOF
+: > "$LINK_HOME/data/done-archive.md"
+cp "$LINK_HOME/data/backlog.md" "$TMP_ROOT/links-backlog-saved.md"
+collect 2026-10-02 "$LINK_HOME" >/dev/null || fail "links fixture collection failed"
+link_record="$LINK_HOME/data/wake/daily/2026-10-02.json"
+jq -e '
+  .coverage.signals.links == {"status":"measured","count":10}
+  and ([.links.items[] | select(.kind == "task" and (.id | startswith("batch-ci-speed-"))) | .id] | length) == 5
+  and ([.links.items[] | select(.kind == "task" and (.id | startswith("batch-ci-speed-"))) | .id_family] | unique) == ["batch-ci-speed"]
+  and ([.links.items[] | select(.kind == "task" and (.id | startswith("batch-ci-speed-"))) | .family_tasks | length] | min) == 5
+  and (.links.items[] | select(.id == "batch-ci-speed-stages") | .blocked_by) == ["batch-ci-speed-impl"]
+  and (.links.items[] | select(.id == "batch-ci-speed-stages") | .story_refs) == ["2.1"]
+  and (.links.items[] | select(.id == "batch-ci-speed-stages") | .epic_refs) == ["4"]
+  and (.links.items[] | select(.id == "batch-ci-speed-impl") | .scout_reports) == ["data/batch-ci-speed/report.md"]
+  and (.links.items[] | select(.id == "batch-ci-speed-p5") | .scout_tasks) == ["older-scout"]
+  and (.links.items[] | select(.id == "batch-ci-chain-trim") | .scout_reports) == ["data/batch-unit-test-scout/report.md"]
+  and (.links.items[] | select(.id == "batch-ci-chain-trim") | .id_family) == null
+  and (.links.items[] | select(.id == "batch-ci-chain-trim") | .family_tasks) == []
+  and (.links.items[] | select(.id == "batch-ci-chain-trim") | .blocked_by) == []
+  and (.links.items[] | select(.id == "https://example.org/example/-/merge_requests/11") | .task) == "batch-ci-speed-stages"
+  and (.links.items[] | select(.id == "https://example.org/example/-/merge_requests/11") | .blocked_by) == ["batch-ci-speed-impl"]
+' "$link_record" >/dev/null || fail "links missed family, dependency, references, scout, or MR relation"
+cp "$link_record" "$TMP_ROOT/links-first.json"
+collect 2026-10-02 "$LINK_HOME" >/dev/null || fail "links rerun failed"
+cmp -s "$TMP_ROOT/links-first.json" "$link_record" || fail "links rerun changed bytes"
+cmp -s "$TMP_ROOT/links-backlog-saved.md" "$LINK_HOME/data/backlog.md" || fail "links source changed"
+collect 2026-10-13 "$LINK_HOME" >/dev/null || fail "origin fixture collection failed"
+jq -e '(.links.items[] | select(.id == "flow-decision") | .origin_tasks) == ["flow-scout"]' \
+  "$LINK_HOME/data/wake/daily/2026-10-13.json" >/dev/null || fail "closed decision lost origin"
+collect 2026-10-03 "$LINK_HOME" >/dev/null || fail "nested family fixture collection failed"
+jq -e '
+  ([.links.items[] | select(.kind == "task") | .id_family] | unique) == ["nest-ci-speed"]
+  and (.links.items[] | select(.id == "nest-ci-speed-impl") | .family_tasks) == ["nest-ci-speed-impl-fix", "nest-ci-speed-p5"]
+  and (.links.items[] | select(.id == "nest-ci-speed-impl-fix") | .family_tasks) == ["nest-ci-speed-impl", "nest-ci-speed-p5"]
+  and (.links.items[] | select(.id == "nest-ci-speed-p5") | .family_tasks) == ["nest-ci-speed-impl", "nest-ci-speed-impl-fix"]
+' "$LINK_HOME/data/wake/daily/2026-10-03.json" >/dev/null || fail "nested family links were not symmetric"
 
 printf 'ok: Wake daily collector\n'

@@ -31,6 +31,11 @@ HOLD_KIND = re.compile(r"\(hold-kind: ([^)]+)\)")
 LOCAL_NOTE = re.compile(r"(?:^|\s)local main$")
 KIND = re.compile(r"\(kind: ([^)]+)\)")
 PROJECT = re.compile(r"\(repo: ([^)]+)\)")
+BLOCKED_BY = re.compile(r"\bblocked-by:\s*([A-Za-z0-9._-]+)")
+ORIGIN = re.compile(r"^\s*Captain hold origin:\s*([A-Za-z0-9._-]+)\s*$")
+REFERENCE = re.compile(r"\b(story|epic)\s+([0-9]+(?:[.-][0-9A-Za-z]+)*)\b", re.I)
+REPORT_PATH = re.compile(r"data/([A-Za-z0-9._-]+)/report\.md\b")
+DELIVERY_URL = re.compile(r"^\s*(?:merge|pull) request\s+(https?://\S+)", re.I)
 
 
 def read_text(path, coverage):
@@ -80,6 +85,7 @@ def parse_rows(text, source):
                 title = title.replace(report.group(1), "").strip().rstrip(" -")
             current = {
                 "task": task,
+                "raw": raw,
                 "title": title or task,
                 "project": project_match.group(1) if project_match else "none recorded",
                 "kind": kind,
@@ -176,6 +182,53 @@ def local_day(epoch):
         return datetime.fromtimestamp(epoch, timezone.utc).astimezone(PACIFIC).date().isoformat()
     except (OverflowError, OSError, TypeError, ValueError):
         return None
+
+
+def task_family(task, tasks):
+    parts = task.split("-")
+    for length in range(2, len(parts) + 1):
+        prefix = "-".join(parts[:length])
+        members = [other for other in tasks if other == prefix or other.startswith(prefix + "-")]
+        if len(members) > 1 and (length >= 3 or prefix in tasks):
+            return prefix, sorted(members)
+    return None, []
+
+
+def link_fields(task, row, day_tasks, by_task, day):
+    title = row["title"] if row else task
+    lines = row["lines"] if row else []
+    body = "\n".join([row["raw"] if row else title, *lines])
+    family, members = task_family(task, day_tasks)
+    blocked = sorted(set(BLOCKED_BY.findall(body)))
+    origins = sorted({match.group(1) for line in lines if (match := ORIGIN.match(line))})
+    reports = sorted({
+        match.group(0) for match in REPORT_PATH.finditer(body)
+        if match.group(1) != task
+        and (scout := by_task.get(match.group(1))) is not None
+        and scout["kind"] == "scout" and scout["day"] is not None and scout["day"] <= day
+    })
+    without_reports = REPORT_PATH.sub("", body)
+    scouts = sorted({
+        name for name, scout in by_task.items()
+        if name != task and scout["kind"] == "scout"
+        and scout["day"] is not None and scout["day"] <= day
+        and re.search(r"(?<![A-Za-z0-9_-])" + re.escape(name) + r"(?![A-Za-z0-9_-])", without_reports)
+    })
+    references = {kind: [] for kind in ("story", "epic")}
+    for match in REFERENCE.finditer(title):
+        values = references[match.group(1).lower()]
+        if match.group(2) not in values:
+            values.append(match.group(2))
+    return {
+        "blocked_by": blocked,
+        "id_family": family,
+        "family_tasks": [name for name in members if name != task],
+        "story_refs": references["story"],
+        "epic_refs": references["epic"],
+        "origin_tasks": origins,
+        "scout_reports": reports,
+        "scout_tasks": scouts,
+    }
 
 
 def build(day, home):
@@ -299,6 +352,28 @@ def build(day, home):
             "date_source": "captain close time",
         })
 
+    link_tasks = sorted(set(day_rows) | set(merges))
+    link_items = []
+    for task in link_tasks:
+        row = day_rows.get(task) or by_task.get(task)
+        fields = link_fields(task, row, link_tasks, by_task, day)
+        mr_urls = set()
+        if row:
+            if row["pr_url"]:
+                mr_urls.add(row["pr_url"])
+            mr_urls.update(match.group(1).rstrip(".,)") for line in row["lines"]
+                           if (match := DELIVERY_URL.match(line)))
+        if task in merges and merges[task].get("pr"):
+            mr_urls.add(merges[task]["pr"])
+        mrs = sorted(mr_urls)
+        project = row["project"] if row else "none recorded"
+        link_items.append({"kind": "task", "id": task, "project": project,
+                           "mrs": mrs, "recorded_on": day, **fields})
+        for mr in mrs:
+            link_items.append({"kind": "mr", "id": mr, "task": task,
+                               "project": project, "recorded_on": day, **fields})
+    link_items.sort(key=lambda item: (item["kind"], item["id"], item.get("task", "")))
+
     ordered_projects = []
     for project in sorted(projects):
         signals = projects[project]
@@ -309,14 +384,14 @@ def build(day, home):
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
     counts = {}
-    for signal in ("ships", "scouts", "decisions"):
+    for signal in ("ships", "scouts", "decisions", "links"):
         needed = [backlog_path, archive_path]
-        if signal == "ships" and uses_ledger:
+        if signal in ("ships", "links") and uses_ledger:
             needed.append(ledger_path)
         if signal == "decisions":
             needed.append(questions_path)
         missing = [str(path) for path in needed if not source_ok(path)]
-        count = sum(len(project[signal]) for project in ordered_projects)
+        count = len(link_items) if signal == "links" else sum(len(project[signal]) for project in ordered_projects)
         if missing:
             counts[signal] = {"status": "not_measurable", "count": None, "observed": count,
                               "reason": "missing or unreadable input", "inputs": missing}
@@ -327,6 +402,7 @@ def build(day, home):
         "day": day,
         "timezone": "America/Los_Angeles",
         "contributions": {"projects": ordered_projects},
+        "links": {"items": link_items},
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,
