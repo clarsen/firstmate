@@ -20,7 +20,7 @@ Every record carries these members:
 | ------- | --------------------------------------------------------- |
 | `v`     | Record format version, currently `1`                      |
 | `ts`    | Unix time in seconds when the record was written          |
-| `event` | One of the five event names below                         |
+| `event` | One of the six event names below                          |
 | `task`  | The firstmate task id the record is about                 |
 
 Readers must ignore members and events they do not recognize, so later versions can add them without breaking existing readers.
@@ -29,8 +29,9 @@ Readers must ignore members and events they do not recognize, so later versions 
 
 | Event              | Extra members                                  | Written when |
 | ------------------ | ---------------------------------------------- | ------------ |
-| `task.dispatched`  | `kind`, `project`, `harness`, `model`          | A new worker or second mate is launched. A relaunch of an existing task is not recorded. |
-| `task.status`      | `state`, `key`, `text`                         | A complete, nonblank line in the task's status log is captured. |
+| `task.dispatched`  | `kind`, `project`, `harness`, `model`          | A new worker or second mate is launched. |
+| `task.relaunched`  | none                                           | An existing task's replacement worker is confirmed running. |
+| `task.status`      | `state`, `key`, `text`, optional `at`          | A complete, nonblank line in the task's status log is captured. |
 | `task.pr_ready`    | `pr`                                           | Firstmate records the task's PR as ready for review. |
 | `task.merged`      | `via` (`"pr"` or `"local"`), plus `pr` when `via` is `"pr"` | The task's PR merge is recorded, or its local-only branch landed. |
 | `task.cleaned_up`  | none                                           | The task's worker and local copy were removed. |
@@ -43,12 +44,15 @@ It is written each time firstmate records a PR for the task, so registering a re
 `task.status` members: `state` is the status line's leading word, such as `working`, `needs-decision`, `blocked`, `paused`, `done`, `failed`, or `resolved`, or `null` when the line has none.
 `key` is the line's `[key=...]` decision key, or `null`.
 `text` is the status line after its first colon, verbatim, capped at 2000 characters; if the line has no colon, it is the whole line.
+`at` is the status line's `[at=<epoch>]` stamp as Unix seconds when the stamp is valid; the member is absent when the line has no valid stamp.
+This is the worker's event time, while `ts` is when the ledger recorded it.
 
 Example:
 
 ```json
 {"v":1,"ts":1790132857,"event":"task.dispatched","task":"fix-login","kind":"ship","project":"webapp","harness":"claude","model":null}
-{"v":1,"ts":1790132870,"event":"task.status","task":"fix-login","state":"working","key":null,"text":" bug reproduced"}
+{"v":1,"ts":1790132870,"event":"task.status","task":"fix-login","state":"working","key":null,"text":" bug reproduced","at":1790132865}
+{"v":1,"ts":1790133000,"event":"task.relaunched","task":"fix-login"}
 {"v":1,"ts":1790133400,"event":"task.status","task":"fix-login","state":"done","key":null,"text":" PR https://github.com/acme/webapp/pull/7 checks green"}
 {"v":1,"ts":1790133410,"event":"task.pr_ready","task":"fix-login","pr":"https://github.com/acme/webapp/pull/7"}
 {"v":1,"ts":1790133900,"event":"task.merged","task":"fix-login","via":"pr","pr":"https://github.com/acme/webapp/pull/7"}
@@ -64,10 +68,10 @@ Example:
   - lines from workers whose instructions predate this, or that append without running the instruction's full command;
   - lines a remote second mate reports, which reach this home through firstmate's relay;
   - lines written while the immediate record fails, for example when the ledger file cannot be written.
-  Recording `task.pr_ready`, `task.merged`, or `task.cleaned_up` first records that task's pending status lines.
+  Recording `task.relaunched`, `task.pr_ready`, `task.merged`, or `task.cleaned_up` first records that task's pending status lines.
 - Captured status lines are delivered at least once unless a write fails or a crash loses unflushed records: an interrupted capture can repeat records, so a reader that must not double-count should tolerate duplicates.
 - A status record can appear just before its task's `task.dispatched` record when the worker writes a status line in the moment between its launch and that record.
-- When a home turns the ledger on, status lines already in a live task's log are recorded on that task's next capture (which may be a worker status command, PR registration, merge, cleanup, or monitor poll); tasks dispatched or cleaned up while the flag was absent have no record of that.
+- When a home turns the ledger on, status lines already in a live task's log are recorded on that task's next capture (which may be a worker status command, relaunch, PR registration, merge, cleanup, or monitor poll); tasks dispatched or cleaned up while the flag was absent have no record of that.
 - There is no sequence number and no gap detection.
 - Writes are plain appends with no forced flush to disk, so a machine crash can lose the newest records.
 - The file is never rotated and grows until truncated.
@@ -79,7 +83,6 @@ Example:
 These are possible follow-ups, deliberately left out of this version:
 
 - session start, away-mode, and quiet-mode events;
-- relaunch events;
 - whether a worker is currently working or idle, and when a turn ends; see the [runtime backend event sources](architecture.md#runtime-session-backends) for native activity observations;
 - sequence numbers and gap detection;
 - rotation and continuity across rotated files;

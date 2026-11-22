@@ -1265,6 +1265,9 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
+  [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/fleet-ledger" ] || \
+    FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=${FM_CONFIG_OVERRIDE:-$FM_HOME/config} \
+      "$SCRIPT_DIR/fm-fleet-ledger.sh" relaunched "$ID" || true
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 

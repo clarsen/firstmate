@@ -12,6 +12,7 @@
 #   bin/fm-brief.sh              appended (in every worker's status command,
 #                                right after its unchanged plain append)
 #   bin/fm-spawn.sh              dispatched (fresh spawns only, never relaunch)
+#   bin/fm-control.sh            relaunched (successful replacement only)
 #   bin/fm-watch.sh              capture, once per poll cycle
 #   bin/fm-pr-check.sh           pr_ready (a PR registered for review, not the
 #                                merge-time re-record from bin/fm-pr-merge.sh)
@@ -21,6 +22,7 @@
 #
 # Usage:
 #   fm-fleet-ledger.sh dispatched <task> <kind> <project> <harness> <model>
+#   fm-fleet-ledger.sh relaunched <task>
 #   fm-fleet-ledger.sh pr_ready <task> <url>
 #   fm-fleet-ledger.sh merged <task> pr <url>
 #   fm-fleet-ledger.sh merged <task> local
@@ -65,7 +67,7 @@ LOCK="$STATE/.fleet-ledger.lock"
 TEXT_MAX_CHARS=2000
 
 usage() {
-  echo "usage: fm-fleet-ledger.sh dispatched <task> <kind> <project> <harness> <model> | pr_ready <task> <url> | merged <task> pr <url> | merged <task> local | cleaned_up <task> | capture | appended <config> <state>/<task>.status" >&2
+  echo "usage: fm-fleet-ledger.sh dispatched <task> <kind> <project> <harness> <model> | relaunched <task> | pr_ready <task> <url> | merged <task> pr <url> | merged <task> local | cleaned_up <task> | capture | appended <config> <state>/<task>.status" >&2
   exit 2
 }
 
@@ -76,6 +78,7 @@ task_ok() {
 cmd=${1:-}
 case "$cmd" in
   dispatched) { [ "$#" -eq 6 ] && task_ok "$2"; } || usage ;;
+  relaunched) { [ "$#" -eq 2 ] && task_ok "$2"; } || usage ;;
   pr_ready) { [ "$#" -eq 3 ] && task_ok "$2" && [ -n "$3" ]; } || usage ;;
   merged)
     task_ok "${2:-}" || usage
@@ -152,15 +155,16 @@ append() {
 
 # The status-line grammar belongs to bin/fm-classify-lib.sh; this only projects it.
 append_status() { # <task> <status-line>
-  local task=$1 line=$2 verb key text
+  local task=$1 line=$2 verb key text at
   status_line_verb "$line" verb
   case "$verb" in [a-z]*) case "$verb" in *[!a-z-]*) verb='' ;; esac ;; *) verb='' ;; esac
   key=$(_fm_decision_key "$line" 2>/dev/null) || key=''
   [ "$key" != default ] || key=''
+  at=$(status_line_at_epoch "$line") || at=''
   text=${line#*:}
   append task.status "$task" \
-    "{state: (\$state | n), key: (\$key | n), text: \$text[0:$TEXT_MAX_CHARS]}" \
-    --arg state "$verb" --arg key "$key" --arg text "$text"
+    "{state: (\$state | n), key: (\$key | n), text: \$text[0:$TEXT_MAX_CHARS]} + (if \$at == \"\" then {} else {at: (\$at | tonumber)} end)" \
+    --arg state "$verb" --arg key "$key" --arg text "$text" --arg at "$at"
 }
 
 capture_task() { # <task>; caller holds the lock
@@ -211,6 +215,10 @@ case "$cmd" in
     append task.dispatched "$2" \
       '{kind: ($kind | n), project: ($project | n), harness: ($harness | n), model: ($model | n)}' \
       --arg kind "$3" --arg project "$4" --arg harness "$5" --arg model "$6" || rc=1
+    ;;
+  relaunched)
+    capture_task "$2" || rc=1
+    append task.relaunched "$2" '{}' || rc=1
     ;;
   pr_ready)
     capture_task "$2" || rc=1
