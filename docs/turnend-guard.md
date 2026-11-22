@@ -414,9 +414,11 @@ The auto-arm itself rechecks the healthy watcher predicate and retries a bounded
 The foreground arm legitimately follows a healthy watcher until its next wake.
 The hook catches HUP, TERM, and INT from host timeout or teardown.
 If the producing session no longer matches the lock's process identity and recorded session id, the hook records `session-ended` and exits 0 without creating a failure notice.
+The existing trusted-session ownership proof preserves that match across a verified same-session lock re-anchor.
 While that session remains current, interruptions use the ordinary failure progression, including its notice deduplication, attended alarm limits, and the [attended exhaustion decision](#attended-fail-open).
 An interruption notice carries the producing session's lock-holder identity and recorded session id, which are rechecked under the auto-arm owner lock before committing the failure.
-Before taking its first generation, a replacement that no longer matches that session clears the interrupted episode's notice, attended alarm, and block budget.
+Before taking its first generation, a replacement that no longer matches that session clears the interrupted episode's notice, attended alarm, and block budget, so its first genuine failure can notify even if a process number and executable path are reused.
+Empty legacy markers and ordinary failure notices retain their existing behavior.
 Claude drops exit 2 when it terminates the hook at the configured timeout, so a park that outlives the timeout ends without a rewake (`bin/fm-claude-stop-autoarm.sh` header).
 
 The first fresh exhausted-failure epoch preserves its handoff without consuming a blocked-stop count.
