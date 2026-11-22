@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
+LEDGER_CUTOFF = "2026-11-21"
 ROW = re.compile(r"^- \[[ xX]\] ([A-Za-z0-9._-]+) - (.*)$")
 META = re.compile(r"\s+\((?:repo|kind|priority|hold|hold-kind|hold-until): [^)]*\)$|\s+\((?:since|merged|reported|done) \d{4}-\d{2}-\d{2}\)$")
 URL = re.compile(r"https?://[^\s)<>]+")
@@ -117,7 +118,7 @@ def decision_pairs(row):
     return result
 
 
-def ledger_events(text, coverage, path):
+def ledger_events(text, coverage, path, day):
     if text is None:
         return [], 0
     events = []
@@ -135,7 +136,8 @@ def ledger_events(text, coverage, path):
             return [], 0
         identity = json.dumps(record, sort_keys=True, separators=(",", ":"))
         if identity in seen:
-            dropped += 1
+            if local_day(record.get("ts")) == day:
+                dropped += 1
             continue
         seen.add(identity)
         events.append(record)
@@ -155,7 +157,10 @@ def build(day, home):
     backlog_path = home / "data/backlog.md"
     archive_path = home / "data/done-archive.md"
     questions_path = home / "data/captain-questions.json"
-    ledger, dropped = ledger_events(read_text(ledger_path, coverage), coverage, ledger_path)
+    uses_ledger = day >= LEDGER_CUTOFF
+    ledger, dropped = [], 0
+    if uses_ledger:
+        ledger, dropped = ledger_events(read_text(ledger_path, coverage), coverage, ledger_path, day)
     rows = parse_rows(read_text(backlog_path, coverage), "backlog")
     rows += parse_rows(read_text(archive_path, coverage), "done-archive")
     questions_text = read_text(questions_path, coverage)
@@ -240,6 +245,7 @@ def build(day, home):
                 "question": question, "answer": answer,
                 "evidence": f"data/{row['source']}.md#{row['task']}:decision:{number}",
                 "closed_on": day, "time_precision": "day",
+                "date_source": "task close date, not answer time",
             })
 
     for question in questions:
@@ -260,6 +266,7 @@ def build(day, home):
             "evidence": f"data/captain-questions.json#{question['id']}",
             "closed_at": closed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
             "time_precision": "second",
+            "date_source": "captain close time",
         })
 
     ordered_projects = []
@@ -270,11 +277,11 @@ def build(day, home):
         ordered_projects.append({"project": project, **signals})
 
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
-    undated_decisions = sum(len(decision_pairs(row)) for row in rows if not row["completed"] or not row["day"])
+    open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
     counts = {}
     for signal in ("ships", "scouts", "decisions"):
         needed = [backlog_path, archive_path]
-        if signal == "ships":
+        if signal == "ships" and uses_ledger:
             needed.append(ledger_path)
         if signal == "decisions":
             needed.append(questions_path)
@@ -283,10 +290,6 @@ def build(day, home):
         if missing:
             counts[signal] = {"status": "not_measurable", "count": None, "observed": count,
                               "reason": "missing or unreadable input", "inputs": missing}
-        elif signal == "decisions" and undated_decisions:
-            counts[signal] = {"status": "not_measurable", "count": None, "observed": count,
-                              "reason": "closed decisions on undated live items cannot be assigned to a day",
-                              "undated_decisions": undated_decisions}
         else:
             counts[signal] = {"status": "measured", "count": count}
     return {
@@ -298,9 +301,11 @@ def build(day, home):
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,
             "ledger_duplicates_dropped": dropped,
+            "merge_time_source": "fleet-ledger" if uses_ledger else "done-archive",
+            "uncounted_decisions": {"count": open_task_decisions, "reason": "answer time unknown (task still open)"},
             "limits": [
                 "Sessions outside firstmate are invisible.",
-                "Backlog-only dates are day-level; undated live decision blocks cannot be assigned to a day.",
+                "Backlog-only dates are day-level; backlog decisions are dated by their task's close date.",
                 "A merge is a contribution, not proof of production value.",
             ],
         },
