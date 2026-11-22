@@ -1160,6 +1160,48 @@ test_account_list_relaunch_moves_only_on_explicit_account() {
   pass "fm-control relaunch: only an explicit --account moves a task to another declared account"
 }
 
+# A list that reserves upstream's `ordinary` entry is a config-directory list,
+# even when `ordinary` comes first or is the only entry, so both fm-control
+# relaunch and a direct fm-spawn --relaunch keep the account the task records
+# instead of treating `ordinary` as a Keychain slot.
+test_account_list_with_ordinary_relaunches_on_the_recorded_account() {
+  local dir out rc id=rl-list-ordinary case_name recorded
+  for case_name in ordinary-then-path ordinary-only; do
+    dir=$(new_case "list-$case_name" "$id")
+    add_ship_task "$dir" "$id" claude
+    make_claude_auth_stub "$dir"
+    mkdir -p "$dir/home/config" "$dir/user-home/.claude" "$dir/work"
+    : > "$dir/user-home/.claude/.credentials.json"
+    : > "$dir/work/.credentials.json"
+    case "$case_name" in
+      ordinary-then-path)
+        printf '%s\n' ordinary "$dir/work" > "$dir/home/config/claude-accounts"
+        recorded="$dir/work" ;;
+      ordinary-only)
+        printf '%s\n' ordinary > "$dir/home/config/claude-accounts"
+        recorded=ordinary ;;
+    esac
+    echo "account=$recorded" >> "$dir/home/state/$id.meta"
+    out=$(run_control "$dir" "$id" relaunch --note "$case_name"); rc=$?
+    expect_code 0 "$rc" "the $case_name relaunch should succeed"$'\n'"$out"
+    [ "$(meta_field "$dir" "$id" account)" = "$recorded" ] || fail "the $case_name relaunch should keep the recorded account"
+    if [ "$recorded" = ordinary ]; then
+      assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='" \
+        "the $case_name replacement should launch on the ordinary login"
+    else
+      assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$recorded'" \
+        "the $case_name replacement should launch under the recorded account"
+    fi
+    assert_no_grep "claude_account=" "$dir/home/state/$id.meta" "the $case_name relaunch must not select a Keychain slot"
+    : > "$dir/fake/literal"
+    printf 'zsh' > "$dir/fake/command"
+    out=$(run_spawn "$dir" "$id" --relaunch); rc=$?
+    expect_code 0 "$rc" "a direct fm-spawn --relaunch under the $case_name list should succeed"$'\n'"$out"
+    assert_contains "$out" "account=$recorded" "the direct $case_name relaunch should report the recorded account"
+  done
+  pass "fm-control relaunch: lists using the reserved ordinary entry stay config-directory lists in control and spawn"
+}
+
 test_account_list_relaunch_refusals_happen_before_stop() {
   local dir out rc id=rl-list-refuse case_name recorded flag needle
   for case_name in undeclared newline signed-out unrecorded removed wrong-harness; do
@@ -3319,6 +3361,7 @@ test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
 test_account_list_relaunch_reuses_the_recorded_account
 test_account_list_relaunch_moves_only_on_explicit_account
+test_account_list_with_ordinary_relaunches_on_the_recorded_account
 test_account_list_relaunch_refusals_happen_before_stop
 test_secondmate_account_pin_follows_relaunch_and_refuses_before_stop
 test_pi_exclude_tools_follow_the_relaunch

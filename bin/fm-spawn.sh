@@ -3783,7 +3783,7 @@ if [ "$HARNESS" = claude ] && [ "$ACCOUNT_SET" -eq 0 ] && [ -f "$CONFIG/claude-a
   # existing slot list as account roots or change its selected login.
   # shellcheck source=bin/fm-claude-account-lib.sh
   . "$SCRIPT_DIR/fm-claude-account-lib.sh"
-  if [ -n "$(fm_claude_account_configured_slots "$CONFIG" 2>/dev/null)" ]; then
+  if fm_claude_account_keychain_list "$CONFIG"; then
     CLAUDE_KEYCHAIN_MODE=1
   fi
 fi

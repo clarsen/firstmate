@@ -306,6 +306,30 @@ EOF
   pass "a malformed config/claude-accounts entry refuses selection instead of guessing"
 }
 
+test_keychain_list_classification() {
+  local dir="$TMP_ROOT/classify" verdict name
+  mkdir -p "$dir"
+  for name in slots slots-commented ordinary-then-path ordinary-only path-then-slot ordinary-among-slots empty; do
+    mkdir -p "$dir/$name"
+    case "$name" in
+      slots) printf 'account-a\naccount-b\n' ;;
+      slots-commented) printf '# work\naccount-a\n\naccount-a\n' ;;
+      ordinary-then-path) printf 'ordinary\n/Users/me/.claude-work\n' ;;
+      ordinary-only) printf 'ordinary\n' ;;
+      path-then-slot) printf '/Users/me/.claude-work\naccount-a\n' ;;
+      ordinary-among-slots) printf 'account-a\nordinary\n' ;;
+      empty) printf '# nothing\n' ;;
+    esac > "$dir/$name/claude-accounts"
+    verdict=dirs
+    ! fm_claude_account_keychain_list "$dir/$name" || verdict=keychain
+    case "$name" in
+      slots | slots-commented) assert_equals keychain "$verdict" "$name should be a Keychain slot list" ;;
+      *) assert_equals dirs "$verdict" "$name should not be a Keychain slot list" ;;
+    esac
+  done
+  pass "only a whole-file slot list without the reserved ordinary entry classifies as Keychain slots"
+}
+
 test_disabled_when_unconfigured
 test_unmeasured_slots_select_the_first_configured_slot
 test_recorded_reading_breaks_the_tie_among_eligible_slots
@@ -322,3 +346,4 @@ test_unparseable_reading_is_unknown_not_full_room
 test_unreadable_slot_listed_first_loses_to_a_readable_slot
 test_unconfigured_selection_never_resolves_the_parent_chain
 test_malformed_slot_name_refuses
+test_keychain_list_classification

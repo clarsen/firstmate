@@ -1087,12 +1087,11 @@ resolve_relaunch_profile() {
   local account_model=$TARGET_MODEL account_mate=
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
-  local keychain_slots='' keychain_mode=0 account_config=${FM_CONFIG_OVERRIDE:-$FM_HOME/config}
+  local keychain_mode=0 account_config=${FM_CONFIG_OVERRIDE:-$FM_HOME/config}
   if [ "$TARGET_HARNESS" = claude ] && [ -z "$NEW_ACCOUNT" ] && [ -f "$account_config/claude-accounts" ]; then
     # shellcheck source=bin/fm-claude-account-lib.sh
     . "$SCRIPT_DIR/fm-claude-account-lib.sh"
-    keychain_slots=$(fm_claude_account_configured_slots "$account_config" 2>/dev/null) || keychain_slots=
-    [ -z "$keychain_slots" ] || keychain_mode=1
+    ! fm_claude_account_keychain_list "$account_config" || keychain_mode=1
   fi
   if [ "$keychain_mode" = 0 ]; then
     TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "$account_config" \

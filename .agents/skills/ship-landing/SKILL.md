@@ -26,7 +26,7 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 
 Tear down a ship task only after landing is confirmed.
 A parked lane or a home with `config/auto-land` lets the watcher tear down after a confirmed merge; otherwise firstmate performs the teardown.
-A lane parked on review with `bin/fm-park.sh` relaunches on review activity.
+A lane parked on review (`bin/fm-park.sh`) has no agent and relaunches itself on review activity; `bin/fm-park.sh park <id>` parks one clean lane on request and `bin/fm-park.sh resume <id> --trigger <text>` relaunches one by hand.
 A task with edit members lands one repository at a time, each PR merging under its own repository's recorded merge posture (`member.<name>.yolo` for an edit member), so after each merge steer its worker to the next repository in land order rather than cleaning up ([`docs/configuration.md`](../../../docs/configuration.md) "Task members").
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
 Never force teardown without explicit discard authority.
