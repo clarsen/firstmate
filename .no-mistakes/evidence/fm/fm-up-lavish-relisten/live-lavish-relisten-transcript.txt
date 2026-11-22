@@ -1,0 +1,27 @@
+# Live lab: real lavish-axi 0.1.80 (isolated LAVISH_AXI_STATE_DIR, port 14917) + real fm-procevent runner in disposable fm-lab home
+# Timeline: 11:09:32 arm+reconcile (no browser) | ~11:09:53 headless chromium attached | 11:10:26 browser killed | ~11:11:36 second chromium attached | 11:11:42 killed
+## lavish-axi invocations (logging pass-through shim; pid/ppid of each poll)
+11:09:32.434 pid=1688735 ppid=1688499 start: poll ~/tmp/fm-lab.zsEaA3/art/board.html
+11:10:37.627 pid=1688735 end rc=0: poll
+11:10:38.173 pid=1780721 ppid=1780546 start: poll ~/tmp/fm-lab.zsEaA3/art/board.html
+11:11:53.082 pid=1780721 end rc=0: poll
+11:11:53.639 pid=1872431 ppid=1872307 start: poll ~/tmp/fm-lab.zsEaA3/art/board.html
+## runner process (all poll adapters are children of this one _start pid)
+    PID ELAPSED COMMAND
+1687304     172 bash {run-worktree}/bin/fm-procevent.sh _start lavish-b39c9498732381eb
+## procevent-inbox
+lavish-b39c9498732381eb.1.adapter  lavish-b39c9498732381eb.2.adapter
+lavish-b39c9498732381eb.1.handled  lavish-b39c9498732381eb.2.handled
+lavish-b39c9498732381eb.1.result   lavish-b39c9498732381eb.2.result
+### ~/tmp/fm-lab.zsEaA3/state/procevent-inbox/lavish-b39c9498732381eb.1.result
+session:
+  file: ~/tmp/fm-lab.zsEaA3/art/board.html
+  status: browser_disconnected
+next_step: The Lavish review window was closed or disconnected. The session remains open and resumable; ask the user whether they want to reopen it or end the session. Do not reopen or end it without their direction.
+### ~/tmp/fm-lab.zsEaA3/state/procevent-inbox/lavish-b39c9498732381eb.2.result
+session:
+  file: ~/tmp/fm-lab.zsEaA3/art/board.html
+  status: browser_disconnected
+next_step: The Lavish review window was closed or disconnected. The session remains open and resumable; ask the user whether they want to reopen it or end the session. Do not reopen or end it without their direction.
+## wake queue
+cat: ~/tmp/fm-lab.zsEaA3/state/.wake-queue: No such file or directory

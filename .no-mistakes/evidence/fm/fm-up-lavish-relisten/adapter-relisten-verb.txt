@@ -1,0 +1,7 @@
+$ fm-procevent-lavish.sh relisten
+rc=0
+$ fm-procevent-lavish.sh relisten extra
+Lavish adapter for the generic process-to-event runner.
+
+Usage:
+rc=
