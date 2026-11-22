@@ -18,7 +18,7 @@ A decision includes its task, title, exact recorded question and answer, evidenc
 These are contributions to assess in a retrospective, not claims that a change is active or valuable in production.
 
 `links.items` has one task entry for each task recorded on the day and one MR entry for each merge or pull request URL recorded for those tasks.
-Each entry carries its explicit `blocked_by` task IDs, `id_family` and other `family_tasks`, `story_refs` and `epic_refs` from the task title, `origin_tasks` recorded on captain decision or follow-up notes, and earlier `scout_reports` and `scout_tasks` named by the task.
+Each entry carries its explicit `blocked_by` task IDs, `id_family` and other `family_tasks`, `story_refs` and `epic_refs` from the task title, `origin_tasks` from `Captain hold origin: <task>` note lines on captain decisions and their follow-ups, and earlier `scout_reports` and `scout_tasks` named by the task.
 An ID family is the shortest shared task-ID prefix of at least three hyphen-separated parts, or a shorter prefix that is itself a recorded task ID; family members are limited to the day's tasks, so every member of a family carries the same `id_family` and lists all the others.
 The scout fields include only named reports or tasks whose scout task was recorded no later than this day, and exclude a scout's own report.
 The links are evidence for a retrospective to interpret; the collector does not group tasks into deliverables.
