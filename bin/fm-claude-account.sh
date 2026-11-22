@@ -151,18 +151,14 @@ cmd_get() {
   token=
 }
 
-# Print the configured Keychain slots. Return 2 when config/claude-accounts is
-# a config-directory account list rather than Keychain slots.
+# Print the configured Keychain slots. Return 2 when config/claude-accounts
+# holds a config-directory entry (`ordinary` or an absolute path) instead.
 configured_keychain_slots() {
-  local slots
-  if fm_claude_account_keychain_list "$CONFIG"; then
-    fm_claude_account_configured_slots "$CONFIG"
-    return
+  if [ -f "$CONFIG/claude-accounts" ] \
+    && grep -Eq '^[[:space:]]*(ordinary[[:space:]]*$|/)' "$CONFIG/claude-accounts"; then
+    return 2
   fi
-  if slots=$(fm_claude_account_configured_slots "$CONFIG" 2>/dev/null) && [ -z "$slots" ]; then
-    return 0
-  fi
-  return 2
+  fm_claude_account_configured_slots "$CONFIG"
 }
 
 CONFIG_DIRECTORY_LIST_NOTE="config/claude-accounts is a config-directory account list, not Keychain slots; measure its accounts with bin/fm-claude-account-quota.sh"

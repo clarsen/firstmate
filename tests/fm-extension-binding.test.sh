@@ -441,7 +441,7 @@ run_extension_section_lane() {
 
 # The coordinator stops any section lane, including the aggregate run's, that
 # outlives this bound, so no wait inside a section can usefully run longer.
-EXTENSION_SECTION_LANE_MAX_SECONDS=34
+EXTENSION_SECTION_LANE_MAX_SECONDS=120
 
 run_extension_section_lanes() {
   local section result_file section_rc timeout_seconds deadline deadline_epoch index remaining launched total maximum_sections
@@ -451,11 +451,11 @@ run_extension_section_lanes() {
   local -a section_results=()
   local -a section_complete=()
   local section_result_root
-  timeout_seconds=${FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS:-120}
+  timeout_seconds=${FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS:-$EXTENSION_SECTION_LANE_MAX_SECONDS}
   case "$timeout_seconds" in
     ''|*[!0-9]*) return 64 ;;
   esac
-  [ "$timeout_seconds" -gt 0 ] && [ "$timeout_seconds" -lt 125 ] || return 64
+  [ "$timeout_seconds" -gt 0 ] && [ "$timeout_seconds" -le "$EXTENSION_SECTION_LANE_MAX_SECONDS" ] || return 64
   section_result_root=$(mktemp -d "$TMP_ROOT/section-lanes.XXXXXX") || return 1
   total=${#sections[@]}
   # Sixteen selectors are validated here. The bounded aggregate keeps its
@@ -2425,7 +2425,7 @@ REMOTE_SSH_COUNT="$TMP_ROOT/remote-ssh.count"
 mkdir -p "$H_REMOTE_CONTROL/data" "$H_REMOTE" "$REMOTE_ROOT/bin"
 printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
 for remote_file in \
-  fm-extension.mjs fm-extension-launch-barrier.mjs fm-extension.sh fm-procevent.sh fm-procevent-lib.sh fm-procevent-extension-capture.pl fm-procevent-lavish.sh \
+  fm-extension.mjs fm-extension-deadline.mjs fm-extension-launch-barrier.mjs fm-extension.sh fm-procevent.sh fm-procevent-lib.sh fm-procevent-extension-capture.pl fm-procevent-lavish.sh \
   fm-pr-lib.sh fm-wake-lib.sh fm-path-lib.sh fm-remote-entrypoint.sh fm-remote-job-lib.sh fm-excl-mkdir-lib.sh \
   fm-remote-job-worker.sh; do
   cp "$ROOT/bin/$remote_file" "$REMOTE_ROOT/bin/$remote_file"

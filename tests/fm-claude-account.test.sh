@@ -238,6 +238,24 @@ EOF
   pass "list and status treat ordinary and config-directory lists as config-directory lists, not Keychain slots"
 }
 
+test_list_and_status_still_refuse_an_invalid_slot_name() {
+  local rec fakebin store home out status cmd
+  rec=$(new_case invalid-slot-list)
+  IFS='|' read -r fakebin store <<EOF
+$rec
+EOF
+  home="$TMP_ROOT/invalid-slot-list/home"
+  mkdir -p "$home/config" "$home/state"
+  printf 'work-a\nwork.alt\n' > "$home/config/claude-accounts"
+  for cmd in list status; do
+    out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$BIN" "$cmd" 2>&1) status=$?
+    expect_code 1 "$status" "$cmd on a slot list with a typo should fail: $out"
+    assert_contains "$out" "invalid slot name 'work.alt'" "$cmd should name the invalid slot"
+    assert_not_contains "$out" "config-directory" "$cmd must not call a mistyped slot list a config-directory list"
+  done
+  pass "list and status still refuse a slot list with an invalid slot name"
+}
+
 test_add_then_get_roundtrips
 test_add_rejects_empty_or_whitespace_token
 test_get_missing_slot_names_the_slot_only
@@ -251,3 +269,4 @@ test_status_reports_a_past_reset_window_as_reset
 test_status_reports_no_reading_for_a_never_recorded_slot
 test_status_with_no_configured_slots
 test_list_and_status_point_config_directory_lists_at_the_quota_tool
+test_list_and_status_still_refuse_an_invalid_slot_name
