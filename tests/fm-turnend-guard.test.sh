@@ -2165,9 +2165,11 @@ SH
       ;;
   esac
   if [ "$variant" = alarm-signal ]; then
-    # Deterministically TERM after the alarm commit, at budget-lock release.
-    # The final-rewake contract requires exit 2 with the banner, not the quiet
-    # exit used when some earlier invocation committed the episode's alarm.
+    # Deterministically TERM the auto-arm after its alarm commit, at budget-lock
+    # release. The final-rewake contract requires exit 2 with the banner, not
+    # the quiet exit used when some earlier invocation committed the episode's
+    # alarm. The guard sources this same library and may release the budget
+    # lock after the commit too, so only the auto-arm is signalled.
     cat >> "$dir/bin/fm-wake-lib.sh" <<'SH'
 fixture_alarm_present=0
 [ ! -e "$FM_HOME/state/.claude-autoarm-failure-alarmed" ] || fixture_alarm_present=1
@@ -2175,6 +2177,7 @@ eval "$(declare -f fm_lock_release | sed '1s/fm_lock_release/fixture_lock_releas
 fm_lock_release() {
   fixture_lock_release "$@"
   if [ "$fixture_alarm_present" -eq 0 ] \
+    && [ "${0##*/}" = fm-claude-stop-autoarm.sh ] \
     && [ "$1" = "$FM_HOME/state/.turnend-claude-blocks.lock" ] \
     && [ -e "$FM_HOME/state/.claude-autoarm-failure-alarmed" ]; then
     kill -TERM "${BASHPID:-$$}"

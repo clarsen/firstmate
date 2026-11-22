@@ -1626,7 +1626,12 @@ test_orphaned_claim_from_dead_session_is_superseded_by_replacement() {
         "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
       ' > "$dir/state/replacement-out" 2>&1 &
   RUN_AUTOARM_BG_PID=$!
-  for i in $(seq 1 250); do
+  # The replacement first reclaims the dead lock through fm-lock.sh, whose
+  # ancestry walks can take several seconds on a loaded host; releasing the
+  # arm before it claims would let the orphan close its own cycle as owner.
+  # The loop exits as soon as the replacement arms, so only the regression
+  # (a deferring replacement) waits out the full 30-second bound.
+  for i in $(seq 1 1500); do
     kill -0 "$RUN_AUTOARM_BG_PID" 2>/dev/null || break
     [ "$(wc -l < "$dir/state/arm-ran")" -ge 2 ] && break
     sleep 0.02
@@ -1697,7 +1702,12 @@ test_resumed_same_id_session_supersedes_the_orphan() {
         "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
       ' > "$dir/state/replacement-out" 2>&1 &
   RUN_AUTOARM_BG_PID=$!
-  for i in $(seq 1 250); do
+  # The replacement first reclaims the dead lock through fm-lock.sh, whose
+  # ancestry walks can take several seconds on a loaded host; releasing the
+  # arm before it claims would let the orphan close its own cycle as owner.
+  # The loop exits as soon as the replacement arms, so only the regression
+  # (a deferring replacement) waits out the full 30-second bound.
+  for i in $(seq 1 1500); do
     kill -0 "$RUN_AUTOARM_BG_PID" 2>/dev/null || break
     [ "$(wc -l < "$dir/state/arm-ran")" -ge 2 ] && break
     sleep 0.02
