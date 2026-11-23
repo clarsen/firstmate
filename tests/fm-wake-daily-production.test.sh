@@ -2,6 +2,7 @@
 set -eu
 export TMPDIR="$HOME/tmp/fm-scratch/wake-story13-deploy-evidence"
 mkdir -p "$TMPDIR"
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 task_tmp=$(fm_test_tmproot fm-wake-daily-production)
