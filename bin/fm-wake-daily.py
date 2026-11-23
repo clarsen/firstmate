@@ -11,7 +11,9 @@ section in this version of the record.
 """
 
 import argparse
+import csv
 import fcntl
+import io
 from datetime import date, datetime, timedelta, timezone
 import json
 import logging
@@ -23,6 +25,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from urllib.parse import quote, urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -56,6 +59,118 @@ HOSTUPDATE_PROJECT = "projects/lblnet%2Flblnet_hostupdate"
 HOSTUPDATE_API = f"{HOSTUPDATE_PROJECT}/pipelines"
 MR_REF = re.compile(r"refs/merge-requests/([1-9][0-9]*)/(?:head|merge|train)")
 CHANGE_CLASSES = ("image_build", "full_unit", "other")
+DEPLOY_METRICS = "influxdb:lsg_deploy_metrics/deploy_lead_time"
+DEPLOY_QUERY_URL = "https://lsg-influxdb.lbl.gov:8086/api/v2/query?org=LSG"
+DEPLOY_PATHS = {"datafeed_config", "arpwatch-ng", "iprequest_app_code",
+                "iprequest_onestop_code", "iprequest_config", "vantage_code",
+                "hostupdate_iprequest_app_pin", "hostupdate_iprequest_onestop_pin",
+                "hostupdate_iprequest_both_pin", "hostupdate_iprequest_pin",
+                "hostupdate_vantage_pin"}
+
+
+def deploy_token(home):
+    """Use the home's one-key .env parser; process environment takes precedence."""
+    if os.environ.get("INFLUXDB_DEPLOY_METRICS_TOKEN"):
+        return os.environ["INFLUXDB_DEPLOY_METRICS_TOKEN"]
+    result = subprocess.run(
+        ["bash", "-c", '. "$1"; fmx_env_get INFLUXDB_DEPLOY_METRICS_TOKEN "$2"',
+         "_", str(Path(__file__).with_name("fm-env-lib.sh")), str(home / ".env")],
+        capture_output=True, text=True, check=False)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def query_deploy_metrics(day, home, coverage):
+    token = deploy_token(home)
+    if not token:
+        coverage[DEPLOY_METRICS] = {"status": "not_measurable", "reason": "read token absent"}
+        return None
+    start = (date.fromisoformat(day) - timedelta(days=120)).isoformat() + "T00:00:00Z"
+    stop = (date.fromisoformat(day) + timedelta(days=2)).isoformat() + "T00:00:00Z"
+    flux = (f'from(bucket: "lsg_deploy_metrics") |> range(start: time(v: "{start}"), '
+            f'stop: time(v: "{stop}")) |> filter(fn: (r) => '
+            'r._measurement == "deploy_lead_time") |> pivot(rowKey: ["_time"], '
+            'columnKey: ["_field"], valueColumn: "_value")')
+    request = urllib.request.Request(
+        DEPLOY_QUERY_URL, data=flux.encode(), method="POST",
+        headers={"Authorization": "Token " + token, "Accept": "application/csv",
+                 "Content-Type": "application/vnd.flux"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read().decode("utf-8")
+        columns = None
+        points = []
+        for row in csv.reader(io.StringIO(body)):
+            if not row or row[0].startswith("#"):
+                continue
+            if "_measurement" in row and "result" in row:
+                columns = row
+                continue
+            if columns is None or len(row) != len(columns):
+                raise ValueError("invalid InfluxDB CSV")
+            point = dict(zip(columns, row))
+            if point.get("_measurement") == "deploy_lead_time":
+                points.append(point)
+        if columns is None:
+            raise ValueError("missing InfluxDB CSV header")
+    except (OSError, UnicodeError, ValueError):
+        coverage[DEPLOY_METRICS] = {"status": "not_measurable", "reason": "query unavailable or invalid"}
+        return None
+    coverage[DEPLOY_METRICS] = {"status": "readable"}
+    return points
+
+
+def production_evidence(day, ships, points, coverage):
+    if points is None:
+        return {"deployed": [], "not_shown": []}, {"status": "not_measurable", "count": None,
+                                                    "inputs": [DEPLOY_METRICS]}
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), PACIFIC).astimezone(timezone.utc)
+    end = datetime.combine(date.fromisoformat(day) + timedelta(days=1),
+                           datetime.min.time(), PACIFIC).astimezone(timezone.utc)
+    def on_day(value):
+        try:
+            stamp = datetime.fromtimestamp(int(value) / 1000, timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return stamp if start <= stamp < end else None
+    tasks = {pr_key(item["evidence"]): item["task"] for project in ships
+             for item in project["ships"] if pr_key(item["evidence"])}
+    deployed, not_shown = [], []
+    measured_mrs = set()
+    for point in points:
+        mr = point.get("mr_url")
+        if not mr:
+            continue
+        key = pr_key(mr)
+        if key is None:
+            continue
+        merged = on_day(point.get("merged_at_ms"))
+        deployed_at = on_day(point.get("deployed_at_ms"))
+        if merged:
+            measured_mrs.add(key)
+        if (point.get("path") in DEPLOY_PATHS and deployed_at and
+                point.get("deployed") == "1" and point.get("deploy_job_id", "").isdigit()):
+            deployed.append({"mr": key, "task": tasks.get(key), "path": point["path"],
+                             "deployed_at": deployed_at.isoformat().replace("+00:00", "Z"),
+                             "deploy_job_id": int(point["deploy_job_id"]),
+                             "evidence": DEPLOY_METRICS})
+        elif merged:
+            not_shown.append({"mr": key, "task": tasks.get(key), "path": point["path"],
+                              "merged_at": merged.isoformat().replace("+00:00", "Z"),
+                              "reason": ("no GitLab-visible production signal for this path"
+                                         if point["path"] not in DEPLOY_PATHS else
+                                         "no successful production deploy recorded by day end")})
+    shown = {item["mr"] for item in deployed}
+    not_shown = [item for item in not_shown if item["mr"] not in shown]
+    for project in ships:
+        for item in project["ships"]:
+            key = pr_key(item["evidence"])
+            if key and key not in measured_mrs and key not in shown:
+                not_shown.append({"mr": key, "task": item["task"], "path": None,
+                                  "merged_at": item["merged_at"],
+                                  "reason": "no matching production measurement"})
+    deployed.sort(key=lambda item: (item["deployed_at"], item["mr"], item["path"]))
+    not_shown.sort(key=lambda item: (item["merged_at"], item["mr"], item["path"] or ""))
+    return {"deployed": deployed, "not_shown": not_shown}, {"status": "measured", "count": len(deployed)}
 
 
 def read_text(path, coverage):
@@ -767,6 +882,9 @@ def build(day, home):
             items.sort(key=lambda item: (item["task"], item["evidence"]))
         ordered_projects.append({"project": project, **signals})
 
+    deploy_points = query_deploy_metrics(day, home, coverage)
+    production, production_coverage = production_evidence(day, ordered_projects, deploy_points, coverage)
+
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
     counts = {}
@@ -808,6 +926,7 @@ def build(day, home):
                                "reason": "missing or unreadable input", "inputs": missing}
                               if missing else {"status": "measured", "count": observed})
     counts["hostupdate_mr_pipeline_wall_time"] = hostupdate_coverage
+    counts["production_evidence"] = production_coverage
     return {
         "schema": "fm-wake-daily.v1",
         "day": day,
@@ -816,6 +935,7 @@ def build(day, home):
         "links": {"items": link_items},
         "rework": rework,
         "hostupdate_mr_pipeline_wall_time": hostupdate_pipelines,
+        "production_evidence": production,
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,

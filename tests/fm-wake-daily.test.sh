@@ -97,8 +97,11 @@ POST_LATER=$((POST_NOON + 60))
 PINNED="$TMP_ROOT/pinned-collector.py"
 cat > "$PINNED" <<'PY'
 import importlib.util
+import io
+import os
 import sys
 from datetime import datetime
+import urllib.request
 
 path, now = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("fm_wake_daily", path)
@@ -113,6 +116,9 @@ class PinnedClock(datetime):
 
 
 module.datetime = PinnedClock
+os.environ["INFLUXDB_DEPLOY_METRICS_TOKEN"] = "fixture-only"
+urllib.request.urlopen = lambda request, timeout: io.BytesIO(
+    b",result,table,_measurement,path,project,iid,mr_url,deployed\n")
 sys.argv = [path] + sys.argv[3:]
 module.main()
 PY

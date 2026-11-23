@@ -996,6 +996,7 @@ tests/fm-update.test.sh 11894
 tests/fm-vendor-auth-probe.test.sh 43278
 tests/fm-voice-relay.test.sh 28917
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 7345
+tests/fm-wake-daily-production.test.sh 1600
 tests/fm-wake-daily-rework.test.sh 1600
 tests/fm-wake-daily.test.sh 1600
 tests/fm-wake-drain-open-decisions-cursor.test.sh 47677

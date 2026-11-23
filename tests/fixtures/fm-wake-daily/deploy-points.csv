@@ -1,0 +1,6 @@
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,string,string,string,string,long,string,long,long
+#group,false,false,true,true,false,true,true,true,false,false,false,false,false
+#default,_result,,,,,,,,,,,,
+,result,table,_start,_stop,_time,_measurement,path,project,iid,deployed,mr_url,merged_at_ms,deployed_at_ms,deploy_job_id
+,,0,2026-07-24T00:00:00Z,2026-11-23T00:00:00Z,2026-11-21T17:00:00Z,deploy_lead_time,datafeed_config,lab/datafeed,12,1,https://example.invalid/lab/datafeed/-/merge_requests/12,1795280400000,1795284000000,123456
+,,1,2026-07-24T00:00:00Z,2026-11-23T00:00:00Z,2026-11-21T19:00:00Z,deploy_lead_time,generate_nagios_cfg,lab/generate_nagios_cfg,13,0,https://example.invalid/lab/generate_nagios_cfg/-/merge_requests/13,1795287600000,,

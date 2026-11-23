@@ -13,7 +13,7 @@ A selected-day run always rebuilds that day from current sources.
 The script refuses today and future dates in `America/Los_Angeles`.
 It replaces the output atomically and leaves a byte-identical file alone on a repeat run with unchanged inputs.
 
-The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, and `coverage` sections.
+The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, `production_evidence`, and `coverage` sections.
 `contributions.projects` groups ships, scouts, and closed decisions by recorded project, using `none recorded` when a project was not recorded.
 Rows with no recorded kind appear in `unclassified` under their recorded project or `none recorded`.
 `coverage.signals.unclassified` reports their day count alongside ships, so a ship count can be read with its classification gap.
@@ -62,6 +62,16 @@ The `kind` is `generated_followup` when the pipeline has a `generated-followup-v
 Summaries use seconds and return null median, percentile, and share when their count is zero.
 The collector uses read-only GitLab API calls through `glab` against `lsg-git.lbl.gov`, listing successful merge request pipelines updated since the start of the requested day, so a pipeline whose record was updated on a later day still counts on its finish day; listed pipelines created after the requested day are skipped without further requests.
 If the forge is unreachable or its response is invalid, the section has no rows, summary values are null, and `coverage.signals.hostupdate_mr_pipeline_wall_time` is `not_measurable` rather than a zero count; its `error` names the failed check and `pipeline_id` names the pipeline being read, or is null.
+`production_evidence.deployed` lists MRs whose successful production job reached production on the selected Pacific day, with the source MR, any matching fleet task, measurement path, UTC deploy time, and numeric GitLab `deploy_job_id`.
+The source is gitlab_watch's `deploy_lead_time` measurement in the `lsg_deploy_metrics` InfluxDB bucket, limited to the production paths in its [measurement contract](https://lsg-git.lbl.gov/lblnet/gitlab_watch/-/blob/main/docs/modules/ROOT/pages/deployment-lead-time.adoc#measurement-contract).
+The bucket has `path`, `project`, and `iid` tags and `mr_url`, `deployed`, `deployed_at_ms`, and `deploy_job_id` fields, but no deploy job URL field.
+The numeric ID is the join key for a later hostupdate receipt's GitLab job URL.
+The bucket query considers MRs merged within 120 days before the selected day, matching the source collector's look-back window.
+`production_evidence.not_shown` lists MRs merged on the selected day without such evidence by day end, with merge time and reason; this includes generate_nagios_cfg MRs because its production reload has no GitLab-visible receipt.
+The section reports source observations and never judges whether a deliverable is active.
+The collector reads `INFLUXDB_DEPLOY_METRICS_TOKEN` from the process environment or the selected home's gitignored `.env`, using the same one-key parsing rules as `bin/fm-env-lib.sh`.
+The InfluxDB URL, organization `LSG`, and bucket are fixed; the token is never written to the daily record or logs.
+If the token is absent or the query fails, `coverage.inputs.influxdb:lsg_deploy_metrics/deploy_lead_time` and `coverage.signals.production_evidence` are `not_measurable`, with a null count.
 Other Wake signal sections are absent until their stories add them.
 
 The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, and GitLab pipeline, job, and merge request records.
