@@ -69,7 +69,7 @@ The numeric ID is the join key for a later hostupdate receipt's GitLab job URL.
 The bucket query considers MRs merged within 120 days before the selected day, matching the source collector's look-back window.
 `production_evidence.not_shown` lists MRs merged on the selected day without such evidence by day end, with merge time and reason; this includes generate_nagios_cfg MRs because its production reload has no GitLab-visible receipt.
 The section reports source observations and never judges whether a deliverable is active.
-The collector reads `INFLUXDB_DEPLOY_METRICS_TOKEN` only from the selected home's gitignored `.env`, never from the process environment,, using the same one-key parsing rules as `bin/fm-env-lib.sh`.
+The collector reads `INFLUXDB_DEPLOY_METRICS_TOKEN` only from the selected home's gitignored `.env`, never from the process environment, using the same one-key parsing rules as `bin/fm-env-lib.sh`.
 The InfluxDB URL, organization `LSG`, and bucket are fixed; the token is never written to the daily record or logs.
 If the token is absent or the query fails, `coverage.inputs.influxdb:lsg_deploy_metrics/deploy_lead_time` and `coverage.signals.production_evidence` are `not_measurable`, with a null count.
 Other Wake signal sections are absent until their stories add them.
