@@ -57,6 +57,8 @@ REVERT = re.compile(r"^Revert\s+", re.IGNORECASE)
 HOSTUPDATE_PIPELINES = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"
 HOSTUPDATE_PROJECT = "projects/lblnet%2Flblnet_hostupdate"
 HOSTUPDATE_API = f"{HOSTUPDATE_PROJECT}/pipelines"
+HOSTUPDATE_RECEIPTS = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json"
+FIRSTMATE_UPDATES = "git:home/firstmate/reflog"
 MR_REF = re.compile(r"refs/merge-requests/([1-9][0-9]*)/(?:head|merge|train)")
 CHANGE_CLASSES = ("image_build", "full_unit", "other")
 DEPLOY_METRICS = "influxdb:lsg_deploy_metrics/deploy_lead_time"
@@ -593,7 +595,7 @@ def forge_rework(day, home, rows, ledger, coverage):
     window = {"count": candidates, "assumed_start": assumed_starts,
               "assumed_start_rule": f"done day minus {ASSUMED_LOOKBACK_DAYS} days when no start is recorded"}
     return closed, failed, window
-def gitlab_json(endpoint, *, ndjson=False):
+def gitlab_json(endpoint, *, ndjson=False, missing_ok=False):
     command = ["glab", "api", endpoint, "--hostname", "lsg-git.lbl.gov"]
     if ndjson:
         command += ["--paginate", "--output", "ndjson"]
@@ -604,6 +606,8 @@ def gitlab_json(endpoint, *, ndjson=False):
     except subprocess.TimeoutExpired as error:
         raise ValueError("GitLab API request timed out") from error
     if result.returncode:
+        if missing_ok and "404" in result.stderr:
+            return None
         raise ValueError(f"GitLab API request failed (glab exit {result.returncode})")
     try:
         if ndjson:
@@ -611,6 +615,125 @@ def gitlab_json(endpoint, *, ndjson=False):
         return json.loads(result.stdout)
     except ValueError as error:
         raise ValueError("GitLab API returned invalid JSON") from error
+
+
+def hostupdate_deploy_receipts(day, ships, task_rows, coverage):
+    """Read retained CI artifacts, using the job ID as the stable join key."""
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), PACIFIC)
+    end = start + timedelta(days=1)
+    query = urlencode({"updated_after":
+                       (start - timedelta(microseconds=1)).isoformat(), "per_page": 100})
+    tasks = {pr_key(item["evidence"]): item["task"] for project in ships
+             for item in project["ships"] if pr_key(item["evidence"])}
+    tasks.update({pr_key(row["pr_url"]): task for task, row in task_rows.items()
+                  if row.get("pr_url") and pr_key(row["pr_url"])})
+    rows = []
+    try:
+        pipelines = gitlab_json(f"{HOSTUPDATE_API}?{query}", ndjson=True)
+        seen = set()
+        commit_mrs = {}
+        for pipeline in pipelines:
+            if not isinstance(pipeline, dict) or type(pipeline.get("id")) is not int:
+                raise ValueError("invalid pipeline list entry")
+            if pipeline["id"] in seen or gitlab_time(pipeline.get("created_at")) >= end.astimezone(timezone.utc):
+                continue
+            seen.add(pipeline["id"])
+            jobs = gitlab_json(f"{HOSTUPDATE_API}/{pipeline['id']}/jobs?per_page=100&include_retried=true",
+                               ndjson=True)
+            if not isinstance(jobs, list):
+                raise ValueError("invalid pipeline jobs")
+            for job in jobs:
+                if not isinstance(job, dict) or type(job.get("id")) is not int:
+                    raise ValueError("invalid job")
+                finished = job.get("finished_at")
+                if not finished or gitlab_time(finished) < start.astimezone(timezone.utc):
+                    continue
+                if not job.get("artifacts_file"):
+                    if (job.get("name") or "").startswith("ansible-") and gitlab_time(finished) < end.astimezone(timezone.utc):
+                        raise ValueError(f"deploy receipt artifact unavailable for job {job['id']}")
+                    continue
+                endpoint = f"{HOSTUPDATE_PROJECT}/jobs/{job['id']}/artifacts/deploy-event.json"
+                document = gitlab_json(endpoint, missing_ok=True)
+                if document is None:
+                    if (job.get("name") or "").startswith("ansible-"):
+                        raise ValueError(f"deploy receipt artifact unavailable for job {job['id']}")
+                    continue
+                events = document.get("events") if isinstance(document, dict) else document
+                if not isinstance(events, list):
+                    raise ValueError("invalid deploy receipt")
+                for event in events:
+                    if not isinstance(event, dict):
+                        raise ValueError("invalid deploy event")
+                    stamp = gitlab_time(event.get("ended_at"))
+                    if stamp.astimezone(PACIFIC).date().isoformat() != day:
+                        continue
+                    commit = event.get("commit_sha") or pipeline.get("sha")
+                    if not isinstance(commit, str) or not re.fullmatch("[0-9a-f]{40}", commit):
+                        raise ValueError("invalid receipt commit")
+                    if commit not in commit_mrs:
+                        mrs = gitlab_json(f"{HOSTUPDATE_PROJECT}/repository/commits/"
+                                          f"{quote(commit, safe='')}/merge_requests")
+                        if not isinstance(mrs, list):
+                            raise ValueError("invalid commit merge requests")
+                        commit_mrs[commit] = sorted({mr["web_url"] for mr in mrs if isinstance(mr, dict)
+                                                     and isinstance(mr.get("web_url"), str)})
+                    mr_urls = commit_mrs[commit]
+                    rows.append({"deploy_job_id": job["id"], "deployed_at": stamp.isoformat().replace("+00:00", "Z"),
+                                 "job_url": f"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/jobs/{job['id']}",
+                                 "mrs": mr_urls, "tasks": sorted({tasks[key] for url in mr_urls
+                                                                    if (key := pr_key(url)) in tasks}),
+                                 "host": event.get("host"), "service_or_role": event.get("service_or_role"),
+                                 "outcome": event.get("outcome")})
+    except (ValueError, KeyError, TypeError) as error:
+        failure = {"status": "not_measurable", "reason": "GitLab receipts unavailable or invalid", "error": str(error)}
+        coverage[HOSTUPDATE_RECEIPTS] = failure
+        return [], {**failure, "count": None, "inputs": [HOSTUPDATE_RECEIPTS]}
+    rows.sort(key=lambda item: (item["deployed_at"], item["deploy_job_id"], item["host"] or ""))
+    coverage[HOSTUPDATE_RECEIPTS] = {"status": "readable"}
+    return rows, {"status": "measured", "count": len(rows)}
+
+
+def firstmate_updates(day, home, coverage):
+    """Attribute commits brought in by this home's recorded fast forwards."""
+    try:
+        result = subprocess.run(["git", "-C", str(home), "reflog", "show", "--date=unix",
+                                 "--format=%H%x09%gD%x09%gs", "HEAD"], capture_output=True,
+                                text=True, timeout=30, check=True)
+        entries = []
+        for line in result.stdout.splitlines():
+            sha, selector, action = line.split("\t", 2)
+            match = re.search(r"@\{([0-9]+)\}", selector)
+            if not match:
+                raise ValueError("invalid reflog timestamp")
+            entries.append((sha, int(match.group(1)), action))
+        rows = []
+        for index, (after, epoch, action) in enumerate(entries[:-1]):
+            if action != "merge origin/main: Fast-forward" and not re.fullmatch(r"merge [^:]+: Fast-forward", action):
+                continue
+            stamp = datetime.fromtimestamp(epoch, timezone.utc)
+            if stamp.astimezone(PACIFIC).date().isoformat() != day:
+                continue
+            before = entries[index + 1][0]
+            commits = subprocess.run(["git", "-C", str(home), "rev-list", f"{before}..{after}"],
+                                     capture_output=True, text=True, timeout=30, check=True).stdout.splitlines()
+            prs = set()
+            for commit in commits:
+                found = subprocess.run(["gh", "api", f"repos/clarsen/firstmate/commits/{commit}/pulls"],
+                                       capture_output=True, text=True, timeout=30, check=True)
+                associated = json.loads(found.stdout)
+                if not isinstance(associated, list):
+                    raise ValueError("invalid GitHub commit PRs")
+                prs.update(pr["html_url"] for pr in associated if pr.get("merged_at") and pr.get("html_url"))
+            rows.append({"updated_at": stamp.isoformat().replace("+00:00", "Z"),
+                         "before": before, "after": after, "merged_prs": sorted(prs)})
+    except (OSError, ValueError, subprocess.SubprocessError, KeyError, TypeError) as error:
+        failure = {"status": "not_measurable", "reason": "home update history unavailable or invalid",
+                   "error": type(error).__name__}
+        coverage[FIRSTMATE_UPDATES] = failure
+        return [], {**failure, "count": None, "inputs": [FIRSTMATE_UPDATES]}
+    rows.sort(key=lambda item: (item["updated_at"], item["after"]))
+    coverage[FIRSTMATE_UPDATES] = {"status": "readable"}
+    return rows, {"status": "measured", "count": len(rows)}
 
 
 def gitlab_time(value):
@@ -882,6 +1005,8 @@ def build(day, home):
 
     deploy_points = query_deploy_metrics(day, home, coverage)
     production, production_coverage = production_evidence(day, ordered_projects, deploy_points, coverage)
+    receipts, receipts_coverage = hostupdate_deploy_receipts(day, ordered_projects, by_task, coverage)
+    updates, updates_coverage = firstmate_updates(day, home, coverage)
 
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
@@ -925,6 +1050,8 @@ def build(day, home):
                               if missing else {"status": "measured", "count": observed})
     counts["hostupdate_mr_pipeline_wall_time"] = hostupdate_coverage
     counts["production_evidence"] = production_coverage
+    counts["hostupdate_deploy_receipts"] = receipts_coverage
+    counts["firstmate_updates"] = updates_coverage
     return {
         "schema": "fm-wake-daily.v1",
         "day": day,
@@ -934,6 +1061,8 @@ def build(day, home):
         "rework": rework,
         "hostupdate_mr_pipeline_wall_time": hostupdate_pipelines,
         "production_evidence": production,
+        "hostupdate_deploy_receipts": {"events": receipts},
+        "firstmate_updates": {"updates": updates},
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,

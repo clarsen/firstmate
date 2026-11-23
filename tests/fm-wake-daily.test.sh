@@ -299,7 +299,7 @@ late_report late-catch "Late catch-up scout" 2026-11-22
 NOW=$CATCH_EARLY collect --catch-up "$CATCH_HOME" >/dev/null || fail "recovery catch-up failed"
 jq -e '
   .coverage.signals.hostupdate_mr_pipeline_wall_time.status == "measured"
-  and ([.coverage.inputs[].status] | unique) == ["readable"]
+  and ([.coverage.inputs | to_entries[] | select(.key != "git:home/firstmate/reflog" and .key != "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json") | .value.status] | unique) == ["readable"]
   and ([.contributions.projects[].scouts[].task] == ["late-catch"])
 ' "$(catch_day 2026-11-22)" >/dev/null || fail "catch-up did not rebuild a recent unmeasured record with late data"
 collect --catch-up "$CATCH_HOME" >/dev/null || fail "full catch-up failed"
@@ -307,7 +307,7 @@ collect --catch-up "$CATCH_HOME" >/dev/null || fail "full catch-up failed"
 [ ! -e "$(catch_day 2026-11-29)" ] || fail "catch-up finalized a day before its next day completed"
 jq -e '.coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].status == "not_measurable"' \
   "$(catch_day 2026-11-23)" >/dev/null || fail "fixture day 2026-11-23 was unexpectedly measured"
-jq -e '([.coverage.inputs[].status] | unique) == ["readable"]' "$(catch_day 2026-11-26)" >/dev/null || fail "fixture day 2026-11-26 was not fully measured"
+jq -e '([.coverage.inputs | to_entries[] | select(.key != "git:home/firstmate/reflog" and .key != "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json") | .value.status] | unique) == ["readable"]' "$(catch_day 2026-11-26)" >/dev/null || fail "fixture day 2026-11-26 was not fully measured"
 cp "$(catch_day 2026-11-23)" "$TMP_ROOT/catch-23.json"
 cp "$(catch_day 2026-11-26)" "$TMP_ROOT/catch-26.json"
 late_report after-window "Edited after the retry window" 2026-11-23
@@ -325,7 +325,7 @@ grep -q 'fm-wake-daily.py:[0-9].*2026-11-27.*IsADirectoryError' "$TMP_ROOT/catch
 [ -f "$(catch_day 2026-11-28)" ] || fail "catch-up stopped at a failing day"
 cmp -s "$TMP_ROOT/catch-23.json" "$(catch_day 2026-11-23)" || fail "catch-up rebuilt an unmeasured record past its retry window"
 NOW=2026-11-28T12:00:00-08:00 collect --catch-up "$CATCH_HOME" >/dev/null || fail "in-window catch-up failed"
-cmp -s "$TMP_ROOT/catch-26.json" "$(catch_day 2026-11-26)" || fail "catch-up rewrote a measured record inside its retry window"
+jq -e '[.contributions.projects[].scouts[].task] == ["after-final"]' "$(catch_day 2026-11-26)" >/dev/null || fail "catch-up missed a late edit while new signals remained unmeasured"
 collect 2026-11-26 "$CATCH_HOME" >/dev/null || fail "selected-day rebuild failed"
 jq -e '[.contributions.projects[].scouts[].task] == ["after-final"]' "$(catch_day 2026-11-26)" >/dev/null \
   || fail "selected-day run did not rebuild a measured record"

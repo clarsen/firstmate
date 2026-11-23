@@ -13,7 +13,7 @@ A selected-day run always rebuilds that day from current sources.
 The script refuses today and future dates in `America/Los_Angeles`.
 It replaces the output atomically and leaves a byte-identical file alone on a repeat run with unchanged inputs.
 
-The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, `production_evidence`, and `coverage` sections.
+The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, `production_evidence`, `hostupdate_deploy_receipts`, `firstmate_updates`, and `coverage` sections.
 `contributions.projects` groups ships, scouts, and closed decisions by recorded project, using `none recorded` when a project was not recorded.
 Rows with no recorded kind appear in `unclassified` under their recorded project or `none recorded`.
 `coverage.signals.unclassified` reports their day count alongside ships, so a ship count can be read with its classification gap.
@@ -72,7 +72,13 @@ The section reports source observations and never judges whether a deliverable i
 The collector reads `INFLUXDB_DEPLOY_METRICS_TOKEN` only from the selected home's gitignored `.env`, never from the process environment, using the same one-key parsing rules as `bin/fm-env-lib.sh`.
 The InfluxDB URL, organization `LSG`, and bucket are fixed; the token is never written to the daily record or logs.
 If the token is absent or the query fails, `coverage.inputs.influxdb:lsg_deploy_metrics/deploy_lead_time` and `coverage.signals.production_evidence` are `not_measurable`, with a null count.
-Other Wake signal sections are absent until their stories add them.
+`hostupdate_deploy_receipts.events` lists retained `deploy-event.json` events whose end time falls on the selected Pacific day, with UTC time, numeric GitLab deploy job ID and job URL, host, role, outcome, associated MRs, and matching fleet tasks.
+The collector reads the artifacts from the [hostupdate receipt source of truth](https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/blob/master/docs/modules/ROOT/pages/reference_deploy_receipts.adoc) through read-only GitLab API requests.
+The artifact retention is 45 days except jobs with shorter retention; the collector does not backfill expired artifacts.
+The numeric job ID joins this section to `production_evidence.deployed` without counting an overlapping deploy twice.
+`firstmate_updates.updates` lists this home's Git reflog fast forwards on the selected Pacific day, with UTC time, before and after commits, and merged GitHub PRs associated with commits brought in by each update.
+Both sections report observations and make no claim that a deliverable is active.
+An unavailable or invalid source makes its `coverage.inputs` and `coverage.signals` entries `not_measurable`, with a null count.
 
 The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, and GitLab pipeline, job, and merge request records.
 It changes no source file and writes only beneath `data/wake/`.
