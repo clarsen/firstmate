@@ -31,6 +31,7 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 LEDGER_CUTOFF = "2026-11-21"
 WAKE_START = date(2026, 11, 21)
 ASSUMED_LOOKBACK_DAYS = 14
+CATCH_UP_RETRY_DAYS = 3
 ROW = re.compile(r"^- \[[ xX]\] ([A-Za-z0-9._-]+) - (.*)$")
 META = re.compile(r"\s+\((?:repo|kind|priority|hold|hold-kind|hold-until): [^)]*\)$|\s+\((?:since|merged|reported|done) \d{4}-\d{2}-\d{2}\)$")
 URL = re.compile(r"https?://[^\s)<>]+")
@@ -856,23 +857,27 @@ def write_day(day, home):
     return output
 
 
-def needs_catch_up(output):
+def needs_catch_up(output, retry):
     if not output.exists():
         return True
+    if not retry:
+        return False
     inputs = json.loads(output.read_text(encoding="utf-8"))["coverage"]["inputs"]
     return any(info["status"] != "readable" for info in inputs.values())
 
 
-def catch_up(home, last):
+def catch_up(home, today):
     failed = 0
     day = WAKE_START
-    while day <= last:
+    while day <= today - timedelta(days=2):
         try:
-            if needs_catch_up(home / "data/wake/daily" / f"{day.isoformat()}.json"):
+            output = home / "data/wake/daily" / f"{day.isoformat()}.json"
+            if needs_catch_up(output, day >= today - timedelta(days=CATCH_UP_RETRY_DAYS)):
                 print(write_day(day.isoformat(), home))
-        except Exception:
+        except Exception as error:
             failed += 1
-            logging.exception("wake daily catch-up failed for %s in %s", day.isoformat(), home)
+            logging.error("wake daily catch-up failed for %s in %s: %s: %s",
+                          day.isoformat(), home, type(error).__name__, error)
         day += timedelta(days=1)
     return failed
 
@@ -882,7 +887,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("day", nargs="?", help="completed Pacific day, YYYY-MM-DD")
     parser.add_argument("--catch-up", action="store_true",
-                        help="write missing or incompletely measured Wake days once the next day has completed")
+                        help="write missing Wake days once the next day has completed and retry unmeasured recent days")
     parser.add_argument("--home", type=Path, default=Path(os.environ.get("FM_HOME", Path(__file__).resolve().parent.parent)))
     args = parser.parse_args()
     if args.catch_up == bool(args.day):
@@ -898,7 +903,7 @@ def main():
                 fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return
-            if catch_up(home, today - timedelta(days=2)):
+            if catch_up(home, today):
                 sys.exit(1)
         return
     try:

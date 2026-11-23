@@ -6,8 +6,8 @@ Applies to Firstmate homes using `fm-wake-daily.v1`; reviewed 2026-11-22.
 `bin/fm-wake-daily.py` writes one JSON record for a completed day in `data/wake/daily/` of the selected Firstmate home.
 The existing watcher starts a finite `--catch-up` run on its check cadence, five minutes by default, so no operator step is required.
 The run covers every Pacific day since Wake began on 2026-11-21 once the following day has also completed, so records lag one day and late backlog edits made just after midnight are included.
-It writes each missing day, including days missed while supervision was offline, and rebuilds an existing record while any of its `coverage.inputs` is `not_measurable`, so a brief forge or file outage does not freeze a record.
-Concurrent runs share a home-local lock, a failed day does not stop later days, and the watcher appends collector errors to `wake-daily.log` in its state directory.
+It writes each missing day, including days missed while supervision was offline, and rebuilds an existing record while any of its `coverage.inputs` is `not_measurable` and the day is at most three days old, so a brief forge or file outage does not freeze a record; after that window the record is final as written.
+Concurrent runs share a home-local lock, a failed day does not stop later days, and the watcher appends one error line per failing day to `wake-daily.log` in its state directory, keeping only its last 1000 lines once it exceeds 1 MB.
 For a selected historical day, run the collector with a Pacific date and optionally `--home HOME`; `FM_HOME` is the default home override.
 A selected-day run always rebuilds that day from current sources.
 The script refuses today and future dates in `America/Los_Angeles`.

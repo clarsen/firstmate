@@ -266,46 +266,58 @@ rm -r "$CASE_HOME/data/late-scout"
 collect "$POST" >/dev/null || fail "rerun after restoring sources failed"
 cmp -s "$TMP_ROOT/first.json" "$record" || fail "rebuild with unchanged inputs changed bytes"
 
-# Catch-up lags one day, retries records with unmeasured inputs, keeps measured
-# records final, and continues past a failing day.
+# Catch-up lags one day, retries records with unmeasured inputs while the day is
+# at most three days old, keeps other records final, and continues past a
+# failing day with one log line for it.
 CATCH_HOME="$TMP_ROOT/catch-home"
+CATCH_EARLY=2026-11-24T12:00:00-08:00
 catch_day() { printf '%s/data/wake/daily/%s.json' "$CATCH_HOME" "$1"; }
+late_report() {
+  printf -- '- [x] %s - %s (reported %s)\n' "$1" "$2" "$3" >> "$CATCH_HOME/data/backlog.md"
+  mkdir -p "$CATCH_HOME/data/$1"
+  printf '# %s\n' "$2" > "$CATCH_HOME/data/$1/report.md"
+}
 mkdir -p "$CATCH_HOME/data" "$CATCH_HOME/state" "$CATCH_HOME/projects"
 printf '## Done\n' > "$CATCH_HOME/data/backlog.md"
 : > "$CATCH_HOME/data/done-archive.md"
 : > "$CATCH_HOME/state/fleet-ledger.jsonl"
 printf 'fail\n' > "$MOCK_GLAB_MODE_FILE"
-collect --catch-up "$CATCH_HOME" >/dev/null || fail "catch-up failed"
+NOW=$CATCH_EARLY collect --catch-up "$CATCH_HOME" >/dev/null || fail "catch-up failed"
 [ -f "$(catch_day 2026-11-21)" ] || fail "catch-up missed the first Wake day"
-[ -f "$(catch_day 2026-11-28)" ] || fail "catch-up missed a day whose next day completed"
-[ ! -e "$(catch_day 2026-11-29)" ] || fail "catch-up finalized a day before its next day completed"
+[ -f "$(catch_day 2026-11-22)" ] || fail "catch-up missed a day whose next day completed"
+[ ! -e "$(catch_day 2026-11-23)" ] || fail "catch-up finalized a day before its next day completed"
 jq -e '.coverage.signals.hostupdate_mr_pipeline_wall_time.status == "not_measurable"' "$(catch_day 2026-11-22)" >/dev/null \
   || fail "unreachable GitLab was counted as zero during catch-up"
 rm "$MOCK_GLAB_MODE_FILE"
-printf '%s\n' '- [x] late-catch - Late catch-up scout (reported 2026-11-22)' >> "$CATCH_HOME/data/backlog.md"
-mkdir -p "$CATCH_HOME/data/late-catch"
-printf '# Late catch-up report\n' > "$CATCH_HOME/data/late-catch/report.md"
-collect --catch-up "$CATCH_HOME" >/dev/null || fail "recovery catch-up failed"
+late_report late-catch "Late catch-up scout" 2026-11-22
+NOW=$CATCH_EARLY collect --catch-up "$CATCH_HOME" >/dev/null || fail "recovery catch-up failed"
 jq -e '
   .coverage.signals.hostupdate_mr_pipeline_wall_time.status == "measured"
   and ([.coverage.inputs[].status] | unique) == ["readable"]
   and ([.contributions.projects[].scouts[].task] == ["late-catch"])
-' "$(catch_day 2026-11-22)" >/dev/null || fail "catch-up did not rebuild an unmeasured record with late data"
+' "$(catch_day 2026-11-22)" >/dev/null || fail "catch-up did not rebuild a recent unmeasured record with late data"
+collect --catch-up "$CATCH_HOME" >/dev/null || fail "full catch-up failed"
+[ -f "$(catch_day 2026-11-28)" ] || fail "catch-up missed a day whose next day completed"
+[ ! -e "$(catch_day 2026-11-29)" ] || fail "catch-up finalized a day before its next day completed"
+jq -e '.coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].status == "not_measurable"' \
+  "$(catch_day 2026-11-23)" >/dev/null || fail "fixture day 2026-11-23 was unexpectedly measured"
 jq -e '([.coverage.inputs[].status] | unique) == ["readable"]' "$(catch_day 2026-11-26)" >/dev/null || fail "fixture day 2026-11-26 was not fully measured"
+cp "$(catch_day 2026-11-23)" "$TMP_ROOT/catch-23.json"
 cp "$(catch_day 2026-11-26)" "$TMP_ROOT/catch-26.json"
-printf '%s\n' '- [x] after-final - Edited after measurement (reported 2026-11-26)' >> "$CATCH_HOME/data/backlog.md"
-mkdir -p "$CATCH_HOME/data/after-final"
-printf '# After final report\n' > "$CATCH_HOME/data/after-final/report.md"
+late_report after-window "Edited after the retry window" 2026-11-23
+late_report after-final "Edited after measurement" 2026-11-26
 rm "$(catch_day 2026-11-21)"
-rm "$(catch_day 2026-11-25)"
-rm "$(catch_day 2026-11-24)"
-mkdir "$(catch_day 2026-11-24)"
+rm "$(catch_day 2026-11-28)"
+rm "$(catch_day 2026-11-27)"
+mkdir "$(catch_day 2026-11-27)"
 if collect --catch-up "$CATCH_HOME" >/dev/null 2>"$TMP_ROOT/catch.err"; then
   fail "catch-up hid a failing day"
 fi
-grep -q 'fm-wake-daily.py:[0-9].*2026-11-24' "$TMP_ROOT/catch.err" || fail "catch-up failure lacked its day and source line"
+[ "$(grep -c '' "$TMP_ROOT/catch.err")" = 1 ] || fail "catch-up failure was not one line"
+grep -q 'fm-wake-daily.py:[0-9].*2026-11-27.*IsADirectoryError' "$TMP_ROOT/catch.err" || fail "catch-up failure lacked its day, error, and source line"
 [ -f "$(catch_day 2026-11-21)" ] || fail "catch-up did not recover a missed day"
-[ -f "$(catch_day 2026-11-25)" ] || fail "catch-up stopped at a failing day"
+[ -f "$(catch_day 2026-11-28)" ] || fail "catch-up stopped at a failing day"
+cmp -s "$TMP_ROOT/catch-23.json" "$(catch_day 2026-11-23)" || fail "catch-up rebuilt an unmeasured record past its retry window"
 cmp -s "$TMP_ROOT/catch-26.json" "$(catch_day 2026-11-26)" || fail "catch-up rewrote a measured record"
 collect 2026-11-26 "$CATCH_HOME" >/dev/null || fail "selected-day rebuild failed"
 jq -e '[.contributions.projects[].scouts[].task] == ["after-final"]' "$(catch_day 2026-11-26)" >/dev/null \
@@ -358,6 +370,7 @@ printf '## Done\n' > "$SCHEDULE_HOME/data/done-archive.md"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/watch-bin/tmux"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/watch-bin/glab"
 mkdir -p "$SCHEDULE_HOME/data/wake/daily/2026-11-21.json"
+for n in $(seq 1 2000); do printf 'prefill-%04d %0600d\n' "$n" 0; done > "$SCHEDULE_HOME/state/wake-daily.log"
 REAL_PYTHON=$(command -v python3)
 cat > "$TMP_ROOT/watch-bin/python3" <<EOF
 #!/usr/bin/env bash
@@ -380,6 +393,9 @@ wait "$WATCH_PID" 2>/dev/null || true
 [ -f "$SCHEDULE_HOME/data/wake/daily/2026-11-22.json" ] || fail "watcher did not schedule daily catch-up"
 [ ! -e "$SCHEDULE_HOME/data/wake/daily/2026-11-23.json" ] || fail "watcher catch-up did not lag one day"
 grep -q 'fm-wake-daily.py:[0-9].*2026-11-21' "$SCHEDULE_HOME/state/wake-daily.log" || fail "watcher discarded a collector failure"
+! grep -q 'prefill-0001 ' "$SCHEDULE_HOME/state/wake-daily.log" || fail "watcher did not trim an oversized collector log"
+grep -q 'prefill-2000 ' "$SCHEDULE_HOME/state/wake-daily.log" || fail "watcher trimmed recent collector log lines"
+[ "$(wc -c < "$SCHEDULE_HOME/state/wake-daily.log")" -lt 1048576 ] || fail "collector log stayed oversized"
 
 mv "$CASE_HOME/state/fleet-ledger.jsonl" "$TMP_ROOT/ledger-removed.jsonl"
 collect "$POST" >/dev/null || fail "missing-ledger run failed"
