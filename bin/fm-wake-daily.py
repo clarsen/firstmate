@@ -2,22 +2,26 @@
 """Collect one completed Pacific day's fleet outcomes into private data/wake/daily.
 
 Usage: fm-wake-daily.py YYYY-MM-DD [--home HOME]
+       fm-wake-daily.py --catch-up [--home HOME]
 
 The output contract is docs/wake-daily.md. This command reads its source files
-without modifying them and atomically replaces only the requested daily JSON.
+without modifying them and atomically replaces only the daily JSON it writes.
 It never interprets a merge as production value. Unimplemented signals have no
 section in this version of the record.
 """
 
 import argparse
+import fcntl
 from datetime import date, datetime, timedelta, timezone
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import re
 import statistics
 import subprocess
+import sys
 import tempfile
 from urllib.parse import quote, urlencode, urlsplit
 from zoneinfo import ZoneInfo
@@ -25,7 +29,9 @@ from zoneinfo import ZoneInfo
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 LEDGER_CUTOFF = "2026-11-21"
+WAKE_START = date(2026, 11, 21)
 ASSUMED_LOOKBACK_DAYS = 14
+CATCH_UP_RETRY_DAYS = 3
 ROW = re.compile(r"^- \[[ xX]\] ([A-Za-z0-9._-]+) - (.*)$")
 META = re.compile(r"\s+\((?:repo|kind|priority|hold|hold-kind|hold-until): [^)]*\)$|\s+\((?:since|merged|reported|done) \d{4}-\d{2}-\d{2}\)$")
 URL = re.compile(r"https?://[^\s)<>]+")
@@ -682,7 +688,9 @@ def build(day, home):
         section(project, "ships").append(item)
 
     for row in sorted(day_rows.values(), key=lambda item: item["task"]):
-        if row["kind"] is None and row["task"] not in ledger_merged_tasks:
+        report = row["report"] or f"data/{row['task']}/report.md"
+        reported_artifact = row["verb"] == "reported" and (home / report).is_file()
+        if row["kind"] is None and row["task"] not in ledger_merged_tasks and not reported_artifact:
             section(row["project"], "unclassified").append({
                 "task": row["task"], "title": row["title"],
                 "evidence": row["url"] or row["report"] or f"data/{row['source']}.md#{row['task']}",
@@ -694,8 +702,8 @@ def build(day, home):
                 "evidence": row["pr_url"] or f"data/{row['source']}.md#{row['task']}",
                 "merged_at": day, "time_precision": "day",
             })
-        report = row["report"] or f"data/{row['task']}/report.md"
-        if row["kind"] == "scout" and (row["report"] or (home / report).is_file()):
+        scout_report = row["kind"] == "scout" and bool(row["report"])
+        if scout_report or reported_artifact or (row["kind"] == "scout" and (home / report).is_file()):
             section(row["project"], "scouts").append({
                 "task": row["task"], "title": row["title"], "evidence": report,
                 "reported_on": day,
@@ -762,9 +770,9 @@ def build(day, home):
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
     counts = {}
-    for signal in ("ships", "scouts", "decisions", "links"):
+    for signal in ("ships", "scouts", "decisions", "unclassified", "links"):
         needed = [backlog_path, archive_path]
-        if signal in ("ships", "links") and uses_ledger:
+        if signal in ("ships", "unclassified", "links") and uses_ledger:
             needed.append(ledger_path)
         if signal == "decisions":
             needed.append(questions_path)
@@ -790,9 +798,15 @@ def build(day, home):
     for signal, missing in (("reverts", clone_missing), ("closed_unmerged", forge_missing),
                             ("failed_pipelines", forge_missing)):
         observed = len(rework[signal])
-        counts[signal] = ({"status": "not_measurable", "count": None, "observed": observed,
-                           "reason": "missing or unreadable input", "inputs": missing}
-                          if missing else {"status": "measured", "count": observed})
+        if signal == "closed_unmerged":
+            reason = "candidate coverage limited to recorded task PR and MR URLs"
+            counts[signal] = {"status": "not_measurable", "count": None, "observed": observed,
+                              "reason": reason + ("; missing or unreadable input" if missing else ""),
+                              "inputs": missing}
+        else:
+            counts[signal] = ({"status": "not_measurable", "count": None, "observed": observed,
+                               "reason": "missing or unreadable input", "inputs": missing}
+                              if missing else {"status": "measured", "count": observed})
     counts["hostupdate_mr_pipeline_wall_time"] = hostupdate_coverage
     return {
         "schema": "fm-wake-daily.v1",
@@ -818,35 +832,21 @@ def build(day, home):
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("day", help="completed Pacific day, YYYY-MM-DD")
-    parser.add_argument("--home", type=Path, default=Path(os.environ.get("FM_HOME", Path(__file__).resolve().parent.parent)))
-    args = parser.parse_args()
-    try:
-        requested = date.fromisoformat(args.day)
-        if requested.isoformat() != args.day:
-            raise ValueError("noncanonical date")
-    except ValueError:
-        parser.error("day must be a real YYYY-MM-DD date")
-    if requested >= datetime.now(PACIFIC).date():
-        parser.error(f"day {args.day} is not complete in America/Los_Angeles")
-    home = args.home.resolve()
-    result = build(args.day, home)
-    output = home / "data/wake/daily" / f"{args.day}.json"
+def write_day(day, home):
+    output = home / "data/wake/daily" / f"{day}.json"
     if not (home / "data").is_dir():
-        parser.error(f"home data directory is absent: {home / 'data'}")
-    payload = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        raise ValueError(f"home data directory is absent: {home / 'data'}")
     for directory in (home / "data", home / "data/wake", output.parent):
         if directory.is_symlink():
-            parser.error(f"output directory is a symlink: {directory}")
+            raise ValueError(f"output directory is a symlink: {directory}")
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.is_symlink():
-        parser.error(f"output file is a symlink: {output}")
+        raise ValueError(f"output file is a symlink: {output}")
+    result = build(day, home)
+    payload = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
     if output.exists() and output.read_bytes() == payload:
-        print(output)
-        return
-    fd, temporary = tempfile.mkstemp(prefix=f".{args.day}.", dir=output.parent)
+        return output
+    fd, temporary = tempfile.mkstemp(prefix=f".{day}.", dir=output.parent)
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(payload)
@@ -854,6 +854,70 @@ def main():
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+    return output
+
+
+def needs_catch_up(output, retry):
+    if not output.exists():
+        return True
+    if not retry:
+        return False
+    inputs = json.loads(output.read_text(encoding="utf-8"))["coverage"]["inputs"]
+    return any(info["status"] != "readable" for info in inputs.values())
+
+
+def catch_up(home, today):
+    failed = 0
+    day = WAKE_START
+    while day <= today - timedelta(days=2):
+        try:
+            output = home / "data/wake/daily" / f"{day.isoformat()}.json"
+            if needs_catch_up(output, day >= today - timedelta(days=CATCH_UP_RETRY_DAYS)):
+                print(write_day(day.isoformat(), home))
+        except Exception as error:
+            failed += 1
+            logging.error("wake daily catch-up failed for %s in %s: %s: %s",
+                          day.isoformat(), home, type(error).__name__, error)
+        day += timedelta(days=1)
+    return failed
+
+
+def main():
+    logging.basicConfig(format="%(asctime)s %(filename)s:%(lineno)d %(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("day", nargs="?", help="completed Pacific day, YYYY-MM-DD")
+    parser.add_argument("--catch-up", action="store_true",
+                        help="write missing Wake days once the next day has completed and retry unmeasured recent days")
+    parser.add_argument("--home", type=Path, default=Path(os.environ.get("FM_HOME", Path(__file__).resolve().parent.parent)))
+    args = parser.parse_args()
+    if args.catch_up == bool(args.day):
+        parser.error("provide either a day or --catch-up")
+    today = datetime.now(PACIFIC).date()
+    home = args.home.resolve()
+    if args.catch_up:
+        lock = home / "state/.wake-daily.lock"
+        if not lock.parent.is_dir() or lock.is_symlink():
+            parser.error("home state directory is absent or lock is a symlink")
+        with lock.open("a+b") as stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            if catch_up(home, today):
+                sys.exit(1)
+        return
+    try:
+        requested = date.fromisoformat(args.day)
+        if requested.isoformat() != args.day:
+            raise ValueError("noncanonical date")
+    except ValueError:
+        parser.error("day must be a real YYYY-MM-DD date")
+    if requested >= today:
+        parser.error(f"day {args.day} is not complete in America/Los_Angeles")
+    try:
+        output = write_day(args.day, home)
+    except ValueError as error:
+        parser.error(str(error))
     print(output)
 
 

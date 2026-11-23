@@ -52,6 +52,8 @@ export FM_GATE_REFUSE_BYPASS=1
 # FM_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.
 export FM_TEST_SEAM=1
+# Watcher suites opt in to the collector only with an isolated fixture home.
+export FM_WAKE_DAILY_DISABLE=1
 
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout

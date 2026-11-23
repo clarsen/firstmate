@@ -4297,6 +4297,17 @@ EOF
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+    # The finite collector runs outside the watch loop, so forge reads never
+    # delay an actionable wake. Its own lock dedupes simultaneous watcher
+    # cycles; it recovers missed days and retries recent unmeasured ones.
+    # Failures append to a home-local log, trimmed to its last 1000 lines past 1 MB.
+    if [ "${FM_WAKE_DAILY_DISABLE:-0}" != 1 ] && [ -d "$FM_HOME/data" ]; then
+      wake_log="$STATE/wake-daily.log"
+      if [ -f "$wake_log" ] && [ "$(wc -c < "$wake_log")" -gt 1048576 ]; then
+        tail -n 1000 "$wake_log" > "$wake_log.tmp" && mv "$wake_log.tmp" "$wake_log"
+      fi
+      python3 "$SCRIPT_DIR/fm-wake-daily.py" --catch-up --home "$FM_HOME" >/dev/null 2>>"$wake_log" &
+    fi
     rejected_checks=
     contribution_check_output=
     # Record each PR a task reported but nobody recorded, so its merge poll
