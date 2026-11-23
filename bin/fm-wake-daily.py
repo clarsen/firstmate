@@ -59,6 +59,7 @@ HOSTUPDATE_PROJECT = "projects/lblnet%2Flblnet_hostupdate"
 HOSTUPDATE_API = f"{HOSTUPDATE_PROJECT}/pipelines"
 HOSTUPDATE_RECEIPTS = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json"
 FIRSTMATE_UPDATES = "git:home/firstmate/reflog"
+HOSTUPDATE_MR_PREFIX = "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/"
 MR_REF = re.compile(r"refs/merge-requests/([1-9][0-9]*)/(?:head|merge|train)")
 CHANGE_CLASSES = ("image_build", "full_unit", "other")
 DEPLOY_METRICS = "influxdb:lsg_deploy_metrics/deploy_lead_time"
@@ -127,7 +128,7 @@ def pr_tasks(ships, task_rows):
     return tasks
 
 
-def production_evidence(day, ships, points, tasks, covered):
+def production_evidence(day, ships, points, tasks, covered, earlier):
     if points is None:
         return {"deployed": [], "not_shown": []}, {"status": "not_measurable", "count": None,
                                                     "inputs": [DEPLOY_METRICS]}
@@ -173,7 +174,9 @@ def production_evidence(day, ships, points, tasks, covered):
             if key and key not in measured_mrs and key not in shown:
                 not_shown.append({"mr": key, "task": item["task"], "path": None,
                                   "merged_at": item["merged_at"],
-                                  "reason": "no matching production measurement"})
+                                  "reason": (f"merged before successful receipt {earlier[key]} on a later commit; "
+                                             "role deployment not proven" if key in earlier else
+                                             "no matching production measurement")})
     deployed.sort(key=lambda item: (item["deployed_at"], item["mr"], item["path"]))
     not_shown.sort(key=lambda item: (item["merged_at"], item["mr"], item["path"] or ""))
     return {"deployed": deployed, "not_shown": not_shown}, {"status": "measured", "count": len(deployed)}
@@ -623,7 +626,7 @@ def gitlab_json(endpoint, *, ndjson=False, missing_ok=False):
         raise ValueError("GitLab API returned invalid JSON") from error
 
 
-def hostupdate_deploy_receipts(day, tasks, coverage):
+def hostupdate_deploy_receipts(day, ships, tasks, coverage):
     """Read retained CI artifacts, using the job ID as the stable join key."""
     start = datetime.combine(date.fromisoformat(day), datetime.min.time(), PACIFIC)
     end = start + timedelta(days=1)
@@ -696,7 +699,31 @@ def hostupdate_deploy_receipts(day, tasks, coverage):
                                  "runner_exit_code": event.get("runner_exit_code"),
                                  "job_status": event.get("job_status"), "reaches_production": succeeded,
                                  "mrs": mr_urls, "tasks": sorted({tasks[key] for url in mr_urls
-                                                                    if (key := pr_key(url)) in tasks})})
+                                                                    if (key := pr_key(url)) in tasks}),
+                                 "earlier_mrs": []})
+        carried = {pr_key(url) for row in rows if row["reaches_production"] for url in row["mrs"]}
+        candidates = sorted({key for project in ships for item in project["ships"]
+                             if (key := pr_key(item["evidence"])) and key.startswith(HOSTUPDATE_MR_PREFIX)} - carried)
+        merge_shas, bases = {}, {}
+        for row in rows:
+            if not row["reaches_production"]:
+                continue
+            for key in candidates:
+                if key not in merge_shas:
+                    mr = gitlab_json(f"{HOSTUPDATE_PROJECT}/merge_requests/{key.removeprefix(HOSTUPDATE_MR_PREFIX)}")
+                    if not isinstance(mr, dict):
+                        raise ValueError(f"invalid merge request {key}")
+                    sha = mr.get("merge_commit_sha") or mr.get("squash_commit_sha") or mr.get("sha")
+                    if not isinstance(sha, str) or not re.fullmatch("[0-9a-f]{40}", sha):
+                        raise ValueError(f"invalid merge commit for {key}")
+                    merge_shas[key] = sha
+                pair = (merge_shas[key], row["commit_sha"])
+                if pair not in bases:
+                    base = gitlab_json(f"{HOSTUPDATE_PROJECT}/repository/merge_base?"
+                                       + urlencode([("refs[]", pair[0]), ("refs[]", pair[1])]))
+                    bases[pair] = base["id"]
+                if bases[pair] == pair[0]:
+                    row["earlier_mrs"].append(key)
     except (ValueError, KeyError, TypeError) as error:
         failure = {"status": "not_measurable", "reason": "GitLab receipts unavailable or invalid", "error": str(error)}
         coverage[HOSTUPDATE_RECEIPTS] = failure
@@ -1020,12 +1047,17 @@ def build(day, home):
 
     deploy_points = query_deploy_metrics(day, home, coverage)
     pr_task = pr_tasks(ordered_projects, by_task)
-    receipts, receipts_coverage = hostupdate_deploy_receipts(day, pr_task, coverage)
+    receipts, receipts_coverage = hostupdate_deploy_receipts(day, ordered_projects, pr_task, coverage)
     updates, updates_coverage = firstmate_updates(day, home, pr_task, coverage)
     covered = {pr_key(url) for row in receipts if row["reaches_production"] for url in row["mrs"]}
     covered |= {pr_key(url) for row in updates for url in row["merged_prs"]}
     covered.discard(None)
-    production, production_coverage = production_evidence(day, ordered_projects, deploy_points, pr_task, covered)
+    earlier = {}
+    for row in receipts:
+        for key in row["earlier_mrs"]:
+            earlier.setdefault(key, row["deploy_job_id"])
+    production, production_coverage = production_evidence(day, ordered_projects, deploy_points, pr_task,
+                                                          covered, earlier)
 
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])

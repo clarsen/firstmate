@@ -13,12 +13,14 @@ cat > "$home/data/backlog.md" <<'MD'
 ## Done
 - [x] receipt-task - Fixture deployment https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
 - [x] receipt-failed - Failed deployment https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
+- [x] receipt-earlier - Earlier undeployed change https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/41 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
 - [x] fm-task - Firstmate change https://github.com/example/firstmate/pull/7 (repo: firstmate) (kind: ship) (merged 2026-11-21)
 MD
 printf '## Done\n' > "$home/data/done-archive.md"
 cat > "$home/state/fleet-ledger.jsonl" <<'JSONL'
 {"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-task","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"}
 {"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-failed","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43"}
+{"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-earlier","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/41"}
 {"v":1,"ts":1795280400,"event":"task.merged","task":"fm-task","pr":"https://github.com/example/firstmate/pull/7"}
 JSONL
 printf 'INFLUXDB_DEPLOY_METRICS_TOKEN=fixture-only\n' > "$home/.env"
@@ -67,6 +69,10 @@ case "$*" in
   *'jobs/123456/artifacts/deploy-event.json'*) cat "$RECEIPT_ARTIFACT" ;;
   *'repository/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/merge_requests'*) printf '[{"iid":42,"web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"}]\n' ;;
   *'repository/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/merge_requests'*) printf '[{"iid":43,"web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43"}]\n' ;;
+  *'hostupdate/merge_requests/41 '*) printf '{"iid":41,"merge_commit_sha":"dddddddddddddddddddddddddddddddddddddddd"}\n' ;;
+  *'hostupdate/merge_requests/43 '*) printf '{"iid":43,"merge_commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\n' ;;
+  *'merge_base'*'dddddddddddddddddddddddddddddddddddddddd'*'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'*) printf '{"id":"dddddddddddddddddddddddddddddddddddddddd"}\n' ;;
+  *'merge_base'*'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'*'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'*) printf '{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}\n' ;;
   *) printf '[]\n' ;;
 esac
 MOCK
@@ -90,12 +96,14 @@ jq -e --arg commit "$updated_commit" '
     "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "deployed_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "requested_pins": null, "requested_version": null, "outcome": "changed",
     "ansible_exit_code": 0, "runner_exit_code": 0, "job_status": "success", "reaches_production": true,
-    "mrs": ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"], "tasks": ["receipt-task"]}
+    "mrs": ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"], "tasks": ["receipt-task"],
+    "earlier_mrs": ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/41"]}
   and .hostupdate_deploy_receipts.events[1].reaches_production == false
   and .hostupdate_deploy_receipts.events[1].job_status == "failed"
   and .hostupdate_deploy_receipts.events[1].ansible_exit_code == 2
   and .hostupdate_deploy_receipts.events[1].requested_version == "v9"
   and .hostupdate_deploy_receipts.events[1].tasks == ["receipt-failed"]
+  and .hostupdate_deploy_receipts.events[1].earlier_mrs == []
   and .firstmate_updates.updates[0].after == $commit
   and .firstmate_updates.updates[0].merged_prs == ["https://github.com/example/firstmate/pull/7"]
   and .firstmate_updates.updates[0].tasks == ["fm-task"]
@@ -104,7 +112,11 @@ jq -e --arg commit "$updated_commit" '
   and .coverage.signals.firstmate_updates.status == "measured"
 ' "$record" >/dev/null || fail 'receipt or update history missing'
 jq -e '
-  [.production_evidence.not_shown[] | {mr, task}] == [{"mr": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43", "task": "receipt-failed"}]
+  [.production_evidence.not_shown[] | {mr, task, reason}] == [
+    {"mr": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/41", "task": "receipt-earlier",
+     "reason": "merged before successful receipt 123456 on a later commit; role deployment not proven"},
+    {"mr": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43", "task": "receipt-failed",
+     "reason": "no matching production measurement"}]
 ' "$record" >/dev/null || fail 'not_shown ignored a successful receipt or home update, or counted a failed receipt'
 cp "$record" "$task_tmp/first.json"
 collect
@@ -136,4 +148,4 @@ MOCK
 chmod +x "$task_tmp/bin/glab"
 collect
 jq -e '.coverage.signals.hostupdate_deploy_receipts.status == "not_measurable" and .coverage.signals.hostupdate_deploy_receipts.count == null' "$record" >/dev/null || fail 'unreachable source reported as zero'
-pass 'receipt and home update evidence reconcile not_shown; failed and invalid receipts are not evidence'
+pass 'receipt and home update evidence reconcile not_shown; failed, earlier, and invalid receipts are not evidence'
