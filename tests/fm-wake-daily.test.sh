@@ -318,7 +318,8 @@ grep -q 'fm-wake-daily.py:[0-9].*2026-11-27.*IsADirectoryError' "$TMP_ROOT/catch
 [ -f "$(catch_day 2026-11-21)" ] || fail "catch-up did not recover a missed day"
 [ -f "$(catch_day 2026-11-28)" ] || fail "catch-up stopped at a failing day"
 cmp -s "$TMP_ROOT/catch-23.json" "$(catch_day 2026-11-23)" || fail "catch-up rebuilt an unmeasured record past its retry window"
-cmp -s "$TMP_ROOT/catch-26.json" "$(catch_day 2026-11-26)" || fail "catch-up rewrote a measured record"
+NOW=2026-11-28T12:00:00-08:00 collect --catch-up "$CATCH_HOME" >/dev/null || fail "in-window catch-up failed"
+cmp -s "$TMP_ROOT/catch-26.json" "$(catch_day 2026-11-26)" || fail "catch-up rewrote a measured record inside its retry window"
 collect 2026-11-26 "$CATCH_HOME" >/dev/null || fail "selected-day rebuild failed"
 jq -e '[.contributions.projects[].scouts[].task] == ["after-final"]' "$(catch_day 2026-11-26)" >/dev/null \
   || fail "selected-day run did not rebuild a measured record"
