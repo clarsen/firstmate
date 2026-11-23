@@ -2,6 +2,7 @@
 set -eu
 export TMPDIR="$HOME/tmp/fm-scratch/wake-story16-receipts"
 mkdir -p "$TMPDIR"
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 task_tmp=$(fm_test_tmproot fm-wake-daily-receipts)
 # API response shapes were recorded from hostupdate pipeline 868100 and job 2661548.
