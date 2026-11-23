@@ -8,9 +8,46 @@ task_tmp=$(fm_test_tmproot fm-wake-daily-receipts)
 # IDs, URLs, commit, host, and event outcome below are stand-in values for public CI evidence.
 home="$task_tmp/home"
 mkdir -p "$home/data" "$home/state" "$home/projects" "$task_tmp/bin"
-printf '## Done\n- [x] receipt-task - Fixture deployment https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)\n' > "$home/data/backlog.md"
+# Field names and the successful-receipt rule follow reference_deploy_receipts.adoc (Receipt fields).
+cat > "$home/data/backlog.md" <<'MD'
+## Done
+- [x] receipt-task - Fixture deployment https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
+- [x] receipt-failed - Failed deployment https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
+- [x] fm-task - Firstmate change https://github.com/example/firstmate/pull/7 (repo: firstmate) (kind: ship) (merged 2026-11-21)
+MD
 printf '## Done\n' > "$home/data/done-archive.md"
-printf '{"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-task","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"}\n' > "$home/state/fleet-ledger.jsonl"
+cat > "$home/state/fleet-ledger.jsonl" <<'JSONL'
+{"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-task","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"}
+{"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-failed","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43"}
+{"v":1,"ts":1795280400,"event":"task.merged","task":"fm-task","pr":"https://github.com/example/firstmate/pull/7"}
+JSONL
+printf 'INFLUXDB_DEPLOY_METRICS_TOKEN=fixture-only\n' > "$home/.env"
+printf '%s\n' ',result,table,_start,_stop,_time,_measurement,path,project,iid,deployed,mr_url,merged_at_ms,deployed_at_ms,deploy_job_id' > "$task_tmp/no-points.csv"
+cat > "$task_tmp/collect.py" <<'PY'
+import importlib.util
+import io
+from pathlib import Path
+import sys
+import urllib.request
+
+source, home, fixture = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("wake_daily", source)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+class Response(io.BytesIO):
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        self.close()
+
+urllib.request.urlopen = lambda request, timeout: Response(Path(fixture).read_bytes())
+sys.argv = [source, "2026-11-21", "--home", home]
+module.main()
+PY
+collect() {
+  python3 "$task_tmp/collect.py" "$ROOT/bin/fm-wake-daily.py" "$home" "$task_tmp/no-points.csv" >/dev/null
+}
 git -C "$home" init -q -b main
 git -C "$home" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m base
 git -C "$home" checkout -q -b next
@@ -18,13 +55,18 @@ git -C "$home" -c user.name=Fixture -c user.email=fixture@example.invalid commit
 updated_commit=$(git -C "$home" rev-parse HEAD)
 git -C "$home" checkout -q main
 GIT_COMMITTER_DATE=2026-11-21T12:00:00Z git -C "$home" merge -q --ff-only next
+export RECEIPT_ARTIFACT="$task_tmp/deploy-event.json"
+cat > "$RECEIPT_ARTIFACT" <<'JSON'
+{"schema_version":1,"coverage":"ci","events":[{"started_at":"2026-11-21T11:59:58Z","ended_at":"2026-11-21T12:00:01Z","host":"fixture.invalid","service_or_role":"ansible-deploy","outcome":"changed","ansible_exit_code":0,"runner_exit_code":0,"commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","deployed_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","job_status":"success"},{"started_at":"2026-11-21T12:04:00Z","ended_at":"2026-11-21T12:05:00Z","host":"other.invalid","service_or_role":"ansible-deploy","outcome":"failed","ansible_exit_code":2,"runner_exit_code":2,"commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","deployed_ref":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","requested_version":"v9","job_status":"failed"}]}
+JSON
 cat > "$task_tmp/bin/glab" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
   *'pipelines?'*) printf '{"id":100,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-11-21T09:00:00Z"}\n' ;;
   *'pipelines/100/jobs?'*) printf '{"id":123456,"name":"ansible-deploy","finished_at":"2026-11-21T12:00:01Z","artifacts_file":{"filename":"artifacts.zip","size":500}}\n' ;;
-  *'jobs/123456/artifacts/deploy-event.json'*) printf '{"schema_version":1,"coverage":"ci","events":[{"started_at":"2026-11-21T11:59:58Z","ended_at":"2026-11-21T12:00:01Z","host":"fixture.invalid","service_or_role":"ansible-deploy","outcome":"changed","commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","job_status":"success"}]}\n' ;;
+  *'jobs/123456/artifacts/deploy-event.json'*) cat "$RECEIPT_ARTIFACT" ;;
   *'repository/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/merge_requests'*) printf '[{"iid":42,"web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"}]\n' ;;
+  *'repository/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/merge_requests'*) printf '[{"iid":43,"web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43"}]\n' ;;
   *) printf '[]\n' ;;
 esac
 MOCK
@@ -37,20 +79,45 @@ esac
 MOCK
 chmod +x "$task_tmp/bin/glab" "$task_tmp/bin/gh"
 export PATH="$task_tmp/bin:$PATH"
-python3 "$ROOT/bin/fm-wake-daily.py" 2026-11-21 --home "$home" >/dev/null
+collect
 record="$home/data/wake/daily/2026-11-21.json"
 jq -e --arg commit "$updated_commit" '
-  .hostupdate_deploy_receipts.events[0].deploy_job_id == 123456
-  and .hostupdate_deploy_receipts.events[0].mrs == ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"]
-  and .hostupdate_deploy_receipts.events[0].tasks == ["receipt-task"]
+  (.hostupdate_deploy_receipts.events | length) == 2
+  and .hostupdate_deploy_receipts.events[0] == {
+    "deploy_job_id": 123456, "job_url": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/jobs/123456",
+    "started_at": "2026-11-21T11:59:58Z", "ended_at": "2026-11-21T12:00:01Z",
+    "host": "fixture.invalid", "service_or_role": "ansible-deploy",
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "deployed_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requested_pins": null, "requested_version": null, "outcome": "changed",
+    "ansible_exit_code": 0, "runner_exit_code": 0, "job_status": "success", "reaches_production": true,
+    "mrs": ["https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"], "tasks": ["receipt-task"]}
+  and .hostupdate_deploy_receipts.events[1].reaches_production == false
+  and .hostupdate_deploy_receipts.events[1].job_status == "failed"
+  and .hostupdate_deploy_receipts.events[1].ansible_exit_code == 2
+  and .hostupdate_deploy_receipts.events[1].requested_version == "v9"
+  and .hostupdate_deploy_receipts.events[1].tasks == ["receipt-failed"]
   and .firstmate_updates.updates[0].after == $commit
   and .firstmate_updates.updates[0].merged_prs == ["https://github.com/example/firstmate/pull/7"]
+  and .firstmate_updates.updates[0].tasks == ["fm-task"]
+  and .coverage.signals.production_evidence.status == "measured"
   and .coverage.signals.hostupdate_deploy_receipts.status == "measured"
   and .coverage.signals.firstmate_updates.status == "measured"
 ' "$record" >/dev/null || fail 'receipt or update history missing'
+jq -e '
+  [.production_evidence.not_shown[] | {mr, task}] == [{"mr": "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43", "task": "receipt-failed"}]
+' "$record" >/dev/null || fail 'not_shown ignored a successful receipt or home update, or counted a failed receipt'
 cp "$record" "$task_tmp/first.json"
-python3 "$ROOT/bin/fm-wake-daily.py" 2026-11-21 --home "$home" >/dev/null
+collect
 cmp -s "$record" "$task_tmp/first.json" || fail 'rerun changed bytes'
+for artifact in \
+  '[{"ended_at":"2026-11-21T12:00:01Z","commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]' \
+  '{"schema_version":2,"events":[]}' \
+  '{"schema_version":1,"events":[{"ended_at":"2026-11-21T12:00:01Z","outcome":"changed","job_status":"success"}]}'; do
+  printf '%s\n' "$artifact" > "$RECEIPT_ARTIFACT"
+  collect
+  jq -e '.coverage.signals.hostupdate_deploy_receipts.status == "not_measurable" and .hostupdate_deploy_receipts.events == []' \
+    "$record" >/dev/null || fail "invalid receipt accepted: $artifact"
+done
 cat > "$task_tmp/bin/glab" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
@@ -60,13 +127,13 @@ case "$*" in
 esac
 MOCK
 chmod +x "$task_tmp/bin/glab"
-python3 "$ROOT/bin/fm-wake-daily.py" 2026-11-21 --home "$home" >/dev/null
+collect
 jq -e '.coverage.signals.hostupdate_deploy_receipts.status == "not_measurable" and .coverage.signals.hostupdate_deploy_receipts.count == null' "$record" >/dev/null || fail 'missing retained artifact reported as zero'
 cat > "$task_tmp/bin/glab" <<'MOCK'
 #!/usr/bin/env bash
 exit 1
 MOCK
 chmod +x "$task_tmp/bin/glab"
-python3 "$ROOT/bin/fm-wake-daily.py" 2026-11-21 --home "$home" >/dev/null
+collect
 jq -e '.coverage.signals.hostupdate_deploy_receipts.status == "not_measurable" and .coverage.signals.hostupdate_deploy_receipts.count == null' "$record" >/dev/null || fail 'unreachable source reported as zero'
-pass 'retained receipt and local update evidence, outage coverage, byte-identical rerun'
+pass 'receipt and home update evidence reconcile not_shown; failed and invalid receipts are not evidence'

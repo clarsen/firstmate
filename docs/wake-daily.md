@@ -68,15 +68,18 @@ The bucket has `path`, `project`, and `iid` tags and `mr_url`, `deployed`, `depl
 The numeric ID is the join key for a later hostupdate receipt's GitLab job URL.
 The bucket query considers MRs merged within 120 days before the selected day, matching the source collector's look-back window.
 `production_evidence.not_shown` lists MRs merged on the selected day without such evidence by day end, with merge time and reason; this includes generate_nagios_cfg MRs because its production reload has no GitLab-visible receipt.
+An MR carried by a successful hostupdate receipt or by this home's firstmate update that day is not listed as not shown.
 The section reports source observations and never judges whether a deliverable is active.
 The collector reads `INFLUXDB_DEPLOY_METRICS_TOKEN` only from the selected home's gitignored `.env`, never from the process environment, using the same one-key parsing rules as `bin/fm-env-lib.sh`.
 The InfluxDB URL, organization `LSG`, and bucket are fixed; the token is never written to the daily record or logs.
 If the token is absent or the query fails, `coverage.inputs.influxdb:lsg_deploy_metrics/deploy_lead_time` and `coverage.signals.production_evidence` are `not_measurable`, with a null count.
-`hostupdate_deploy_receipts.events` lists retained `deploy-event.json` events whose end time falls on the selected Pacific day, with UTC time, numeric GitLab deploy job ID and job URL, host, role, outcome, associated MRs, and matching fleet tasks.
+`hostupdate_deploy_receipts.events` lists retained `deploy-event.json` events whose end time falls on the selected Pacific day, with numeric GitLab deploy job ID and job URL, UTC start and end times, host, role, hostupdate commit and deployed ref, requested pins or version where supplied, outcome, Ansible and runner exits, final job status, associated MRs, and matching fleet tasks.
+An event has `reaches_production: true` only for a successful receipt: outcome `changed` or `no_change`, zero exits, and job status `success`; other events stay listed but are not production evidence.
+A receipt document without schema version 1 and an `events` list, or an event without a 40-character `commit_sha`, makes the section `not_measurable`.
 The collector reads the artifacts from the [hostupdate receipt source of truth](https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/blob/master/docs/modules/ROOT/pages/reference_deploy_receipts.adoc) through read-only GitLab API requests.
 The artifact retention is 45 days except jobs with shorter retention; the collector does not backfill expired artifacts.
 The numeric job ID joins this section to `production_evidence.deployed` without counting an overlapping deploy twice.
-`firstmate_updates.updates` lists this home's Git reflog fast forwards on the selected Pacific day, with UTC time, before and after commits, and merged GitHub PRs associated with commits brought in by each update.
+`firstmate_updates.updates` lists this home's Git reflog fast forwards on the selected Pacific day, with UTC time, before and after commits, and merged GitHub PRs associated with commits brought in by each update, with their matching fleet tasks.
 Both sections report observations and make no claim that a deliverable is active.
 An unavailable or invalid source makes its `coverage.inputs` and `coverage.signals` entries `not_measurable`, with a null count.
 
