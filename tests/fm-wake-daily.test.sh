@@ -44,7 +44,11 @@ if mode == "bad-url":
     for record in records:
         if record["id"] == 900003:
             record["web_url"] = "https://example.invalid/pipelines/900003"
-if path == prefix:
+if path == prefix and "source" not in parse_qs(url.query):
+    # Deploy receipt listing: the fixture has no receipt pipelines.
+    if args[4:] != ["--paginate", "--output", "ndjson"] or not parse_qs(url.query).get("updated_after"):
+        sys.exit(2)
+elif path == prefix:
     query = parse_qs(url.query)
     if (args[4:] != ["--paginate", "--output", "ndjson"]
             or query.get("source") != ["merge_request_event"]
@@ -283,6 +287,8 @@ late_report() {
   printf '# %s\n' "$2" > "$CATCH_HOME/data/$1/report.md"
 }
 mkdir -p "$CATCH_HOME/data" "$CATCH_HOME/state" "$CATCH_HOME/projects"
+git -C "$CATCH_HOME" init -q -b main
+git -C "$CATCH_HOME" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m base
 cp "$CASE_HOME/.env" "$CATCH_HOME/.env"
 printf '## Done\n' > "$CATCH_HOME/data/backlog.md"
 : > "$CATCH_HOME/data/done-archive.md"

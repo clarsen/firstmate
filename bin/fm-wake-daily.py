@@ -57,6 +57,10 @@ REVERT = re.compile(r"^Revert\s+", re.IGNORECASE)
 HOSTUPDATE_PIPELINES = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"
 HOSTUPDATE_PROJECT = "projects/lblnet%2Flblnet_hostupdate"
 HOSTUPDATE_API = f"{HOSTUPDATE_PROJECT}/pipelines"
+HOSTUPDATE_RECEIPTS = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json"
+FIRSTMATE_UPDATES = "git:home/firstmate/reflog"
+HOSTUPDATE_MR_PREFIX = "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/"
+FIRSTMATE_PR_PREFIX = "https://github.com/clarsen/firstmate/pull/"
 MR_REF = re.compile(r"refs/merge-requests/([1-9][0-9]*)/(?:head|merge|train)")
 CHANGE_CLASSES = ("image_build", "full_unit", "other")
 DEPLOY_METRICS = "influxdb:lsg_deploy_metrics/deploy_lead_time"
@@ -117,7 +121,15 @@ def query_deploy_metrics(day, home, coverage):
     return points
 
 
-def production_evidence(day, ships, points, coverage):
+def pr_tasks(ships, task_rows):
+    tasks = {pr_key(item["evidence"]): item["task"] for project in ships
+             for item in project["ships"] if pr_key(item["evidence"])}
+    tasks.update({pr_key(row["pr_url"]): task for task, row in task_rows.items()
+                  if row.get("pr_url") and pr_key(row["pr_url"])})
+    return tasks
+
+
+def production_evidence(day, ships, points, tasks, covered, earlier, unavailable):
     if points is None:
         return {"deployed": [], "not_shown": []}, {"status": "not_measurable", "count": None,
                                                     "inputs": [DEPLOY_METRICS]}
@@ -130,8 +142,6 @@ def production_evidence(day, ships, points, coverage):
         except (TypeError, ValueError, OverflowError):
             return None
         return stamp if start <= stamp < end else None
-    tasks = {pr_key(item["evidence"]): item["task"] for project in ships
-             for item in project["ships"] if pr_key(item["evidence"])}
     deployed, not_shown = [], []
     measured_mrs = set()
     for point in points:
@@ -157,7 +167,7 @@ def production_evidence(day, ships, points, coverage):
                               "reason": ("no GitLab-visible production signal for this path"
                                          if point["path"] not in DEPLOY_PATHS else
                                          "no successful production deploy recorded by day end")})
-    shown = {item["mr"] for item in deployed}
+    shown = {item["mr"] for item in deployed} | covered
     not_shown = [item for item in not_shown if item["mr"] not in shown]
     for project in ships:
         for item in project["ships"]:
@@ -166,9 +176,21 @@ def production_evidence(day, ships, points, coverage):
                 not_shown.append({"mr": key, "task": item["task"], "path": None,
                                   "merged_at": item["merged_at"],
                                   "reason": "no matching production measurement"})
+    unjudged = set()
+    for item in not_shown:
+        source = next((source for prefix, source in unavailable.items() if item["mr"].startswith(prefix)), None)
+        if source:
+            unjudged.add(source)
+            item["reason"] = f"evidence source {source} unavailable"
+        elif item["mr"] in earlier:
+            item["reason"] = (f"merged before successful receipt {earlier[item['mr']]} on a later commit; "
+                              "role deployment not proven")
     deployed.sort(key=lambda item: (item["deployed_at"], item["mr"], item["path"]))
     not_shown.sort(key=lambda item: (item["merged_at"], item["mr"], item["path"] or ""))
-    return {"deployed": deployed, "not_shown": not_shown}, {"status": "measured", "count": len(deployed)}
+    measured = {"status": "measured", "count": len(deployed)}
+    if unjudged:
+        measured["inputs"] = sorted(unjudged)
+    return {"deployed": deployed, "not_shown": not_shown}, measured
 
 
 def read_text(path, coverage):
@@ -593,7 +615,7 @@ def forge_rework(day, home, rows, ledger, coverage):
     window = {"count": candidates, "assumed_start": assumed_starts,
               "assumed_start_rule": f"done day minus {ASSUMED_LOOKBACK_DAYS} days when no start is recorded"}
     return closed, failed, window
-def gitlab_json(endpoint, *, ndjson=False):
+def gitlab_json(endpoint, *, ndjson=False, missing_ok=False):
     command = ["glab", "api", endpoint, "--hostname", "lsg-git.lbl.gov"]
     if ndjson:
         command += ["--paginate", "--output", "ndjson"]
@@ -604,6 +626,8 @@ def gitlab_json(endpoint, *, ndjson=False):
     except subprocess.TimeoutExpired as error:
         raise ValueError("GitLab API request timed out") from error
     if result.returncode:
+        if missing_ok and "404" in result.stderr:
+            return None
         raise ValueError(f"GitLab API request failed (glab exit {result.returncode})")
     try:
         if ndjson:
@@ -611,6 +635,162 @@ def gitlab_json(endpoint, *, ndjson=False):
         return json.loads(result.stdout)
     except ValueError as error:
         raise ValueError("GitLab API returned invalid JSON") from error
+
+
+def hostupdate_deploy_receipts(day, ships, tasks, coverage):
+    """Read retained CI artifacts, using the job ID as the stable join key."""
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time(), PACIFIC)
+    end = start + timedelta(days=1)
+    query = urlencode({"updated_after":
+                       (start - timedelta(microseconds=1)).isoformat(), "per_page": 100})
+    rows = []
+    try:
+        pipelines = gitlab_json(f"{HOSTUPDATE_API}?{query}", ndjson=True)
+        seen = set()
+        commit_mrs = {}
+        for pipeline in pipelines:
+            if not isinstance(pipeline, dict) or type(pipeline.get("id")) is not int:
+                raise ValueError("invalid pipeline list entry")
+            if pipeline["id"] in seen or gitlab_time(pipeline.get("created_at")) >= end.astimezone(timezone.utc):
+                continue
+            seen.add(pipeline["id"])
+            jobs = gitlab_json(f"{HOSTUPDATE_API}/{pipeline['id']}/jobs?per_page=100&include_retried=true",
+                               ndjson=True)
+            if not isinstance(jobs, list):
+                raise ValueError("invalid pipeline jobs")
+            for job in jobs:
+                if not isinstance(job, dict) or type(job.get("id")) is not int:
+                    raise ValueError("invalid job")
+                finished = job.get("finished_at")
+                if not finished or gitlab_time(finished) < start.astimezone(timezone.utc):
+                    continue
+                if job.get("stage") == "checks":
+                    # Checks-stage jobs (ansible-check-*) never apply a playbook through run-in-ci.sh.
+                    continue
+                if not job.get("artifacts_file"):
+                    if ((job.get("name") or "").startswith("ansible-")
+                            and gitlab_time(finished) < end.astimezone(timezone.utc)):
+                        raise ValueError(f"deploy receipt artifact unavailable for job {job['id']}")
+                    continue
+                endpoint = f"{HOSTUPDATE_PROJECT}/jobs/{job['id']}/artifacts/deploy-event.json"
+                document = gitlab_json(endpoint, missing_ok=True)
+                if document is None:
+                    if (job.get("name") or "").startswith("ansible-"):
+                        raise ValueError(f"deploy receipt artifact unavailable for job {job['id']}")
+                    continue
+                if (not isinstance(document, dict) or document.get("schema_version") != 1
+                        or not isinstance(document.get("events"), list)):
+                    raise ValueError(f"invalid deploy receipt for job {job['id']}")
+                events = document["events"]
+                for event in events:
+                    if not isinstance(event, dict):
+                        raise ValueError("invalid deploy event")
+                    stamp = gitlab_time(event.get("ended_at"))
+                    if stamp.astimezone(PACIFIC).date().isoformat() != day:
+                        continue
+                    commit = event.get("commit_sha")
+                    if not isinstance(commit, str) or not re.fullmatch("[0-9a-f]{40}", commit):
+                        raise ValueError(f"invalid receipt commit for job {job['id']}")
+                    if commit not in commit_mrs:
+                        mrs = gitlab_json(f"{HOSTUPDATE_PROJECT}/repository/commits/"
+                                          f"{quote(commit, safe='')}/merge_requests")
+                        if not isinstance(mrs, list):
+                            raise ValueError("invalid commit merge requests")
+                        commit_mrs[commit] = sorted({mr["web_url"] for mr in mrs if isinstance(mr, dict)
+                                                     and isinstance(mr.get("web_url"), str)})
+                    mr_urls = commit_mrs[commit]
+                    succeeded = (event.get("outcome") in ("changed", "no_change")
+                                 and event.get("ansible_exit_code") == 0 and event.get("runner_exit_code") == 0
+                                 and event.get("job_status") == "success")
+                    rows.append({"deploy_job_id": job["id"],
+                                 "job_url": f"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/jobs/{job['id']}",
+                                 "started_at": event.get("started_at"),
+                                 "ended_at": stamp.isoformat().replace("+00:00", "Z"),
+                                 "host": event.get("host"), "service_or_role": event.get("service_or_role"),
+                                 "commit_sha": commit, "deployed_ref": event.get("deployed_ref"),
+                                 "requested_pins": event.get("requested_pins"),
+                                 "requested_version": event.get("requested_version"),
+                                 "outcome": event.get("outcome"), "ansible_exit_code": event.get("ansible_exit_code"),
+                                 "runner_exit_code": event.get("runner_exit_code"),
+                                 "job_status": event.get("job_status"), "reaches_production": succeeded,
+                                 "mrs": mr_urls, "tasks": sorted({tasks[key] for url in mr_urls
+                                                                    if (key := pr_key(url)) in tasks}),
+                                 "earlier_mrs": []})
+        carried = {pr_key(url) for row in rows if row["reaches_production"] for url in row["mrs"]}
+        candidates = sorted({key for project in ships for item in project["ships"]
+                             if (key := pr_key(item["evidence"])) and key.startswith(HOSTUPDATE_MR_PREFIX)} - carried)
+        merge_shas, bases = {}, {}
+        for row in rows:
+            if not row["reaches_production"]:
+                continue
+            for key in candidates:
+                if key not in merge_shas:
+                    mr = gitlab_json(f"{HOSTUPDATE_PROJECT}/merge_requests/{key.removeprefix(HOSTUPDATE_MR_PREFIX)}")
+                    if not isinstance(mr, dict):
+                        raise ValueError(f"invalid merge request {key}")
+                    sha = mr.get("merge_commit_sha") or mr.get("squash_commit_sha") or mr.get("sha")
+                    if not isinstance(sha, str) or not re.fullmatch("[0-9a-f]{40}", sha):
+                        raise ValueError(f"invalid merge commit for {key}")
+                    merge_shas[key] = sha
+                pair = (merge_shas[key], row["commit_sha"])
+                if pair not in bases:
+                    base = gitlab_json(f"{HOSTUPDATE_PROJECT}/repository/merge_base?"
+                                       + urlencode([("refs[]", pair[0]), ("refs[]", pair[1])]))
+                    bases[pair] = base["id"]
+                if bases[pair] == pair[0]:
+                    row["earlier_mrs"].append(key)
+    except (ValueError, KeyError, TypeError) as error:
+        failure = {"status": "not_measurable", "reason": "GitLab receipts unavailable or invalid", "error": str(error)}
+        coverage[HOSTUPDATE_RECEIPTS] = failure
+        return [], {**failure, "count": None, "inputs": [HOSTUPDATE_RECEIPTS]}
+    rows.sort(key=lambda item: (item["ended_at"], item["deploy_job_id"], item["host"] or ""))
+    coverage[HOSTUPDATE_RECEIPTS] = {"status": "readable"}
+    return rows, {"status": "measured", "count": len(rows)}
+
+
+def firstmate_updates(day, home, tasks, coverage):
+    """Attribute commits brought in by this home's recorded fast forwards."""
+    try:
+        result = subprocess.run(["git", "-C", str(home), "reflog", "show", "--date=unix",
+                                 "--format=%H%x09%gD%x09%gs", "HEAD"], capture_output=True,
+                                text=True, timeout=30, check=True)
+        entries = []
+        for line in result.stdout.splitlines():
+            sha, selector, action = line.split("\t", 2)
+            match = re.search(r"@\{([0-9]+)\}", selector)
+            if not match:
+                raise ValueError("invalid reflog timestamp")
+            entries.append((sha, int(match.group(1)), action))
+        rows = []
+        for index, (after, epoch, action) in enumerate(entries[:-1]):
+            if not re.fullmatch(r"merge [^:]+: Fast-forward", action):
+                continue
+            stamp = datetime.fromtimestamp(epoch, timezone.utc)
+            if stamp.astimezone(PACIFIC).date().isoformat() != day:
+                continue
+            before = entries[index + 1][0]
+            commits = subprocess.run(["git", "-C", str(home), "rev-list", f"{before}..{after}"],
+                                     capture_output=True, text=True, timeout=30, check=True).stdout.splitlines()
+            prs = set()
+            for commit in commits:
+                found = subprocess.run(["gh", "api", f"repos/clarsen/firstmate/commits/{commit}/pulls"],
+                                       capture_output=True, text=True, timeout=30, check=True)
+                associated = json.loads(found.stdout)
+                if not isinstance(associated, list):
+                    raise ValueError("invalid GitHub commit PRs")
+                prs.update(pr["html_url"] for pr in associated
+                           if isinstance(pr, dict) and pr.get("merged_at") and pr.get("html_url"))
+            rows.append({"updated_at": stamp.isoformat().replace("+00:00", "Z"),
+                         "before": before, "after": after, "merged_prs": sorted(prs),
+                         "tasks": sorted({tasks[key] for url in prs if (key := pr_key(url)) in tasks})})
+    except (OSError, ValueError, subprocess.SubprocessError, KeyError, TypeError) as error:
+        failure = {"status": "not_measurable", "reason": "home update history unavailable or invalid",
+                   "error": type(error).__name__}
+        coverage[FIRSTMATE_UPDATES] = failure
+        return [], {**failure, "count": None, "inputs": [FIRSTMATE_UPDATES]}
+    rows.sort(key=lambda item: (item["updated_at"], item["after"]))
+    coverage[FIRSTMATE_UPDATES] = {"status": "readable"}
+    return rows, {"status": "measured", "count": len(rows)}
 
 
 def gitlab_time(value):
@@ -881,7 +1061,21 @@ def build(day, home):
         ordered_projects.append({"project": project, **signals})
 
     deploy_points = query_deploy_metrics(day, home, coverage)
-    production, production_coverage = production_evidence(day, ordered_projects, deploy_points, coverage)
+    pr_task = pr_tasks(ordered_projects, by_task)
+    receipts, receipts_coverage = hostupdate_deploy_receipts(day, ordered_projects, pr_task, coverage)
+    updates, updates_coverage = firstmate_updates(day, home, pr_task, coverage)
+    covered = {pr_key(url) for row in receipts if row["reaches_production"] for url in row["mrs"]}
+    covered |= {pr_key(url) for row in updates for url in row["merged_prs"]}
+    covered.discard(None)
+    earlier = {}
+    for row in receipts:
+        for key in row["earlier_mrs"]:
+            earlier.setdefault(key, row["deploy_job_id"])
+    unavailable = {prefix: source for prefix, source, status in (
+        (HOSTUPDATE_MR_PREFIX, HOSTUPDATE_RECEIPTS, receipts_coverage["status"]),
+        (FIRSTMATE_PR_PREFIX, FIRSTMATE_UPDATES, updates_coverage["status"])) if status != "measured"}
+    production, production_coverage = production_evidence(day, ordered_projects, deploy_points, pr_task,
+                                                          covered, earlier, unavailable)
 
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
@@ -925,6 +1119,8 @@ def build(day, home):
                               if missing else {"status": "measured", "count": observed})
     counts["hostupdate_mr_pipeline_wall_time"] = hostupdate_coverage
     counts["production_evidence"] = production_coverage
+    counts["hostupdate_deploy_receipts"] = receipts_coverage
+    counts["firstmate_updates"] = updates_coverage
     return {
         "schema": "fm-wake-daily.v1",
         "day": day,
@@ -934,6 +1130,8 @@ def build(day, home):
         "rework": rework,
         "hostupdate_mr_pipeline_wall_time": hostupdate_pipelines,
         "production_evidence": production,
+        "hostupdate_deploy_receipts": {"events": receipts},
+        "firstmate_updates": {"updates": updates},
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,
