@@ -174,9 +174,11 @@ def production_evidence(day, ships, points, tasks, covered, earlier):
             if key and key not in measured_mrs and key not in shown:
                 not_shown.append({"mr": key, "task": item["task"], "path": None,
                                   "merged_at": item["merged_at"],
-                                  "reason": (f"merged before successful receipt {earlier[key]} on a later commit; "
-                                             "role deployment not proven" if key in earlier else
-                                             "no matching production measurement")})
+                                  "reason": "no matching production measurement"})
+    for item in not_shown:
+        if item["mr"] in earlier:
+            item["reason"] = (f"merged before successful receipt {earlier[item['mr']]} on a later commit; "
+                              "role deployment not proven")
     deployed.sort(key=lambda item: (item["deployed_at"], item["mr"], item["path"]))
     not_shown.sort(key=lambda item: (item["merged_at"], item["mr"], item["path"] or ""))
     return {"deployed": deployed, "not_shown": not_shown}, {"status": "measured", "count": len(deployed)}
