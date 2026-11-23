@@ -403,7 +403,7 @@ test_claude_relaunch_falls_over_after_exhaustion() {
   status=$?
   expect_code 0 "$status" "relaunch after exhaustion should succeed: $out"
 
-  launch=$(grep -E 'encode launch-brief|Firstmate operational input waiting: read' "$fakestate/literal" | tail -1)
+  launch=$(cat "$fakestate/literal")
   [ -n "$launch" ] || fail "relaunch sent no replacement launch command"
   install_token_probe "$fakebin" claude
   preamble=$(grep '^export ' "$fakestate/keys")

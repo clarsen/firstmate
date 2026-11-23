@@ -367,7 +367,7 @@ dedicated_serial_timeout() {
 # one-off number the policy removed.
 FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate full-suite'
 NORMAL_TIER_JOBS='lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash'
-HEAVY_TIER_JOBS='tests-herdr'
+HEAVY_TIER_JOBS='tests-herdr tests-hc'
 
 # Print the one timeout every listed job shares; fail on any disagreement.
 tier_timeout() {  # <tier> <job>...
@@ -489,6 +489,10 @@ job_runner() {
       found=$var
     fi
   done
+  if [ -z "$found" ] && [ "$job" = tests-hc ] && [ "$fallback" = '"ubuntu-24.04"' ]; then
+    printf 'NONE\tubuntu-24.04\n'
+    return 0
+  fi
   [ -n "$found" ] || { echo "$job ignores every runner variable" >&2; return 1; }
   printf '%s\t%s\n' "$found" "$(printf '%s' "$fallback" | ruby -rjson -e 'v = JSON.parse(STDIN.read); raise "fallback must be one hosted runner label" unless v.is_a?(String); print v')"
 }
@@ -746,22 +750,30 @@ test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop() {
     || fail "heavy tier backstop ($heavy) must exceed the normal tier ($normal)"
   [ "$heavy" -ge 60 ] && [ "$heavy" -le 75 ] \
     || fail "heavy tier backstop must stay a 60-75 minute last resort, got $heavy"
-  step=$(ruby -ryaml -e '
+  # Each heavy lane's family-run step owns the same 20-minute tripwire shape:
+  # its own timeout, an always() cleanup step that must come after it, and a
+  # bound below the shared job backstop.
+  while read -r lane run_step cleanup_step; do
+    step=$(ruby -ryaml -e '
 steps = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("steps")
-index = steps.index { |s| s["id"] == "run-real-herdr-family" }
-raise "no run-real-herdr-family step" unless index
-teardown = steps.index { |s| s["id"] == "cleanup-herdr-lab-sessions" }
-raise "no cleanup-herdr-lab-sessions step" unless teardown
+index = steps.index { |s| s["id"] == ARGV[2] }
+raise "no #{ARGV[2]} step" unless index
+teardown = steps.index { |s| s["id"] == ARGV[3] }
+raise "no #{ARGV[3]} step" unless teardown
 raise "teardown must follow the family-run step" unless teardown > index
 raise "teardown must run under always()" unless steps[teardown]["if"].to_s.strip == "always()"
 puts steps[index].fetch("timeout-minutes", "none")
-' "$CI_WORKFLOW" tests-herdr) || fail "could not read the Herdr family-run step"
-  case "$step" in ''|*[!0-9]*) fail "the Herdr family-run step needs its own timeout-minutes, got $step" ;; esac
-  [ "$step" = 20 ] \
-    || fail "the Herdr family-run step must be the 20-minute tripwire, got $step"
-  [ "$step" -lt "$heavy" ] \
-    || fail "the Herdr step tripwire ($step) must stay below the job backstop ($heavy)"
-  pass "Herdr keeps a $step minute step tripwire under a $heavy minute job backstop"
+' "$CI_WORKFLOW" "$lane" "$run_step" "$cleanup_step") || fail "could not read the $lane family-run step"
+    case "$step" in ''|*[!0-9]*) fail "the $lane family-run step needs its own timeout-minutes, got $step" ;; esac
+    [ "$step" = 20 ] \
+      || fail "the $lane family-run step must be the 20-minute tripwire, got $step"
+    [ "$step" -lt "$heavy" ] \
+      || fail "the $lane step tripwire ($step) must stay below the job backstop ($heavy)"
+  done <<'LANES'
+tests-herdr run-real-herdr-family cleanup-herdr-lab-sessions
+tests-hc run-real-hc-family cleanup-hc-lab-sessions
+LANES
+  pass "each heavy lane keeps a 20 minute step tripwire under a $heavy minute job backstop"
 }
 
 # Dedicated shard: the final portable serial shard holds only the
@@ -898,12 +910,15 @@ test_every_job_runner_is_overridable_with_hosted_defaults() {
       macos-stock-bash)
         [ "$got" = "$(printf 'FIRSTMATE_CI_MACOS_RUNNER\tmacos-latest')" ] \
           || fail "$job must use FIRSTMATE_CI_MACOS_RUNNER with a macos-latest fallback, got $got" ;;
+      tests-hc)
+        [ "$got" = "$(printf 'NONE\tubuntu-24.04')" ] \
+          || fail "$job must stay on a GitHub-hosted Linux runner, got $got" ;;
       *)
         [ "$got" = "$(printf 'FIRSTMATE_CI_RUNNER\tubuntu-24.04')" ] \
           || fail "$job must use FIRSTMATE_CI_RUNNER with an ubuntu-24.04 fallback, got $got" ;;
     esac
   done
-  pass "every ci.yml job runner is a repository-variable override with its hosted default"
+  pass "ci.yml jobs use hosted defaults and the HC lab stays on hosted Linux"
 }
 
 # Fork rule: a fork pull request never reaches a self-hosted runner, even with
@@ -918,6 +933,7 @@ test_fork_pull_requests_always_use_the_hosted_runner() {
     got=$(resolve_runner "$job" pull_request someone/firstmate \
       "FIRSTMATE_CI_RUNNER=$LAPTOP_RUNNER" "FIRSTMATE_CI_LINUX_RUNNER=$LAPTOP_RUNNER" "FIRSTMATE_CI_MACOS_RUNNER=$LAPTOP_RUNNER") || fail "$job: could not resolve a fork PR runner"
     [ "$got" = "\"$fallback\"" ] || fail "$job must run fork PRs on $fallback, got $got"
+    [ "$var" != NONE ] || continue
     got=$(resolve_runner "$job" pull_request "$REPOSITORY" "$var=$LAPTOP_RUNNER") || fail "$job: could not resolve a same-repo PR runner"
     [ "$got" = "$LAPTOP_RUNNER" ] || fail "$job must run same-repo PRs on $var, got $got"
     got=$(resolve_runner "$job" push "$REPOSITORY" "$var=$LAPTOP_RUNNER") || fail "$job: could not resolve a push runner"

@@ -89,6 +89,17 @@ fm_claude_account_configured_slots() {
   done <"$file"
 }
 
+# Succeed only when config/claude-accounts is a Keychain slot list: the whole
+# file parses as slot names, it names at least one slot, and none is
+# `ordinary`, which is reserved for the config-directory account list
+# (bin/fm-worker-account-lib.sh). Every other file is a config-directory list.
+fm_claude_account_keychain_list() {  # <config-dir>
+  local slots
+  slots=$(fm_claude_account_configured_slots "$1" 2>/dev/null) || return 1
+  [ -n "$slots" ] || return 1
+  case $'\n'"$slots"$'\n' in *$'\n'ordinary$'\n'*) return 1 ;; esac
+}
+
 FM_CLAUDE_ACCOUNT_USAGE_PREFIX=".claude-account-usage-"
 
 fm_claude_account_usage_file() {  # <state-dir> <slot>
