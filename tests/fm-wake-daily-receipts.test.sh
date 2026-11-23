@@ -68,8 +68,8 @@ cat > "$task_tmp/bin/glab" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
   *'pipelines?'*) printf '{"id":100,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-11-21T09:00:00Z"}\n' ;;
-  # Job 2661538 shape: the checks-stage job declares no artifacts and never publishes a receipt.
-  *'pipelines/100/jobs?'*) printf '{"id":123455,"name":"ansible-check-denyboot-shim","stage":"checks","finished_at":"2026-11-21T11:00:00Z","artifacts_file":null,"artifacts_expire_at":null}\n{"id":123456,"name":"ansible-deploy","finished_at":"2026-11-21T12:00:01Z","artifacts_file":{"filename":"artifacts.zip","size":500},"artifacts_expire_at":"2027-01-05T12:00:01Z"}\n' ;;
+  # Job 2661538 shape: the checks-stage job has no artifacts and never publishes a receipt.
+  *'pipelines/100/jobs?'*) printf '{"id":123455,"name":"ansible-check-denyboot-shim","stage":"checks","finished_at":"2026-11-21T11:00:00Z","artifacts_file":null}\n{"id":123456,"name":"ansible-deploy","stage":"deploy","finished_at":"2026-11-21T12:00:01Z","artifacts_file":{"filename":"artifacts.zip","size":500}}\n' ;;
   *'jobs/123456/artifacts/deploy-event.json'*) cat "$RECEIPT_ARTIFACT" ;;
   *'repository/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/merge_requests'*) printf '[{"iid":42,"web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"}]\n' ;;
   *'repository/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/merge_requests'*) printf '[{"iid":43,"web_url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43"}]\n' ;;
@@ -142,7 +142,7 @@ cat > "$task_tmp/bin/glab" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
   *'pipelines?'*) printf '{"id":100,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-11-21T09:00:00Z"}\n' ;;
-  *'pipelines/100/jobs?'*) printf '{"id":123456,"name":"ansible-deploy","finished_at":"2026-11-21T12:00:01Z","artifacts_file":null,"artifacts_expire_at":"2026-11-22T12:00:01Z"}\n' ;;
+  *'pipelines/100/jobs?'*) printf '{"id":123456,"name":"ansible-deploy","stage":"deploy","finished_at":"2026-11-21T12:00:01Z","artifacts_file":null}\n' ;;
   *) printf '[]\n' ;;
 esac
 MOCK

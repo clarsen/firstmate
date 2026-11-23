@@ -664,10 +664,11 @@ def hostupdate_deploy_receipts(day, ships, tasks, coverage):
                 finished = job.get("finished_at")
                 if not finished or gitlab_time(finished) < start.astimezone(timezone.utc):
                     continue
+                if job.get("stage") == "checks":
+                    # Checks-stage jobs (ansible-check-*) never apply a playbook through run-in-ci.sh.
+                    continue
                 if not job.get("artifacts_file"):
-                    # GitLab keeps artifacts_expire_at after expiry; jobs that declare no artifacts
-                    # (checks-stage ansible-check-*) never run run-in-ci.sh, so they publish no receipt.
-                    if ((job.get("name") or "").startswith("ansible-") and job.get("artifacts_expire_at")
+                    if ((job.get("name") or "").startswith("ansible-")
                             and gitlab_time(finished) < end.astimezone(timezone.utc)):
                         raise ValueError(f"deploy receipt artifact unavailable for job {job['id']}")
                     continue
