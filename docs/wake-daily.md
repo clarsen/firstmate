@@ -87,6 +87,6 @@ The numeric job ID joins this section to `production_evidence.deployed` without 
 Both sections report observations and make no claim that a deliverable is active.
 An unavailable or invalid source makes its `coverage.inputs` and `coverage.signals` entries `not_measurable`, with a null count.
 
-The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, and GitLab pipeline, job, and merge request records.
+The collector reads the fleet ledger, backlog, done archive, captain question store, task metadata, local project clone histories, this home's Git reflog, GitLab pipeline, job, job artifact, and merge request records, and GitHub pull request records.
 It changes no source file and writes only beneath `data/wake/`.
 Sessions outside Firstmate are invisible to this record.
