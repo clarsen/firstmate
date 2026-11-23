@@ -69,9 +69,7 @@ DEPLOY_PATHS = {"datafeed_config", "arpwatch-ng", "iprequest_app_code",
 
 
 def deploy_token(home):
-    """Use the home's one-key .env parser; process environment takes precedence."""
-    if os.environ.get("INFLUXDB_DEPLOY_METRICS_TOKEN"):
-        return os.environ["INFLUXDB_DEPLOY_METRICS_TOKEN"]
+    """Read the token only from the home's .env with its one-key parser."""
     result = subprocess.run(
         ["bash", "-c", '. "$1"; fmx_env_get INFLUXDB_DEPLOY_METRICS_TOKEN "$2"',
          "_", str(Path(__file__).with_name("fm-env-lib.sh")), str(home / ".env")],

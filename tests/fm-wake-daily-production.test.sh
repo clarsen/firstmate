@@ -7,9 +7,9 @@ mkdir -p "$TMPDIR"
 task_tmp=$(fm_test_tmproot fm-wake-daily-production)
 case_home="$task_tmp/home"
 mkdir -p "$case_home/data" "$case_home/state" "$case_home/projects" "$task_tmp/bin"
-printf '## Done\n- [x] ship-a - Example deploy https://example.invalid/lab/datafeed/-/merge_requests/12 (repo: datafeed) (kind: ship) (merged 2026-11-21)\n' > "$case_home/data/backlog.md"
+printf '## Done\n- [x] ship-a - Example deploy https://example.invalid/lab/datafeed/-/merge_requests/12 (repo: datafeed) (kind: ship) (merged 2026-11-21)\n- [x] ship-b - Unmeasured ship https://example.invalid/lab/other/-/merge_requests/15 (repo: other) (kind: ship) (merged 2026-11-21)\n' > "$case_home/data/backlog.md"
 printf '## Done\n' > "$case_home/data/done-archive.md"
-printf '{"v":1,"ts":1795280400,"event":"task.merged","task":"ship-a","pr":"https://example.invalid/lab/datafeed/-/merge_requests/12"}\n' > "$case_home/state/fleet-ledger.jsonl"
+printf '{"v":1,"ts":1795280400,"event":"task.merged","task":"ship-a","pr":"https://example.invalid/lab/datafeed/-/merge_requests/12"}\n{"v":1,"ts":1795294800,"event":"task.merged","task":"ship-b","pr":"https://example.invalid/lab/other/-/merge_requests/15"}\n' > "$case_home/state/fleet-ledger.jsonl"
 printf 'INFLUXDB_DEPLOY_METRICS_TOKEN=fixture-only\n' > "$case_home/.env"
 cat > "$task_tmp/bin/glab" <<'SH'
 #!/usr/bin/env bash
@@ -62,8 +62,17 @@ jq -e '
   .coverage.signals.production_evidence == {"status":"measured","count":1}
   and .production_evidence.deployed[0].task == "ship-a"
   and .production_evidence.deployed[0].deploy_job_id == 123456
+  and (.production_evidence.not_shown | length) == 3
   and .production_evidence.not_shown[0].path == "generate_nagios_cfg"
   and .production_evidence.not_shown[0].merged_at == "2026-11-21T19:00:00Z"
+  and .production_evidence.not_shown[1].task == "ship-b"
+  and .production_evidence.not_shown[1].path == null
+  and .production_evidence.not_shown[1].merged_at == "2026-11-21T21:00:00Z"
+  and .production_evidence.not_shown[1].reason == "no matching production measurement"
+  and (.production_evidence.not_shown[2].mr | endswith("/merge_requests/14"))
+  and .production_evidence.not_shown[2].path == "datafeed_config"
+  and .production_evidence.not_shown[2].merged_at == "2026-11-22T06:00:00Z"
+  and .production_evidence.not_shown[2].reason == "no successful production deploy recorded by day end"
   and (.production_evidence | tostring | contains("fixture-only") | not)
 ' "$record" >/dev/null || fail "production evidence did not match fixture"
 cp "$record" "$task_tmp/first.json"

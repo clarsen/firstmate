@@ -4,3 +4,4 @@
 ,result,table,_start,_stop,_time,_measurement,path,project,iid,deployed,mr_url,merged_at_ms,deployed_at_ms,deploy_job_id
 ,,0,2026-07-24T00:00:00Z,2026-11-23T00:00:00Z,2026-11-21T17:00:00Z,deploy_lead_time,datafeed_config,lab/datafeed,12,1,https://example.invalid/lab/datafeed/-/merge_requests/12,1795280400000,1795284000000,123456
 ,,1,2026-07-24T00:00:00Z,2026-11-23T00:00:00Z,2026-11-21T19:00:00Z,deploy_lead_time,generate_nagios_cfg,lab/generate_nagios_cfg,13,0,https://example.invalid/lab/generate_nagios_cfg/-/merge_requests/13,1795287600000,,
+,,2,2026-07-24T00:00:00Z,2026-11-23T00:00:00Z,2026-11-22T06:00:00Z,deploy_lead_time,datafeed_config,lab/datafeed,14,1,https://example.invalid/lab/datafeed/-/merge_requests/14,1795327200000,1795338000000,123457
