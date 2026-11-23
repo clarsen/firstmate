@@ -114,7 +114,9 @@ jq -e --arg sha "$SHA" --arg local "$LOCAL_SHA" '
   and ([.rework.failed_pipelines[].url] == ["https://github.com/clarsen/firstmate/actions/runs/11","https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/pipelines/9","https://github.com/clarsen/firstmate/actions/runs/10"])
   and ([.rework.failed_pipelines[].at] == ["2026-11-19T18:30:00Z","2026-11-19T21:00:00Z","2026-11-19T23:30:00Z"])
   and .coverage.signals.reverts == {"status":"measured","count":2}
-  and .coverage.signals.closed_unmerged == {"status":"measured","count":2}
+  and .coverage.signals.closed_unmerged.status == "not_measurable"
+  and .coverage.signals.closed_unmerged.observed == 2
+  and (.coverage.signals.closed_unmerged.reason | contains("candidate coverage"))
   and .coverage.signals.failed_pipelines == {"status":"measured","count":3}
   and .coverage.inputs["forge:https://github.com/clarsen/firstmate/pull/8"].status == "readable"
   and (.coverage.inputs | has("forge:https://github.com/clarsen/firstmate/pull/3") | not)
@@ -134,7 +136,8 @@ CLOSED_DAY=2026-11-17
 PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$CLOSED_DAY" --home "$CASE_HOME" >/dev/null || fail "closed MR day collection failed"
 jq -e '
   .rework.closed_unmerged == [{"task":"task-closed","url":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/44","at":"2026-11-17T20:00:00Z"}]
-  and .coverage.signals.closed_unmerged == {"status":"measured","count":1}
+  and .coverage.signals.closed_unmerged.status == "not_measurable"
+  and .coverage.signals.closed_unmerged.observed == 1
 ' "$CASE_HOME/data/wake/daily/$CLOSED_DAY.json" >/dev/null || fail "MR closed before its archive day was dropped"
 
 OLD_DAY=2026-10-20
@@ -155,6 +158,7 @@ cat > "$BIN/glab" <<'EOF'
 exit 1
 EOF
 chmod +x "$BIN/glab"
+rm -f "$record"
 PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$DAY" --home "$CASE_HOME" >/dev/null || fail "unreachable forge collection failed"
 jq -e '
   .coverage.signals.closed_unmerged.status == "not_measurable"

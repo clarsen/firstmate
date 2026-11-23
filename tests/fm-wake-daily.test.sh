@@ -139,6 +139,7 @@ cat > "$CASE_HOME/data/done-archive.md" <<EOF
 - [x] ship-a - Ship title with exact words https://example.org/a/pull/1 (repo: alpha) (kind: ship) (merged $POST)
 - [x] scout-a - Scout title data/scout-a/report.md (repo: alpha) (kind: scout) (reported $POST)
 - [x] scout-b - Scout without path (repo: alpha) (kind: scout) (reported $POST)
+- [x] receiver-list-scout - Add test receiver data/receiver-list-scout/report.md (repo: alpha) (kind: ship) (reported $POST)
 - [x] unknown-a - Unknown kind title (done $POST)
 - [x] unknown-b - Unknown merged title (done $POST)
 - [x] ship-c - Reordered merge ship https://example.org/a/pull/3 (repo: alpha) (kind: ship) (merged $POST)
@@ -181,6 +182,8 @@ EOF
 
 mkdir -p "$CASE_HOME/data/scout-b"
 printf '# Scout B report\n' > "$CASE_HOME/data/scout-b/report.md"
+mkdir -p "$CASE_HOME/data/receiver-list-scout"
+printf '# Receiver investigation\n' > "$CASE_HOME/data/receiver-list-scout/report.md"
 
 cp "$CASE_HOME/data/backlog.md" "$TMP_ROOT/backlog-saved.md"
 cp "$CASE_HOME/data/done-archive.md" "$TMP_ROOT/archive-saved.md"
@@ -195,7 +198,8 @@ jq -e --arg day "$POST" '
   and .coverage.ledger_duplicates_dropped == 3
   and .coverage.merge_time_source == "fleet-ledger"
   and .coverage.signals.ships == {"status": "measured", "count": 8}
-  and .coverage.signals.scouts == {"status": "measured", "count": 2}
+  and .coverage.signals.scouts == {"status": "measured", "count": 3}
+  and .coverage.signals.unclassified == {"status": "measured", "count": 1}
   and .coverage.signals.decisions == {"status": "measured", "count": 2}
   and .coverage.signals.hostupdate_mr_pipeline_wall_time == {"status": "measured", "count": 11}
   and .hostupdate_mr_pipeline_wall_time.summary == {"count": 11, "median_seconds": 50, "p90_seconds": 90, "share_under_60s": 0.5455}
@@ -224,9 +228,10 @@ jq -e --arg day "$POST" '
   and .contributions.projects[0].ships == [
     {"task": "ship-a", "title": "Ship title with exact words", "evidence": "https://example.org/a/pull/1", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"},
     {"task": "ship-c", "title": "Reordered merge ship", "evidence": "https://example.org/a/pull/3", "merged_at": "2026-11-22T20:00:00Z", "time_precision": "second"}]
-  and ([.contributions.projects[0].scouts[].task] == ["scout-a", "scout-b"])
-  and .contributions.projects[0].scouts[0].evidence == "data/scout-a/report.md"
-  and .contributions.projects[0].scouts[1] == {"task": "scout-b", "title": "Scout without path", "evidence": "data/scout-b/report.md", "reported_on": $day}
+  and ([.contributions.projects[0].scouts[].task] == ["receiver-list-scout", "scout-a", "scout-b"])
+  and .contributions.projects[0].scouts[0].evidence == "data/receiver-list-scout/report.md"
+  and .contributions.projects[0].scouts[1].evidence == "data/scout-a/report.md"
+  and .contributions.projects[0].scouts[2] == {"task": "scout-b", "title": "Scout without path", "evidence": "data/scout-b/report.md", "reported_on": $day}
   and .contributions.projects[0].decisions == [{"task": "ship-a", "title": "Ship title with exact words", "question": "Which route?", "answer": "Use the route, exactly.", "evidence": "data/backlog.md#ship-a:decision:1", "closed_on": $day, "time_precision": "day", "date_source": "task close date, not answer time"}]
   and .contributions.projects[1].ships == [
     {"task": "issue-ship", "title": "Fix linked issue", "evidence": "data/done-archive.md#issue-ship", "merged_at": $day, "time_precision": "day"},
@@ -242,6 +247,19 @@ jq -e --arg day "$POST" '
 cp "$record" "$TMP_ROOT/first.json"
 collect "$POST" >/dev/null || fail "repeat run failed"
 cmp -s "$TMP_ROOT/first.json" "$record" || fail "repeat run changed bytes"
+printf '%s\n' '- [x] later-edit - Backfilled after the day (kind: ship) (done 2026-11-22)' >> "$CASE_HOME/data/backlog.md"
+collect "$POST" >/dev/null || fail "repeat after source edit failed"
+cmp -s "$TMP_ROOT/first.json" "$record" || fail "source edit rewrote a completed daily record"
+cp "$TMP_ROOT/backlog-saved.md" "$CASE_HOME/data/backlog.md"
+
+collect --catch-up "$CASE_HOME" >/dev/null || fail "catch-up failed"
+[ -f "$CASE_HOME/data/wake/daily/2026-11-21.json" ] || fail "catch-up missed the first Wake day"
+[ -f "$CASE_HOME/data/wake/daily/2026-11-23.json" ] || fail "catch-up missed the next completed day"
+cmp -s "$TMP_ROOT/first.json" "$record" || fail "catch-up rewrote an existing record"
+rm -f "$CASE_HOME/data/wake/daily/2026-11-21.json"
+collect --catch-up "$CASE_HOME" >/dev/null || fail "second catch-up failed"
+[ -f "$CASE_HOME/data/wake/daily/2026-11-21.json" ] || fail "catch-up did not recover a missed day"
+cmp -s "$TMP_ROOT/first.json" "$record" || fail "second catch-up rewrote an existing record"
 
 pre_record="$CASE_HOME/data/wake/daily/$PRE.json"
 collect "$PRE" >/dev/null || fail "pre-cutoff run failed"
@@ -254,6 +272,7 @@ jq -e --arg day "$PRE" '
 ' "$pre_record" >/dev/null || fail "pre-cutoff ships did not come from done-archive dates"
 
 printf 'fail\n' > "$MOCK_GLAB_MODE_FILE"
+rm -f "$record"
 collect "$POST" >/dev/null || fail "unreachable GitLab run failed"
 jq -e '
   .hostupdate_mr_pipeline_wall_time.summary == {"count": null, "median_seconds": null, "p90_seconds": null, "share_under_60s": null}
@@ -266,6 +285,7 @@ jq -e '
   and .coverage.inputs["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/pipelines"].status == "not_measurable"
 ' "$record" >/dev/null || fail "unreachable GitLab was counted as zero"
 printf 'bad-url\n' > "$MOCK_GLAB_MODE_FILE"
+rm -f "$record"
 collect "$POST" >/dev/null || fail "invalid GitLab detail run failed"
 jq -e '
   .coverage.signals.hostupdate_mr_pipeline_wall_time.status == "not_measurable"
@@ -281,13 +301,44 @@ cmp -s "$TMP_ROOT/archive-saved.md" "$CASE_HOME/data/done-archive.md" || fail "a
 cmp -s "$TMP_ROOT/ledger-saved.jsonl" "$CASE_HOME/state/fleet-ledger.jsonl" || fail "ledger changed"
 cmp -s "$TMP_ROOT/questions-saved.json" "$CASE_HOME/data/captain-questions.json" || fail "questions changed"
 
+# The live watcher starts the finite catch-up job on its existing check cadence.
+# Keep all endpoint and forge reads inside this synthetic home.
+SCHEDULE_HOME="$TMP_ROOT/scheduled-home"
+mkdir -p "$SCHEDULE_HOME/data" "$SCHEDULE_HOME/state" "$TMP_ROOT/watch-bin"
+printf '## Done\n' > "$SCHEDULE_HOME/data/backlog.md"
+printf '## Done\n' > "$SCHEDULE_HOME/data/done-archive.md"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/watch-bin/tmux"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/watch-bin/glab"
+REAL_PYTHON=$(command -v python3)
+cat > "$TMP_ROOT/watch-bin/python3" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == */fm-wake-daily.py ]]; then
+  exec "$REAL_PYTHON" "\$@" --through 2026-11-21
+fi
+exec "$REAL_PYTHON" "\$@"
+EOF
+chmod +x "$TMP_ROOT/watch-bin/"*
+PATH="$TMP_ROOT/watch-bin:$PATH" FM_HOME="$SCHEDULE_HOME" FM_STATE_OVERRIDE="$SCHEDULE_HOME/state" \
+  FM_WAKE_DAILY_DISABLE=0 FM_POLL=1 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
+  bash "$ROOT/bin/fm-watch.sh" > "$TMP_ROOT/watch.out" 2> "$TMP_ROOT/watch.err" &
+WATCH_PID=$!
+for _ in {1..30}; do
+  [ -f "$SCHEDULE_HOME/data/wake/daily/2026-11-21.json" ] && break
+  sleep 0.2
+done
+kill -TERM "$WATCH_PID" 2>/dev/null || true
+wait "$WATCH_PID" 2>/dev/null || true
+[ -f "$SCHEDULE_HOME/data/wake/daily/2026-11-21.json" ] || fail "watcher did not schedule daily catch-up"
+
 mv "$CASE_HOME/state/fleet-ledger.jsonl" "$TMP_ROOT/ledger-removed.jsonl"
+rm -f "$record"
 collect "$POST" >/dev/null || fail "missing-ledger run failed"
 jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.signals.links.status == "not_measurable" and .coverage.signals.links.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "absent"' "$record" >/dev/null || fail "missing ledger reported as zero"
 collect "$PRE" >/dev/null || fail "pre-cutoff missing-ledger run failed"
 jq -e '.coverage.signals.ships == {"status": "measured", "count": 1} and .coverage.signals.links.status == "measured"' "$pre_record" >/dev/null || fail "pre-cutoff records required the ledger"
 
 { cat "$TMP_ROOT/ledger-saved.jsonl"; printf '{not json\n'; } > "$CASE_HOME/state/fleet-ledger.jsonl"
+rm -f "$record"
 collect "$POST" >/dev/null || fail "invalid-ledger run failed"
 jq -e '.coverage.signals.ships.status == "not_measurable" and .coverage.signals.ships.count == null and .coverage.inputs["'"$CASE_HOME"'/state/fleet-ledger.jsonl"].reason == "invalid JSON line 13"' "$record" >/dev/null || fail "invalid ledger reported as measured"
 
