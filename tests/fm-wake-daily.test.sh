@@ -9,6 +9,7 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-wake-daily)
 CASE_HOME="$TMP_ROOT/home"
 mkdir -p "$CASE_HOME/data" "$CASE_HOME/state"
+printf 'INFLUXDB_DEPLOY_METRICS_TOKEN=fixture-only\n' > "$CASE_HOME/.env"
 mkdir -p "$TMP_ROOT/bin"
 export MOCK_GLAB_FIXTURE="$ROOT/tests/fixtures/fm-wake-daily/pipelines.json"
 export MOCK_GLAB_MODE_FILE="$TMP_ROOT/glab-mode"
@@ -97,8 +98,10 @@ POST_LATER=$((POST_NOON + 60))
 PINNED="$TMP_ROOT/pinned-collector.py"
 cat > "$PINNED" <<'PY'
 import importlib.util
+import io
 import sys
 from datetime import datetime
+import urllib.request
 
 path, now = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("fm_wake_daily", path)
@@ -113,6 +116,8 @@ class PinnedClock(datetime):
 
 
 module.datetime = PinnedClock
+urllib.request.urlopen = lambda request, timeout: io.BytesIO(
+    b",result,table,_measurement,path,project,iid,mr_url,deployed\n")
 sys.argv = [path] + sys.argv[3:]
 module.main()
 PY
@@ -278,6 +283,7 @@ late_report() {
   printf '# %s\n' "$2" > "$CATCH_HOME/data/$1/report.md"
 }
 mkdir -p "$CATCH_HOME/data" "$CATCH_HOME/state" "$CATCH_HOME/projects"
+cp "$CASE_HOME/.env" "$CATCH_HOME/.env"
 printf '## Done\n' > "$CATCH_HOME/data/backlog.md"
 : > "$CATCH_HOME/data/done-archive.md"
 : > "$CATCH_HOME/state/fleet-ledger.jsonl"
@@ -366,6 +372,7 @@ cmp -s "$TMP_ROOT/questions-saved.json" "$CASE_HOME/data/captain-questions.json"
 # Keep all endpoint and forge reads inside this synthetic home.
 SCHEDULE_HOME="$TMP_ROOT/scheduled-home"
 mkdir -p "$SCHEDULE_HOME/data" "$SCHEDULE_HOME/state" "$TMP_ROOT/watch-bin"
+cp "$CASE_HOME/.env" "$SCHEDULE_HOME/.env"
 printf '## Done\n' > "$SCHEDULE_HOME/data/backlog.md"
 printf '## Done\n' > "$SCHEDULE_HOME/data/done-archive.md"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/watch-bin/tmux"
@@ -418,6 +425,7 @@ grep -q 'not complete' "$TMP_ROOT/err" || fail "incomplete day reason missing"
 
 LINK_HOME="$TMP_ROOT/links-home"
 mkdir -p "$LINK_HOME/data"
+cp "$CASE_HOME/.env" "$LINK_HOME/.env"
 cat > "$LINK_HOME/data/backlog.md" <<'EOF'
 ## Done
 - [x] batch-ci-speed - Scout pipeline speed data/batch-ci-speed/report.md (repo: example) (kind: scout) (reported 2026-10-02)
