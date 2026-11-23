@@ -15,7 +15,7 @@ cat > "$home/data/backlog.md" <<'MD'
 - [x] receipt-failed - Failed deployment https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
 - [x] receipt-earlier - Earlier undeployed change https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/41 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
 - [x] receipt-pin - Earlier pin change https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/50 (repo: lblnet_hostupdate) (kind: ship) (merged 2026-11-21)
-- [x] fm-task - Firstmate change https://github.com/example/firstmate/pull/7 (repo: firstmate) (kind: ship) (merged 2026-11-21)
+- [x] fm-task - Firstmate change https://github.com/clarsen/firstmate/pull/7 (repo: firstmate) (kind: ship) (merged 2026-11-21)
 MD
 printf '## Done\n' > "$home/data/done-archive.md"
 cat > "$home/state/fleet-ledger.jsonl" <<'JSONL'
@@ -23,7 +23,7 @@ cat > "$home/state/fleet-ledger.jsonl" <<'JSONL'
 {"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-failed","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/43"}
 {"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-earlier","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/41"}
 {"v":1,"ts":1795280400,"event":"task.merged","task":"receipt-pin","pr":"https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/50"}
-{"v":1,"ts":1795280400,"event":"task.merged","task":"fm-task","pr":"https://github.com/example/firstmate/pull/7"}
+{"v":1,"ts":1795280400,"event":"task.merged","task":"fm-task","pr":"https://github.com/clarsen/firstmate/pull/7"}
 JSONL
 printf 'INFLUXDB_DEPLOY_METRICS_TOKEN=fixture-only\n' > "$home/.env"
 printf '%s\n' ',result,table,_start,_stop,_time,_measurement,path,project,iid,deployed,mr_url,merged_at_ms,deployed_at_ms,deploy_job_id' \
@@ -84,7 +84,7 @@ MOCK
 cat > "$task_tmp/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
-  *'/pulls'*) printf '[{"html_url":"https://github.com/example/firstmate/pull/7","merged_at":"2026-11-21T11:00:00Z"}]\n' ;;
+  *'/pulls'*) printf '[{"html_url":"https://github.com/clarsen/firstmate/pull/7","merged_at":"2026-11-21T11:00:00Z"}]\n' ;;
   *) printf '[]\n' ;;
 esac
 MOCK
@@ -110,7 +110,7 @@ jq -e --arg commit "$updated_commit" '
   and .hostupdate_deploy_receipts.events[1].tasks == ["receipt-failed"]
   and .hostupdate_deploy_receipts.events[1].earlier_mrs == []
   and .firstmate_updates.updates[0].after == $commit
-  and .firstmate_updates.updates[0].merged_prs == ["https://github.com/example/firstmate/pull/7"]
+  and .firstmate_updates.updates[0].merged_prs == ["https://github.com/clarsen/firstmate/pull/7"]
   and .firstmate_updates.updates[0].tasks == ["fm-task"]
   and .coverage.signals.production_evidence.status == "measured"
   and .coverage.signals.hostupdate_deploy_receipts.status == "measured"
@@ -155,4 +155,21 @@ MOCK
 chmod +x "$task_tmp/bin/glab"
 collect
 jq -e '.coverage.signals.hostupdate_deploy_receipts.status == "not_measurable" and .coverage.signals.hostupdate_deploy_receipts.count == null' "$record" >/dev/null || fail 'unreachable source reported as zero'
+jq -e '
+  .coverage.signals.production_evidence.inputs == ["gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json"]
+  and ([.production_evidence.not_shown[] | select(.mr | contains("lblnet_hostupdate")) | .reason] | unique)
+    == ["evidence source gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json unavailable"]
+  and ([.production_evidence.not_shown[].mr] | index("https://github.com/clarsen/firstmate/pull/7")) == null
+' "$record" >/dev/null || fail 'unreadable receipts reported as missing production evidence'
+cat > "$task_tmp/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+exit 1
+MOCK
+collect
+jq -e '
+  .coverage.signals.firstmate_updates.status == "not_measurable"
+  and .coverage.signals.production_evidence.inputs == ["git:home/firstmate/reflog", "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json"]
+  and ([.production_evidence.not_shown[] | select(.mr == "https://github.com/clarsen/firstmate/pull/7") | .reason]
+    == ["evidence source git:home/firstmate/reflog unavailable"])
+' "$record" >/dev/null || fail 'unreadable home updates reported as missing production evidence'
 pass 'receipt and home update evidence reconcile not_shown; failed, earlier, and invalid receipts are not evidence'

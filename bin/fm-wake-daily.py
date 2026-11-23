@@ -60,6 +60,7 @@ HOSTUPDATE_API = f"{HOSTUPDATE_PROJECT}/pipelines"
 HOSTUPDATE_RECEIPTS = "gitlab:lsg-git.lbl.gov/lblnet/lblnet_hostupdate/deploy-event.json"
 FIRSTMATE_UPDATES = "git:home/firstmate/reflog"
 HOSTUPDATE_MR_PREFIX = "https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/"
+FIRSTMATE_PR_PREFIX = "https://github.com/clarsen/firstmate/pull/"
 MR_REF = re.compile(r"refs/merge-requests/([1-9][0-9]*)/(?:head|merge|train)")
 CHANGE_CLASSES = ("image_build", "full_unit", "other")
 DEPLOY_METRICS = "influxdb:lsg_deploy_metrics/deploy_lead_time"
@@ -128,7 +129,7 @@ def pr_tasks(ships, task_rows):
     return tasks
 
 
-def production_evidence(day, ships, points, tasks, covered, earlier):
+def production_evidence(day, ships, points, tasks, covered, earlier, unavailable):
     if points is None:
         return {"deployed": [], "not_shown": []}, {"status": "not_measurable", "count": None,
                                                     "inputs": [DEPLOY_METRICS]}
@@ -175,13 +176,21 @@ def production_evidence(day, ships, points, tasks, covered, earlier):
                 not_shown.append({"mr": key, "task": item["task"], "path": None,
                                   "merged_at": item["merged_at"],
                                   "reason": "no matching production measurement"})
+    unjudged = set()
     for item in not_shown:
-        if item["mr"] in earlier:
+        source = next((source for prefix, source in unavailable.items() if item["mr"].startswith(prefix)), None)
+        if source:
+            unjudged.add(source)
+            item["reason"] = f"evidence source {source} unavailable"
+        elif item["mr"] in earlier:
             item["reason"] = (f"merged before successful receipt {earlier[item['mr']]} on a later commit; "
                               "role deployment not proven")
     deployed.sort(key=lambda item: (item["deployed_at"], item["mr"], item["path"]))
     not_shown.sort(key=lambda item: (item["merged_at"], item["mr"], item["path"] or ""))
-    return {"deployed": deployed, "not_shown": not_shown}, {"status": "measured", "count": len(deployed)}
+    measured = {"status": "measured", "count": len(deployed)}
+    if unjudged:
+        measured["inputs"] = sorted(unjudged)
+    return {"deployed": deployed, "not_shown": not_shown}, measured
 
 
 def read_text(path, coverage):
@@ -1058,8 +1067,11 @@ def build(day, home):
     for row in receipts:
         for key in row["earlier_mrs"]:
             earlier.setdefault(key, row["deploy_job_id"])
+    unavailable = {prefix: source for prefix, source, status in (
+        (HOSTUPDATE_MR_PREFIX, HOSTUPDATE_RECEIPTS, receipts_coverage["status"]),
+        (FIRSTMATE_PR_PREFIX, FIRSTMATE_UPDATES, updates_coverage["status"])) if status != "measured"}
     production, production_coverage = production_evidence(day, ordered_projects, deploy_points, pr_task,
-                                                          covered, earlier)
+                                                          covered, earlier, unavailable)
 
     source_ok = lambda path: coverage[str(path)]["status"] == "readable"
     open_task_decisions = sum(len(decision_pairs(row)) for row in by_task.values() if not row["completed"])
