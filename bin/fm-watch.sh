@@ -3859,10 +3859,11 @@ EOF
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     # The finite collector runs outside the watch loop, so forge reads never
-    # delay an actionable wake. Its own lock and existing daily files dedupe
-    # simultaneous watcher cycles and recover missed completed Pacific days.
+    # delay an actionable wake. Its own lock dedupes simultaneous watcher
+    # cycles; it recovers missed days and retries incompletely measured ones.
+    # Failures append to a home-local log instead of disappearing.
     if [ "${FM_WAKE_DAILY_DISABLE:-0}" != 1 ] && [ -d "$FM_HOME/data" ]; then
-      python3 "$SCRIPT_DIR/fm-wake-daily.py" --catch-up --home "$FM_HOME" >/dev/null 2>&1 &
+      python3 "$SCRIPT_DIR/fm-wake-daily.py" --catch-up --home "$FM_HOME" >/dev/null 2>>"$STATE/wake-daily.log" &
     fi
     rejected_checks=
     contribution_check_output=

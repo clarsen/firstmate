@@ -4,18 +4,20 @@ Owner: Firstmate maintainers.
 Applies to Firstmate homes using `fm-wake-daily.v1`; reviewed 2026-11-22.
 
 `bin/fm-wake-daily.py` writes one JSON record for a completed day in `data/wake/daily/` of the selected Firstmate home.
-The existing watcher starts a finite catch-up run on its check cadence, five minutes by default, so no operator step is required.
-The run writes every missing completed Pacific day since Wake began on 2026-11-21, including days missed while supervision was offline.
-Concurrent runs share a home-local lock, and an existing daily file is never rewritten.
+The existing watcher starts a finite `--catch-up` run on its check cadence, five minutes by default, so no operator step is required.
+The run covers every Pacific day since Wake began on 2026-11-21 once the following day has also completed, so records lag one day and late backlog edits made just after midnight are included.
+It writes each missing day, including days missed while supervision was offline, and rebuilds an existing record while any of its `coverage.inputs` is `not_measurable`, so a brief forge or file outage does not freeze a record.
+Concurrent runs share a home-local lock, a failed day does not stop later days, and the watcher appends collector errors to `wake-daily.log` in its state directory.
 For a selected historical day, run the collector with a Pacific date and optionally `--home HOME`; `FM_HOME` is the default home override.
-The `--catch-up` option performs the same missing-day sweep, and `--through YYYY-MM-DD` limits it to a completed day.
+A selected-day run always rebuilds that day from current sources.
 The script refuses today and future dates in `America/Los_Angeles`.
-It publishes each output atomically, and a repeat run leaves its bytes unchanged even if source records later change.
+It replaces the output atomically and leaves a byte-identical file alone on a repeat run with unchanged inputs.
 
 The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, and `coverage` sections.
 `contributions.projects` groups ships, scouts, and closed decisions by recorded project, using `none recorded` when a project was not recorded.
 Rows with no recorded kind appear in `unclassified` under their recorded project or `none recorded`.
 `coverage.signals.unclassified` reports their day count alongside ships, so a ship count can be read with its classification gap.
+A row with no recorded kind that counts as a scout under the reported-task rule below is not also unclassified.
 A ship includes its task, title, evidence, merge time, and time precision; a backlog-only merge has day precision.
 A backlog or archive ship row counts only when it is a delivery under the Recently Landed rule in `bin/fm-landed-lib.sh`: `(merged D)` with its PR or MR URL, `(done D)` with a `local main` note in its title or as its last body line (unless the body records an `fm-captain-hold` or `fm-decision-hold` resolution), or a row with no PR or MR URL, report path, or `local main` note; other links such as issue URLs are not artifacts; a `(reported D)` row, a closed row whose artifact does not match its verb, and a row retaining `hold-kind: captain` are not merges.
 A scout includes its task, title, report path, and reported day; a scout with no recorded report path counts only when `data/<task>/report.md` exists.
@@ -49,6 +51,7 @@ A PR or MR already recorded as merged is not read for `closed_unmerged`, only fo
 It does not refresh project clones or change forge state.
 `coverage.signals` reports a rework count as `not_measurable` when a required clone or forge read fails or reaches a page limit; its `observed` value is only the partial count.
 `closed_unmerged` always has partial candidate coverage because the collector cannot see replaced PRs or MRs absent from the recorded task URLs, so its `count` is null and its `observed` value is a lower bound even when every candidate forge read succeeds.
+When a candidate read also fails, its reason adds the missing or unreadable input cause.
 `coverage.inputs` names the affected clone or forge URL, so an unreachable forge cannot appear as a measured zero.
 `hostupdate_mr_pipeline_wall_time` lists successful `lblnet/lblnet_hostupdate` merge request pipelines whose `finished_at` falls on the requested Pacific day.
 Each row records the GitLab pipeline ID and URL, the merge request IID and source branch, creation and finish times in UTC, and creation-to-finish wall time in seconds.

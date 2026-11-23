@@ -116,7 +116,7 @@ jq -e --arg sha "$SHA" --arg local "$LOCAL_SHA" '
   and .coverage.signals.reverts == {"status":"measured","count":2}
   and .coverage.signals.closed_unmerged.status == "not_measurable"
   and .coverage.signals.closed_unmerged.observed == 2
-  and (.coverage.signals.closed_unmerged.reason | contains("candidate coverage"))
+  and .coverage.signals.closed_unmerged.reason == "candidate coverage limited to recorded task PR and MR URLs"
   and .coverage.signals.failed_pipelines == {"status":"measured","count":3}
   and .coverage.inputs["forge:https://github.com/clarsen/firstmate/pull/8"].status == "readable"
   and (.coverage.inputs | has("forge:https://github.com/clarsen/firstmate/pull/3") | not)
@@ -158,11 +158,11 @@ cat > "$BIN/glab" <<'EOF'
 exit 1
 EOF
 chmod +x "$BIN/glab"
-rm -f "$record"
 PATH="$BIN:$PATH" python3 "$ROOT/bin/fm-wake-daily.py" "$DAY" --home "$CASE_HOME" >/dev/null || fail "unreachable forge collection failed"
 jq -e '
   .coverage.signals.closed_unmerged.status == "not_measurable"
   and .coverage.signals.closed_unmerged.count == null
+  and .coverage.signals.closed_unmerged.reason == "candidate coverage limited to recorded task PR and MR URLs; missing or unreadable input"
   and .coverage.signals.failed_pipelines.status == "not_measurable"
   and .coverage.inputs["forge:https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/merge_requests/42"].status == "not_measurable"
   and .coverage.signals.reverts == {"status":"measured","count":2}
