@@ -1,0 +1,58 @@
+[19:40:15.709] [base] lavish-axi open: session:   file: /tmp/fmlv-base.2vfzKB/art/board.html   url: "http://127.0.0.1:14612/session/17f90b7bd2ed8eeb"   status: opened self_paint_warning: "This artifact never paints its own page surface: no
+[19:40:15.713] [base] session url: http://127.0.0.1:14612/session/17f90b7bd2ed8eeb
+[19:40:15.751] [base] source id: lavish-17f90b7bd2ed8eeb
+[19:40:15.754] [base] headless chrome attached for 10s
+[19:40:19.396] [base] arm: registered: lavish-17f90b7bd2ed8eeb (lavish) armed: lavish-17f90b7bd2ed8eeb artifact: /tmp/fmlv-base.2vfzKB/art/board.html 
+[19:40:19.400] [base] claim file: /tmp/fmlv-base.2vfzKB/home 3986312 .claim.dexTrP-3986312 linux-starttime=166651448 cmdline-hex=62617368002f746d702f666d6c762d626173652f62696e2f666d2d70726f636576656e742e7368005f7374617274006c617669736
+[19:40:20.496] [base] t+1s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:21.588] [base] t+2s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:22.679] [base] t+3s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:23.770] [base] t+4s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:24.863] [base] t+5s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:25.954] [base] t+6s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:27.046] [base] t+7s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:28.137] [base] t+8s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:29.233] [base] t+9s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:30.326] [base] t+10s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:31.625] [base] t+11s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:32.799] [base] t+12s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:33.950] [base] t+13s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:35.053] [base] t+14s results=0 wakes=0 claim=present lavish_polls_running=1
+[19:40:36.156] [base] t+15s results=1 wakes=0 claim=present lavish_polls_running=0
+[19:40:37.249] [base] t+16s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:38.341] [base] t+17s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:39.430] [base] t+18s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:40.523] [base] t+19s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:41.615] [base] t+20s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:42.705] [base] t+21s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:43.797] [base] t+22s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:44.887] [base] t+23s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:45.978] [base] t+24s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:47.075] [base] t+25s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:48.171] [base] t+26s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:49.272] [base] t+27s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:50.402] [base] t+28s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:51.505] [base] t+29s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:52.596] [base] t+30s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:53.692] [base] t+31s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:54.784] [base] t+32s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:55.874] [base] t+33s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:56.966] [base] t+34s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:58.059] [base] t+35s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:40:59.150] [base] t+36s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:41:00.241] [base] t+37s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:41:01.331] [base] t+38s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:41:02.442] [base] t+39s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:41:03.531] [base] t+40s results=1 wakes=0 claim=absent lavish_polls_running=0
+[19:41:03.533] [base] captured results:
+--- lavish-17f90b7bd2ed8eeb.1.result
+session:
+  file: /tmp/fmlv-base.2vfzKB/art/board.html
+  status: browser_disconnected
+next_step: The Lavish review window was closed or disconnected. The session remains open and resumable; ask the user whether they want to reopen it or end the session. Do not reopen or end it without their direction.
+[19:41:03.539] [base] wake queue: 
+[19:41:04.191] [base] second arm: registered: lavish-17f90b7bd2ed8eeb (lavish) armed: lavish-17f90b7bd2ed8eeb artifact: /tmp/fmlv-base.2vfzKB/art/board.html 
+[19:41:06.279] [base] after second arm lavish_polls_running=1 results=1
+[19:41:06.962] [base] sweep-home rc=0
+[19:41:08.432] [base] leftover lavish polls=0
+TMPDIR=/tmp/fmlv-base.2vfzKB

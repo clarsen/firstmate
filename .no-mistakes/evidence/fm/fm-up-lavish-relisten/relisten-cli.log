@@ -1,0 +1,9 @@
+$ bin/fm-procevent-lavish.sh relisten
+exit=0
+$ bin/fm-procevent-lavish.sh relisten extra
+at-least-once, no-loss, or lossless. The only durability this proves is the
+runner's own: output that reached the runner is stored before it is announced.
+exit=2
+$ (base) fm-procevent-lavish.sh relisten
+error: unknown command: relisten
+exit=1
