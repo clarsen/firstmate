@@ -81,6 +81,7 @@ An event has `reaches_production: true` only for a successful receipt: outcome `
 A receipt document without schema version 1 and an `events` list, or an event without a 40-character `commit_sha`, makes the section `not_measurable`.
 The collector reads the artifacts from the [hostupdate receipt source of truth](https://lsg-git.lbl.gov/lblnet/lblnet_hostupdate/-/blob/master/docs/modules/ROOT/pages/reference_deploy_receipts.adoc) through read-only GitLab API requests.
 The artifact retention is 45 days except jobs with shorter retention; the collector does not backfill expired artifacts.
+An `ansible-*` job that finished on the day and declared artifacts (`artifacts_expire_at` set) but has no `deploy-event.json` makes the section `not_measurable`; a job that declares no artifacts, such as the checks-stage `ansible-check-*` job, publishes no receipt and is skipped.
 The numeric job ID joins this section to `production_evidence.deployed` without counting an overlapping deploy twice.
 `firstmate_updates.updates` lists this home's Git reflog fast forwards on the selected Pacific day, with UTC time, before and after commits, and merged GitHub PRs associated with commits brought in by each update, with their matching fleet tasks.
 Both sections report observations and make no claim that a deliverable is active.
