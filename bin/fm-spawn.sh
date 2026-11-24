@@ -8173,6 +8173,10 @@ spawn_report_preserved_state() {
     SPAWN_PRESERVED_CLAIM="verified preserved: its paired task record is present and its backlog item is In flight"
     return 0
   fi
+  if [ "$RELAUNCH" -eq 1 ] && fm_backlog_row_in_flight_held_or_blocked "$FM_BACKLOG_ROW_STATE"; then
+    SPAWN_PRESERVED_CLAIM="verified preserved: its paired task record is present and its backlog item is In flight ($FM_BACKLOG_ROW_STATE)"
+    return 0
+  fi
   # The commit reported success, but the row does not read back In flight:
   # move it now under the same lock and verify the result before naming it.
   fm_backlog_start "$DATA" "$ID" || repair_error=$FM_BACKLOG_TRANSITION_ERROR
