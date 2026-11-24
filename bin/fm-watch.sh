@@ -4271,6 +4271,30 @@ EOF
   # published while this watcher was between cycles.
   procevent_surface_queued
 
+  # A finished background captain-ask sweep left one result file: its exit
+  # status, then its output. Like a process-event result, its reason is more
+  # specific than the generic recovery one. A repeated failure stays silent.
+  CAPTAIN_ASK_RESULT="$STATE/.captain-asks-sweep.result"
+  if [ -f "$CAPTAIN_ASK_RESULT" ] && [ ! -L "$CAPTAIN_ASK_RESULT" ]; then
+    captain_ask_text=$(cat "$CAPTAIN_ASK_RESULT")
+    rm -f "$CAPTAIN_ASK_RESULT"
+    captain_ask_rc=${captain_ask_text%%$'\n'*}
+    case "$captain_ask_text" in
+      *$'\n'*) captain_ask_out=${captain_ask_text#*$'\n'} ;;
+      *) captain_ask_out= ;;
+    esac
+    if [ "$captain_ask_rc" = 0 ]; then
+      rm -f "$STATE/.captain-asks-scan-error"
+      [ -z "$captain_ask_out" ] || wake "${captain_ask_out%%$'\n'*}"
+    elif [ ! -f "$STATE/.captain-asks-scan-error" ] \
+        || [ "$(cat "$STATE/.captain-asks-scan-error" 2>/dev/null)" != "$captain_ask_out" ]; then
+      reason="check: captain asks scan failed: ${captain_ask_out:0:240}"
+      fm_wake_append check captain-asks-error "$reason" || exit 1
+      printf '%s\n' "$captain_ask_out" > "$STATE/.captain-asks-scan-error"
+      wake "$reason"
+    fi
+  fi
+
   # A process-event result carries richer adapter-owned wake context than the
   # generic recovery reason, so give that owner first refusal.
   reconcile_overdue_pauses
@@ -4297,6 +4321,18 @@ EOF
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+    # The ask ledger sweep runs outside the watch loop, like the daily
+    # collector: it appends its own durable check wakes, and a later cycle
+    # rings its result. Its own lock skips a sweep while one is running.
+    if [ -e "$FM_HOME/data/captain-asks.json" ] || [ -L "$FM_HOME/data/captain-asks.json" ]; then
+      (
+        captain_ask_out=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm-captain-asks.py" sweep 2>&1)
+        captain_ask_rc=$?
+        [ "$captain_ask_rc" -eq 75 ] && exit 0
+        printf '%s\n%s\n' "$captain_ask_rc" "$captain_ask_out" > "$CAPTAIN_ASK_RESULT.$BASHPID" \
+          && mv -f "$CAPTAIN_ASK_RESULT.$BASHPID" "$CAPTAIN_ASK_RESULT"
+      ) </dev/null >/dev/null 2>&1 &
+    fi
     # The finite collector runs outside the watch loop, so forge reads never
     # delay an actionable wake. Its own lock dedupes simultaneous watcher
     # cycles; it recovers missed days and retries recent unmeasured ones.

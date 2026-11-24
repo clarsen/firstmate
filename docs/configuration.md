@@ -101,6 +101,7 @@ Each effective `FM_HOME` contains private operational directories.
 - Captain preferences and optional shared captain preferences.
 - Learnings, backlog, briefs, scout reports, optional task status archives, and the optional per-task no-mistakes pipeline-spend ledger.
 - Captain-opened questions in `data/captain-questions.json`, owned by [`bin/fm-captain-question.py`](../bin/fm-captain-question.py).
+- Exact delivery asks and priority-project obligations in `data/captain-asks.json`, owned by [`bin/fm-captain-asks.py`](../bin/fm-captain-asks.py).
 - Explicitly installed content-addressed extension packages under `data/extensions/packages/`.
 
 `state/` holds runtime records:
@@ -1228,6 +1229,48 @@ The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-gui
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.
 
 Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](fm-test-portable-shards.md); [herdr-backend.md](herdr-backend.md#destructive-lab-safety) owns the real-Herdr lane's isolation boundary, and [runtime-backends.md](verification/runtime-backends.md#herdr) owns active evidence.
+
+## Captain ask ledger (data/captain-asks.json)
+
+`bin/fm-captain-asks.py` owns the home-local `fm-captain-asks.v1` JSON record.
+An absent record means no asks.
+The top level contains `schema` and `asks`.
+Each ask has an immutable `id`, stable idempotency `key`, exact `intent`, `source`, `kind`, `project`, `linked_task` or `no_task_reason`, optional `waiting_question` ID, immutable `requested_target`, current `target`, UTC `created`, optional UTC `due`, UTC `next_check`, workflow `state`, `evidence` history, `verifier`, latest `verification` result, `alert`, and an optional `archive_reason`.
+Kinds are `deploy-prod`, `deploy-dev`, `merge`, and `project-priority`.
+Open states are `queued`, `working`, `awaiting-approval`, `blocked`, `verifying`, and `needs-evidence`.
+Closed states are `verified` after a passing verifier and `archived` after an explicit reasoned removal.
+`add` requires the captain's exact words in a regular text file, a source pointer, and a stable key derived from the source and target.
+An identical repeated key returns the existing ID; a conflicting repeat fails.
+`update` records progress evidence without closing an ask and can fill in a later target, verifier, due time, or linked task while retaining the original words and ID.
+`verify` only closes a deploy or merge ask when its allowlisted predicate passes.
+`remove` is an alias of `archive` and leaves a tombstone with a reason.
+`list` shows open asks, and `dump` includes archived and verified asks.
+The command's `--help` is the exact flag reference.
+
+An `http-json-field-equals` verifier has `url`, dot-separated JSON `path`, and `expected_prefix` string fields.
+It passes only when the live string field starts with that exact prefix; use a full SHA to require exact SHA equality.
+A `forge-mr-merged-at-sha` verifier has a GitLab MR `url` and expected full `sha`; it passes only when the MR is merged and that SHA is its merge commit, squash commit, or merged head (the fast-forward case).
+The GitLab check reads through the home's authenticated `glab api` access, including private merge requests.
+Unknown verifiers, unreadable endpoints, and mismatches keep the ask open: the result is stored in `verification` and appended to `evidence`, and the recorded workflow `state` is left unchanged.
+Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a 256 KiB response limit; the HTTP read times out after two seconds and the `glab api` read after four.
+These checks observe outcomes; they grant no deploy or merge permission.
+
+The watcher starts `sweep` in the background on its existing check cadence and rings the result on a later cycle, so slow checks never delay other watcher work; a second sweep exits while one is running.
+Each row is checked without holding the ledger lock, which is taken only to record that row's result, so `add` and `update` never wait for a slow check.
+A row whose state, verifier, target, linked task, waiting question, or due time changed during its check is left for the next pass.
+A failed sweep is reported once as a `check: captain asks scan failed` wake until its error changes.
+The sweep checks at most 12 due open items per pass and stores its per-item `next_check` time.
+It appends typed `check` wakes through the durable wake helper before storing an alert fingerprint.
+The default scan interval is 600 seconds, first undriven delivery alert is after 1800 seconds, and repeat reminder is after 3600 seconds.
+A delivery ask alerts once its `due` time has passed, or when it is undriven: its own `linked_task` has no worker that `bin/fm-crew-state.sh` reports as `working`; another worker on the same project does not cover it.
+A delivery ask whose state is `awaiting-approval`, or whose `waiting_question` is open, gets no hourly reminders and stays in Bearings and the wake-drain list.
+A row whose check fails is alerted with the failure and the sweep continues with the remaining rows.
+The optional gitignored `config/captain-asks.json` overrides these values with positive integer `scan_seconds`, `first_alert_seconds`, and `reminder_seconds` up to 86400.
+A missing file means the defaults; an invalid file fails the sweep with that scan-failure wake, and `list` reports it as `config_error`, which Bearings discloses in `omitted`.
+The priority-project detector wakes when no project worker in `state/*.meta` is `working` according to `bin/fm-crew-state.sh`, the configured backlog read through `bin/fm-tasks-axi.sh` has no startable queued row, and neither a `hold-kind: captain` hold nor the linked open `waiting_question` exists.
+Priority projects are opt-in `project-priority` items in the private ledger; no project roster is shipped in tracked files.
+`page --publish` renders the open ledger to `.lavish/captain-asks.html` and establishes a read-only Lavish session; a priority row whose detector fails shows the failure instead of failing the page.
+Bearings projects a compact list of open asks from the same store.
 
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 

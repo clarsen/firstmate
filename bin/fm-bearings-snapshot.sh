@@ -33,6 +33,7 @@
 # bin/fm-captain-question.py, read through bin/fm-captain-question-list.sh.
 # They are unbounded and never enter decision buckets. An invalid record makes
 # only captain_questions null, disclosed in omitted[].
+# Open captain asks are a compact projection of data/captain-asks.json.
 # Contributions project cached coverage and required actors from fm-contributions.sh;
 # only captain rows are exposed, with counts for the other actors and unmeasured homes. It never infers
 # decisions from report or visual-review prose or reimplements snapshot semantics.
@@ -185,6 +186,8 @@ Default fields: schema, home, generated, prs, issues_status,
   decisions_open{id,key,verb,summary,question,owner},
   captain_questions{id,question,status,opened,last_updated,links,state,stale}
     (null, disclosed in omitted, when the question record is invalid),
+  captain_asks{id,project,kind,target,state,created,next_check,verifier_status}
+    (null, disclosed in omitted, when the ask record is invalid),
   landed{id,what,what_full,artifact,owner},
   gates{id,title,title_full,blocked_by,reason,owner,filed,repo,kind,body,pr_url,report_path,links},
   reports{id,path}, recorded_prs{id,url},
@@ -929,6 +932,19 @@ else
   MODEL=$(printf '%s\n' "$MODEL" | jq '. + {captain_questions:null}
     | .omitted += [{surface:"captain questions unavailable: invalid data/captain-questions.json", reveal:"repair the record owned by bin/fm-captain-question.py"}]') \
     || { echo "fm-bearings-snapshot: captain question projection failed" >&2; exit 1; }
+fi
+
+# Current obligations are a bounded projection of the separate private ledger.
+if ASK_STORE=$(FM_HOME="${FM_HOME:-$(dirname "$SCRIPT_DIR")}" python3 "$SCRIPT_DIR/fm-captain-asks.py" list 2>/dev/null); then
+  ASK_ROWS=$(printf '%s\n' "$ASK_STORE" | jq -c '[.asks[] | {id,project,kind,target,state,created,next_check,verifier_status:(.verification.result // "unchecked")}]') || exit 1
+  MODEL=$(printf '%s\n' "$MODEL" | jq --argjson asks "$ASK_ROWS" '. + {captain_asks:$asks}') || exit 1
+  ASK_CONFIG_ERROR=$(printf '%s\n' "$ASK_STORE" | jq -r '.config_error // empty') || exit 1
+  if [ -n "$ASK_CONFIG_ERROR" ]; then
+    MODEL=$(printf '%s\n' "$MODEL" | jq --arg error "$ASK_CONFIG_ERROR" \
+      '.omitted += [{surface:("captain asks config invalid: " + $error),reveal:"repair config/captain-asks.json"}]') || exit 1
+  fi
+else
+  MODEL=$(printf '%s\n' "$MODEL" | jq '. + {captain_asks:null} | .omitted += [{surface:"captain asks unavailable",reveal:"inspect data/captain-asks.json"}]') || exit 1
 fi
 
 if [ "$FORMAT" = json ]; then
