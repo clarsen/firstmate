@@ -2593,25 +2593,37 @@ test_merged_pr_reads_done_under_captured_meta() {
   pass "recorded merged PR reads done under the fleet snapshot's captured meta"
 }
 
-test_no_mistakes_prevalidation_done_stays_done() {
+test_publishing_done_without_pr_is_unfinished() {
   reset_fakes
-  local d out
-  d=$(new_case preval-done)
-  make_repo_on_branch "$d/wt" fm/preval
-  git -C "$d/wt" commit -q --allow-empty -m 'fix only in the worktree'
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/preval.meta" \
-    "window=fm:fm-preval" "worktree=$d/wt" "project=$d/wt" \
-    "kind=ship" "mode=no-mistakes" "harness=claude"
-  printf 'done: implementation complete\n' > "$d/state/preval.status"
-  FM_FAKE_AXI_STATUS=""
-  FM_FAKE_RUNS_LIST=""
-  FM_FAKE_BUSY=0
-  arm_idle_record "$d/state" preval
-  out=$(run_crew_state "$d" preval)
-  assert_contains "$out" "state: done" "no-mistakes pre-validation done: remains done"
-  assert_not_contains "$out" "state: blocked" "pre-validation done: must not be the named-head gate"
-  pass "no-mistakes pre-validation done: stays current-state done"
+  local d out mode
+  for mode in no-mistakes direct-PR; do
+    d=$(new_case "no-pr-$mode")
+    make_repo_on_branch "$d/wt" fm/preval
+    git -C "$d/wt" commit -q --allow-empty -m 'fix only in the worktree'
+    git -C "$d/wt" update-ref refs/remotes/origin/fm/preval "$(git -C "$d/wt" rev-parse HEAD)"
+    make_fakebin "$d" >/dev/null
+    fm_write_meta "$d/state/preval.meta" \
+      "window=fm:fm-preval" "worktree=$d/wt" "project=$d/wt" \
+      "kind=ship" "mode=$mode" "harness=claude"
+    printf 'done: implementation complete\n' > "$d/state/preval.status"
+    FM_FAKE_AXI_STATUS=""
+    FM_FAKE_RUNS_LIST=""
+    FM_FAKE_BUSY=0
+    arm_idle_record "$d/state" preval
+    out=$(run_crew_state "$d" preval)
+    assert_contains "$out" "state: blocked" "$mode done without PR must remain actionable: $out"
+    assert_contains "$out" "PR" "$mode done without PR must explain the missing publication: $out"
+    printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/preval.meta"
+    out=$(run_crew_state "$d" preval)
+    assert_contains "$out" "state: done" "$mode done with recorded PR remains finished: $out"
+    fm_write_meta "$d/state/preval.meta" \
+      "window=fm:fm-preval" "worktree=$d/wt" "project=$d/wt" \
+      "kind=ship" "mode=$mode" "harness=claude"
+    printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$d/state/preval.status"
+    out=$(run_crew_state "$d" preval)
+    assert_contains "$out" "state: done" "$mode done naming a PR remains finished: $out"
+  done
+  pass "publishing-mode done without a PR stays unfinished"
 }
 
 test_moved_remote_branch_without_named_head_is_blocked() {
@@ -6826,7 +6838,7 @@ test_own_run_of_a_multi_repo_task_names_no_member() {
   pass "the task's own run answers a multi-repository task without naming a member"
 }
 
-test_member_handoff_done_is_gated_on_the_member() {
+test_member_handoff_done_requires_pr_and_named_head() {
   reset_fakes
   local d out sha
   d=$(make_multi_repo_case multi-handoff)
@@ -6839,8 +6851,9 @@ test_member_handoff_done_is_gated_on_the_member() {
   arm_idle_record "$d/state" multi
   printf 'done: ready in branch fm/feat-multi of api - handoff for validation\n' > "$d/state/multi.status"
   out=$(run_crew_state "$d" multi)
-  assert_contains "$out" "state: done" "a no-mistakes member's handoff was gated on the task's own copy"
-  printf 'done: ready in branch fm/feat-multi\n' > "$d/state/multi.status"
+  assert_contains "$out" "state: blocked" "a no-mistakes member's handoff without a PR is unfinished"
+  assert_contains "$out" "PR/MR URL" "the member handoff names its missing publication"
+  printf 'done: PR https://example.test/o/r/pull/9 checks green\n' > "$d/state/multi.status"
   out=$(run_crew_state "$d" multi)
   unset FM_FAKE_UNINIT_DIR
   assert_contains "$out" "state: blocked" "a done naming no member was not gated on the task's own copy"
@@ -6868,6 +6881,7 @@ test_multi_repo_done_survives_missing_run_overview() {
   FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
   export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
   arm_idle_record "$d/state" multi
+  printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
   printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
   out=$(run_crew_state "$d" multi)
   unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
@@ -6919,6 +6933,7 @@ test_multi_repo_unlanded_done_stays_blocked_without_run_overview() {
   git -C "$d/wt" add unlanded.txt
   git -C "$d/wt" commit -q -m 'unlanded work'
   arm_idle_record "$d/state" multi
+  printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
   printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
   out=$(run_crew_state "$d" multi)
   assert_contains "$out" 'state: blocked' 'an unlanded multi-repository task was accepted as done'
@@ -7039,7 +7054,7 @@ test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_other_branch_run_ignored
 test_unpushed_ship_done_is_blocked
 test_merged_pr_reads_done_under_captured_meta
-test_no_mistakes_prevalidation_done_stays_done
+test_publishing_done_without_pr_is_unfinished
 test_moved_remote_branch_without_named_head_is_blocked
 test_external_review_done_reads_ready
 test_no_run_busy_pane
@@ -7192,7 +7207,7 @@ test_legacy_conflicting_run_records_report_unknown
 test_edit_member_run_is_attributed_to_its_repository
 test_own_run_of_a_multi_repo_task_names_no_member
 test_live_runs_in_two_repositories_read_unknown
-test_member_handoff_done_is_gated_on_the_member
+test_member_handoff_done_requires_pr_and_named_head
 test_multi_repo_done_survives_missing_run_overview
 test_multi_repo_done_yields_to_busy_pane_without_run_overview
 test_multi_repo_done_reads_gone_target_as_unknown_without_run_overview
