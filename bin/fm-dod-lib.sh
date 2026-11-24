@@ -1150,7 +1150,8 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 }
 
 # 1 when a no-mistakes or direct-PR ship done: names no PR/MR (a note starting
-# `PR <url>`) and the resolved repository records none. Otherwise 0 when <line>
+# `PR <url>`) and the resolved repository records none (in a task with edit
+# members, a done naming no repository reads anchor_pr=, never pr=). Otherwise 0 when <line>
 # is not a ship done: to gate, when the task's meta records
 # forge=external and fm_dod_accept_external_review_done accepts it, when it
 # names the task's recorded PR whose head the forge holds, when it names a
@@ -1164,9 +1165,13 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> [meta-locked]]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha pr_key=pr gerrit captured='' member=''
-  # A task with edit members gates a done on the repository it names.
-  if [ "$kind" = ship ] && [ -n "$meta" ] && [ -f "$meta" ] && fm_member_has_edit "$meta" \
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha pr_key=pr own_pr_key=pr gerrit captured='' member=''
+  # A task with edit members gates a done on the repository it names; one
+  # naming none is its own repository's, whose PR is anchor_pr=.
+  if [ "$kind" = ship ] && [ -n "$meta" ] && [ -f "$meta" ] && fm_member_has_edit "$meta"; then
+    own_pr_key=anchor_pr
+  fi
+  if [ "$own_pr_key" = anchor_pr ] \
     && fm_member_resolve_done_note "$meta" "$(status_line_note "$line")"; then
     wt=$FM_MEMBER_MATCH_WORKTREE
     project=$FM_MEMBER_MATCH_PROJECT
@@ -1177,12 +1182,13 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     else
       pr_key=anchor_pr
     fi
+    own_pr_key=$pr_key
   fi
   if [ "$kind" = ship ] && [ "$(status_line_verb "$line")" = "done" ] \
     && [ "$(fm_dod_meta_value "$meta" forge)" != external ]; then
     case "$mode" in
       no-mistakes|direct-PR)
-        if [ -z "$(fm_dod_meta_value "$meta" "$pr_key")" ] \
+        if [ -z "$(fm_dod_meta_value "$meta" "$own_pr_key")" ] \
           && ! fm_dod_pr_url_from_done_note "$(status_line_note "$line")" >/dev/null; then
           printf '%s\n' "done declared without a PR/MR URL; complete the $mode delivery path"
           return 1

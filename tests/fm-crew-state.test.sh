@@ -6904,6 +6904,18 @@ test_member_done_pr_requirement_follows_the_named_member() {
   unset FM_FAKE_UNINIT_DIR
   assert_contains "$out" "state: blocked" "the task's recorded PR hid a member done without its own PR: $out"
   assert_contains "$out" "PR/MR URL" "the member refusal does not name the missing PR: $out"
+
+  d=$(make_multi_repo_case multi-member-pr-only)
+  awk '{ sub(/^mode=direct-PR$/, "mode=no-mistakes"); print }' "$d/state/multi.meta" > "$d/state/multi.meta.tmp"
+  mv "$d/state/multi.meta.tmp" "$d/state/multi.meta"
+  printf '%s\n' 'pr=https://github.com/o/api/pull/8' 'member.api.pr=https://github.com/o/api/pull/8' >> "$d/state/multi.meta"
+  FM_FAKE_UNINIT_DIR="$(cd "$d/wt" && pwd -P):$(cd "$d/api" && pwd -P)"
+  arm_idle_record "$d/state" multi
+  printf 'done: implementation complete\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR
+  assert_contains "$out" "state: blocked" "a member's PR in pr= hid the task's own done without its PR: $out"
+  assert_contains "$out" "PR/MR URL" "the task's own refusal does not name the missing PR: $out"
   pass "a member done's PR/MR requirement follows that member's mode and recorded PR"
 }
 
@@ -6926,7 +6938,7 @@ test_multi_repo_done_survives_missing_run_overview() {
   FM_FAKE_NO_OVERVIEW_DIR=$(cd "$d/api" && pwd -P)
   export FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
   arm_idle_record "$d/state" multi
-  printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
+  printf 'anchor_pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
   printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
   out=$(run_crew_state "$d" multi)
   unset FM_FAKE_UNINIT_DIR FM_FAKE_NO_OVERVIEW_DIR
@@ -6978,7 +6990,7 @@ test_multi_repo_unlanded_done_stays_blocked_without_run_overview() {
   git -C "$d/wt" add unlanded.txt
   git -C "$d/wt" commit -q -m 'unlanded work'
   arm_idle_record "$d/state" multi
-  printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
+  printf 'anchor_pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
   printf 'done: delivered changes across both repositories\n' > "$d/state/multi.status"
   out=$(run_crew_state "$d" multi)
   assert_contains "$out" 'state: blocked' 'an unlanded multi-repository task was accepted as done'
