@@ -1239,11 +1239,12 @@ The top level contains `schema` and `asks`.
 Each ask has an immutable `id`, stable idempotency `key`, exact `intent`, `source`, `kind`, `project`, `linked_task` or `no_task_reason`, optional `waiting_question` ID, immutable `requested_target`, current `target`, UTC `created`, optional UTC `due`, UTC `next_check`, workflow `state`, `evidence` history, `verifier`, latest `verification` result, `alert`, and an optional `archive_reason`.
 Kinds are `deploy-prod`, `deploy-dev`, `merge`, and `project-priority`.
 Open states are `queued`, `working`, `awaiting-approval`, `blocked`, `verifying`, and `needs-evidence`.
-Closed states are `verified` after a passing verifier and `archived` after an explicit reasoned removal.
+Closed states are `verified` after a passing verifier or a captured captain acceptance, and `archived` after an explicit reasoned removal.
 `add` requires the captain's exact words in a regular text file, a source pointer, and a stable key derived from the source and target.
 An identical repeated key returns the existing ID; a conflicting repeat fails.
 `update` records progress evidence without closing an ask and can fill in a later target, verifier, due time, or linked task while retaining the original words and ID.
 `verify` only closes a deploy or merge ask when its allowlisted predicate passes.
+`captured-answers` applies choices extracted from the ledger's bound Lavish page; it does not infer answers from annotations or freeform messages.
 `remove` is an alias of `archive` and leaves a tombstone with a reason.
 `list` shows open asks, and `dump` includes archived and verified asks.
 The command's `--help` is the exact flag reference.
@@ -1252,7 +1253,12 @@ An `http-json-field-equals` verifier has `url`, dot-separated JSON `path`, and `
 It passes only when the live string field starts with that exact prefix; use a full SHA to require exact SHA equality.
 A `forge-mr-merged-at-sha` verifier has a GitLab MR `url` and expected full `sha`; it passes only when the MR is merged and that SHA is its merge commit, squash commit, or merged head (the fast-forward case).
 The GitLab check reads through the home's authenticated `glab api` access, including private merge requests.
-Unknown verifiers, unreadable endpoints, and mismatches keep the ask open: the result is stored in `verification` and appended to `evidence`, and the recorded workflow `state` is left unchanged.
+A `host-rollout-receipt` verifier has a GitLab job `url`, a full requested `sha`, and a nonempty `hosts` array of unique host names.
+It passes when the job is successful and its retained `deploy-event.json` artifact has a successful `changed` or `no_change` event for every named host, with zero Ansible and runner exit codes and a successful event job status.
+Each event's commit must equal or descend from the requested SHA, proven through GitLab's repository merge-base API.
+An absent host, unsuccessful event, or unrelated commit is a mismatch; an unreadable job, artifact, or ancestry response is unknown.
+The job URL identifies one job in one GitLab project, so evidence from different jobs cannot be combined silently.
+Unknown verifiers, unreadable endpoints, and mismatches do not automatically close an ask: the result is stored in `verification` and appended to `evidence`, and the recorded workflow `state` is left unchanged.
 Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a 256 KiB response limit; the HTTP read times out after two seconds and the `glab api` read after four.
 These checks observe outcomes; they grant no deploy or merge permission.
 
@@ -1270,7 +1276,15 @@ The optional gitignored `config/captain-asks.json` overrides these values with p
 A missing file means the defaults; an invalid file fails the sweep with that scan-failure wake, and `list` reports it as `config_error`, which Bearings discloses in `omitted`.
 The priority-project detector wakes when no project worker in `state/*.meta` is `working` according to `bin/fm-crew-state.sh`, the configured backlog read through `bin/fm-tasks-axi.sh` has no startable queued row, and neither a `hold-kind: captain` hold nor the linked open `waiting_question` exists.
 Priority projects are opt-in `project-priority` items in the private ledger; no project roster is shipped in tracked files.
-`page --publish` renders the open ledger to `.lavish/captain-asks.html` and establishes a read-only Lavish session; a priority row whose detector fails shows the failure instead of failing the page.
+`page --publish` renders the open ledger to `.lavish/captain-asks.html`, opens a Lavish session, binds its captured-answer source, and arms the existing process-event listener.
+The page groups open asks by project and by whether the captain or firstmate currently owns the wait, and defines its status terms in a glossary.
+It shows the latest verifier detail beneath an ask when one is available.
+Each open ask offers Accept and Rework.
+Accept records the captured selection and optional exact note as `captain-accept` evidence and closes the ask without claiming a programmatic verifier pass.
+Rework requires a nonempty note, records that note as `rework` evidence, moves the ask to `working`, and appends a `check: captain ask` wake for firstmate to decide the fix.
+Captured answers from other Lavish pages cannot change the ledger, and repeated processing of the same captured result is idempotent.
+Programmatic verifiers continue to close asks automatically when they pass.
+A priority row whose detector fails shows the failure instead of failing the page.
 Bearings projects a compact list of open asks from the same store.
 
 ## Captain Preferences (data/captain.md / data/captain-shared.md)

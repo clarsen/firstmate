@@ -221,12 +221,15 @@
 # has its result passed to
 # `bin/fm-procevent-<adapter>.sh answers <result-file>`, and whatever that prints
 # is piped straight into that one intake. The adapter reports only what the
-# captain chose; the intake owns every rule about what happens next. This runner
+# captain chose; the intake owns every rule about what happens next. This feed
 # names no adapter, parses no result, and knows no decision rule, so a future
 # built-in source needs nothing here beyond an `answers` command and a binding.
 # Reconcile selections use the parallel `reconciles` adapter command and the
 # binding-verified `reconcile-requests` intake, never the keyed-answer value.
 # External binding responses never enter either authority-bearing intake.
+# The captain-ask ledger page has a separate bound-source feed: only the
+# source id for this home's `.lavish/captain-asks.html` may supply extracted
+# `ask-answers` to `bin/fm-captain-asks.py captured-answers`.
 #
 # Feeding is deliberately independent of handling: it never acknowledges a result
 # and never suppresses a wake. Recording the captain's answer is transcription,
@@ -530,6 +533,22 @@ feed_keyed_answers() {  # <adapter> <source-id> <result-file>
   seq=$(fm_procevent_result_sequence "$result") || return 1
   "$script" answers "$result" 2>/dev/null \
     | "$SCRIPT_DIR/fm-captain-hold.sh" answers "$origin" \
+        --source "the captured result $id sequence $seq" >/dev/null 2>&1
+}
+
+feed_captain_ask_answers() {  # <adapter> <source-id> <result-file>
+  local adapter=$1 id=$2 result=$3 script origin seq expected rows
+  script=$(adapter_script "$adapter")
+  [ -f "$script" ] && [ ! -L "$script" ] || return 1
+  [ "$adapter" = lavish ] || return 1
+  expected=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$FM_HOME/.lavish/captain-asks.html" 2>/dev/null) || return 1
+  [ "$id" = "$expected" ] || return 1
+  origin=$("$SCRIPT_DIR/fm-captain-hold.sh" binding "$id" 2>/dev/null) || return 1
+  [ -n "$origin" ] || return 1
+  seq=$(fm_procevent_result_sequence "$result") || return 1
+  rows=$("$script" ask-answers "$result" 2>/dev/null) || return 1
+  [ -n "$rows" ] || return 1
+  printf '%s\n' "$rows" | "$SCRIPT_DIR/fm-captain-asks.py" captured-answers \
         --source "the captured result $id sequence $seq" >/dev/null 2>&1
 }
 
@@ -1475,6 +1494,10 @@ EOF
   if [ "$extension_owner" -eq 0 ] \
     && feed_keyed_answers "$adapter" "$id" "$durable"; then
     printf 'answers-fed: %s\n' "$id"
+  fi
+  if [ "$extension_owner" -eq 0 ] \
+    && feed_captain_ask_answers "$adapter" "$id" "$durable"; then
+    printf 'captain-asks-fed: %s\n' "$id"
   fi
 
   # A self-announcing adapter's autohandle announces through its own durable
