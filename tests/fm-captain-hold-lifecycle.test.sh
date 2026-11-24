@@ -2469,6 +2469,68 @@ SH
   pass "a board answer reaches the keyed-answer intake and wakes firstmate"
 }
 
+# docs/configuration.md promises that captured answers from other Lavish pages
+# cannot change the captain-asks ledger. The same accept result is captured
+# through the runner twice: from a different bound Lavish page it must leave the
+# ask open, and from the bound ledger page it must close the ask.
+test_only_the_ledger_page_feeds_captain_ask_answers() {
+  local home ask ledger_sid other_sid stub out state
+  home=$(make_home captain-ask-page)
+  fm_test_track_procevent_home "$home" "$home/procevent-claims"
+  mkdir -p "$home/.lavish"
+  printf '<h1>ledger</h1>\n' > "$home/.lavish/captain-asks.html"
+  printf '<h1>other</h1>\n' > "$home/.lavish/other-decisions.html"
+  ledger_sid=$(run_lavish "$home" source-id "$home/.lavish/captain-asks.html")
+  other_sid=$(run_lavish "$home" source-id "$home/.lavish/other-decisions.html")
+  [ "$ledger_sid" != "$other_sid" ] || fail "precondition: the two pages share a source id"
+
+  printf 'Deploy the requested commit.\n' > "$home/intent.txt"
+  ask=$(FM_HOME="$home" python3 "$ROOT/bin/fm-captain-asks.py" add --key page-accept \
+    --kind deploy-prod --intent-file "$home/intent.txt" --source fixture:page \
+    --project sample --task release --target requested-release) \
+    || fail "could not add the ledger ask"
+
+  stub="$home/ask-page-source.sh"
+  cat > "$stub" <<SH
+#!/usr/bin/env bash
+cat <<'OUT'
+session:
+  status: feedback
+  session_ended: false
+prompts[1]{tag,text,prompt}:
+  "choice","Accept","Context data: {\"schema\":\"fm-decision-page-answer.v1\",\"question\":\"captain-ask.$ask\",\"selection\":\"accept\",\"note\":\"\"}"
+OUT
+SH
+  chmod +x "$stub"
+
+  ask_state() {
+    FM_HOME="$home" python3 "$ROOT/bin/fm-captain-asks.py" dump \
+      | python3 -c 'import json,sys; print(next(a["state"] for a in json.load(sys.stdin)["asks"] if a["id"] == sys.argv[1]))' "$ask"
+  }
+
+  run_procevent "$home" register lavish "$other_sid" -- "$stub" >/dev/null \
+    || fail "could not register the other page source"
+  run_captain "$home" bind "$other_sid" >/dev/null || fail "could not bind the other page source"
+  out=$(run_procevent "$home" start "$other_sid" 2>&1) \
+    || fail "the other page runner did not complete: $out"
+  assert_contains "$out" "$other_sid.1.result" "the other page result was never captured: $out"
+  assert_not_contains "$out" "captain-asks-fed: $other_sid" \
+    "another bound Lavish page fed the captain-asks ledger: $out"
+  state=$(ask_state)
+  [ "$state" = queued ] || fail "another bound Lavish page changed the ask to $state"
+
+  run_procevent "$home" register lavish "$ledger_sid" -- "$stub" >/dev/null \
+    || fail "could not register the ledger page source"
+  run_captain "$home" bind "$ledger_sid" >/dev/null || fail "could not bind the ledger page source"
+  out=$(run_procevent "$home" start "$ledger_sid" 2>&1) \
+    || fail "the ledger page runner did not complete: $out"
+  assert_contains "$out" "captain-asks-fed: $ledger_sid" \
+    "the bound ledger page never fed the captain-asks ledger: $out"
+  state=$(ask_state)
+  [ "$state" = verified ] || fail "the ledger page accept left the ask $state"
+  pass "only the bound ledger page can change captain asks"
+}
+
 # The intake is channel-agnostic, so chat must reach it the same way a captured
 # review does - for a task-id key, and for a legacy composed identity.
 test_chat_channel_feeds_the_same_keyed_answer_intake() {
@@ -5189,6 +5251,7 @@ test_reconcile_outcomes_retry_partial_failures_once
 test_unbound_source_closes_no_hold
 test_legacy_identities_keep_working
 test_board_answer_reaches_the_keyed_answer_intake
+test_only_the_ledger_page_feeds_captain_ask_answers
 test_chat_channel_feeds_the_same_keyed_answer_intake
 test_origin_slug_validation_precedes_path_construction
 test_status_resolution_over_an_open_hold_is_signalled

@@ -638,7 +638,7 @@ def main():
     archive.add_argument("id")
     archive.add_argument("--reason", required=True)
     sub.add_parser("sweep", help="bounded watcher scan and durable check wake")
-    page = sub.add_parser("page", help="render a read-only Lavish page")
+    page = sub.add_parser("page", help="render the Lavish ledger page with Accept/Rework decisions")
     page.add_argument("--output")
     page.add_argument("--publish", action="store_true", help="establish and verify an open Lavish session")
     args = parser.parse_args()
