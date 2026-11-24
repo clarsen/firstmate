@@ -3249,6 +3249,153 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+test_relaunch_preserves_held_and_blocked_backlog_items() {
+  local dir id out rc before
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  fm_tasks_axi_compatible || {
+    pass "skipped: installed tasks-axi predates ${FM_TASKS_AXI_MIN}, so dispatch refuses automatic backlog transitions"
+    return 0
+  }
+
+  id=rl-held
+  dir=$(new_case held "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" in_flight
+  tasks-axi hold "$id" --reason "fixture merge decision" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  rc=0
+  out=$(run_control "$dir" "$id" relaunch --note "continue held task") || rc=$?
+  expect_code 0 "$rc" "control relaunch must accept a held backlog item"$'\n'"$out"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "control relaunch changed the captain-held backlog item"
+
+  id=rl-blocked
+  dir=$(new_case blocked "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" in_flight
+  tasks-axi add rl-blocker "fixture dependency" --kind ship \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi block "$id" --by rl-blocker \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  printf 'zsh' > "$dir/fake/command"
+  rc=0
+  out=$(run_spawn "$dir" "$id" --relaunch --harness claude) || rc=$?
+  expect_code 0 "$rc" "direct spawn relaunch must accept a blocked backlog item"$'\n'"$out"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "direct spawn relaunch changed the blocked backlog item"
+
+  id=rl-held-blocked
+  dir=$(new_case held-blocked "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" in_flight
+  tasks-axi hold "$id" --reason "fixture merge decision" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi add rl-blocker "fixture dependency" --kind ship \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi block "$id" --by rl-blocker \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  rc=0
+  out=$(run_control "$dir" "$id" relaunch --note "continue held blocked task") || rc=$?
+  expect_code 0 "$rc" "control relaunch must accept a held and blocked backlog item"$'\n'"$out"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "control relaunch changed the held and blocked backlog item"
+
+  id=rl-queued-held
+  dir=$(new_case queued-held "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" queued
+  tasks-axi hold "$id" --reason "fixture merge decision" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  rc=0
+  out=$(run_control "$dir" "$id" relaunch --note "attempt queued held task") || rc=$?
+  expect_code 1 "$rc" "a queued held backlog item must still refuse relaunch"$'\n'"$out"
+  assert_contains "$out" "not dispatchable in state queued yes no" \
+    "the queued-held refusal did not reach the backlog preflight"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "a refused queued-held relaunch changed the backlog item"
+
+  id=rl-closed
+  dir=$(new_case closed "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" in_flight
+  tasks-axi 'done' "$id" --note "fixture complete" \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  rc=0
+  out=$(run_control "$dir" "$id" relaunch --note "attempt closed task") || rc=$?
+  expect_code 1 "$rc" "a closed backlog item must still refuse relaunch"$'\n'"$out"
+  assert_contains "$out" "not dispatchable in state done no no" \
+    "the closed-row refusal did not reach the backlog preflight"
+  pass "existing workers relaunch from held or blocked In-flight rows without changing those rows; queued-held and closed rows still refuse"
+}
+
+# Interrupt the outermost process of the spawn's own chain on its first
+# tasks-axi call after the replacement agent is running, which is the backlog
+# commit under the deferred-signal traps.
+interrupt_spawn_after_launch() {  # <case-dir>
+  local dir=$1 real
+  real=$(command -v tasks-axi)
+  cat > "$dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\$(cat "$dir/fake/command")" = claude ] && [ ! -f "$dir/spawn-interrupted" ]; then
+  : > "$dir/spawn-interrupted"
+  pid=\$PPID spawn_pid=
+  while [ -n "\$pid" ] && [ "\$pid" -gt 1 ]; do
+    case "\$(ps -o args= -p "\$pid")" in
+      *"$SPAWN"*) spawn_pid=\$pid ;;
+      *) [ -z "\$spawn_pid" ] || break ;;
+    esac
+    pid=\$(ps -o ppid= -p "\$pid" | tr -d ' ')
+  done
+  [ -z "\$spawn_pid" ] || kill -TERM "\$spawn_pid"
+fi
+exec "$real" "\$@"
+SH
+  chmod +x "$dir/fakebin/tasks-axi"
+}
+
+test_interrupted_relaunch_verifies_a_held_backlog_item_as_preserved() {
+  local dir id out rc before
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  fm_tasks_axi_compatible || {
+    pass "skipped: installed tasks-axi predates ${FM_TASKS_AXI_MIN}, so dispatch refuses automatic backlog transitions"
+    return 0
+  }
+
+  id=rl-held-interrupted
+  dir=$(new_case held-interrupted "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" in_flight
+  tasks-axi hold "$id" --reason "fixture merge decision" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  printf 'zsh' > "$dir/fake/command"
+  interrupt_spawn_after_launch "$dir"
+  rc=0
+  out=$(run_spawn "$dir" "$id" --relaunch --harness claude) || rc=$?
+  [ -f "$dir/spawn-interrupted" ] || fail "the fixture never interrupted the relaunch"$'\n'"$out"
+  expect_code 143 "$rc" "an interrupted relaunch must exit with the deferred TERM status"$'\n'"$out"
+  assert_contains "$out" "verified preserved: its paired task record is present" \
+    "an interrupted relaunch of a held item did not verify its preserved state"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "an interrupted relaunch changed the captain-held backlog item"
+  pass "an interrupted relaunch reports a held In-flight item as verified preserved"
+}
+
 test_away_branch_relaunch_accepts_existing_dispatchable_items() {
   local dir id out rc state
   command -v tasks-axi >/dev/null 2>&1 || {
@@ -3430,4 +3577,6 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_relaunch_preserves_held_and_blocked_backlog_items
+test_interrupted_relaunch_verifies_a_held_backlog_item_as_preserved
 test_away_branch_relaunch_accepts_existing_dispatchable_items

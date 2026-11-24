@@ -17,13 +17,16 @@ cli = sys.argv[1]
 sha = "0932fe0" + "a" * 33
 old = "611f7e7" + "b" * 33
 live = {"sha": old, "mr": sha}
+# /api/slow answers once the test releases it after its concurrent step, so the reply never races
+# the CLI's 2s fetch timeout; the long wait only bounds a handler whose test already failed.
+slow_release = threading.Event()
 
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/health":
             value = {"git_sha": live["sha"]}
         elif self.path == "/api/slow":
-            threading.Event().wait(2)
+            slow_release.wait(10)
             value = {"git_sha": live["sha"]}
         elif self.path == "/api/v4/projects/sample%2Fvantage/merge_requests/57":
             value = {"state": "merged", "merge_commit_sha": live["mr"]}
@@ -290,6 +293,7 @@ with tempfile.TemporaryDirectory() as temp:
     run = cli_runner(home)
     slow = add_ask(home, run, "slow", "deploy-prod", "vantage", sha,
                    {"type": "http-json-field-equals", "url": base + "/api/slow", "path": "git_sha", "expected_prefix": sha})
+    slow_release.clear()
     sweeper = subprocess.Popen([sys.executable, cli, "sweep"], env={**os.environ, "FM_HOME": str(home)},
                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     threading.Event().wait(0.7)
@@ -299,6 +303,7 @@ with tempfile.TemporaryDirectory() as temp:
     intake = add_ask(home, run, "intake-during-sweep", "deploy-dev", "vantage", sha, task="dev-release")
     assert time.monotonic() - started < 1.0, "add waited for a slow sweep check"
     assert sweeper.poll() is None, "setup error: sweep finished before the concurrent add"
+    slow_release.set()
     sweeper.communicate(timeout=30)
     assert sweeper.returncode == 0
     assert row(run, slow)["verification"]["result"] == "mismatch"
@@ -322,11 +327,13 @@ with tempfile.TemporaryDirectory() as temp:
                      {"type": "http-json-field-equals", "url": base + "/api/slow", "path": "git_sha", "expected_prefix": sha})
     edit(home, racing, created="2020-01-01T00:00:00Z", state="working",
          alert={"at": "2020-01-01T00:00:00Z", "fingerprint": f"{sha}:False:mismatch"})
+    slow_release.clear()
     sweeper = subprocess.Popen([sys.executable, cli, "sweep"], env={**os.environ, "FM_HOME": str(home)},
                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     threading.Event().wait(0.7)
     run("update", racing, "--state", "awaiting-approval", "--evidence", "release job awaits approval")
     assert sweeper.poll() is None, "setup error: sweep finished before the concurrent update"
+    slow_release.set()
     out, err = sweeper.communicate(timeout=30)
     assert sweeper.returncode == 0, err
     assert racing not in out, out
