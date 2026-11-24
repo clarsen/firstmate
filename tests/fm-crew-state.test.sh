@@ -2612,7 +2612,12 @@ test_publishing_done_without_pr_is_unfinished() {
     arm_idle_record "$d/state" preval
     out=$(run_crew_state "$d" preval)
     assert_contains "$out" "state: blocked" "$mode done without PR must remain actionable: $out"
-    assert_contains "$out" "PR" "$mode done without PR must explain the missing publication: $out"
+    assert_contains "$out" "PR/MR URL" "$mode done without PR must explain the missing publication: $out"
+    printf 'done: ported the fix from https://github.com/up/stream/pull/42, ready for validation\n' > "$d/state/preval.status"
+    out=$(run_crew_state "$d" preval)
+    assert_contains "$out" "state: blocked" "$mode done mentioning another PR in prose must remain actionable: $out"
+    assert_contains "$out" "PR/MR URL" "$mode prose PR mention is not this task's publication: $out"
+    printf 'done: implementation complete\n' > "$d/state/preval.status"
     printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/preval.meta"
     out=$(run_crew_state "$d" preval)
     assert_contains "$out" "state: done" "$mode done with recorded PR remains finished: $out"
@@ -6862,6 +6867,46 @@ test_member_handoff_done_requires_pr_and_named_head() {
   pass "a done naming an edit member is gated on that member's mode, and one naming none on the task's own"
 }
 
+# The PR/MR requirement follows the repository a done names: its own delivery
+# mode and its own recorded PR, never the task's.
+test_member_done_pr_requirement_follows_the_named_member() {
+  reset_fakes
+  local d out
+  d=$(make_multi_repo_case multi-local-member)
+  awk '{ sub(/^mode=direct-PR$/, "mode=no-mistakes"); sub(/^member\.api\.mode=no-mistakes$/, "member.api.mode=local-only"); print }' \
+    "$d/state/multi.meta" > "$d/state/multi.meta.tmp"
+  mv "$d/state/multi.meta.tmp" "$d/state/multi.meta"
+  git -C "$d/api" update-ref refs/remotes/origin/fm/feat-multi "$(git -C "$d/api" rev-parse HEAD)"
+  FM_FAKE_UNINIT_DIR="$(cd "$d/wt" && pwd -P):$(cd "$d/api" && pwd -P)"
+  export FM_FAKE_UNINIT_DIR
+  arm_idle_record "$d/state" multi
+  printf 'done: ready in branch fm/feat-multi of api\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  assert_contains "$out" "state: done" "a local-only member's done was held to the no-mistakes task's PR rule: $out"
+  assert_not_contains "$out" "PR/MR URL" "a local-only member's done was asked for a PR: $out"
+
+  d=$(make_multi_repo_case multi-nm-member)
+  awk '{ sub(/^mode=direct-PR$/, "mode=local-only"); print }' "$d/state/multi.meta" > "$d/state/multi.meta.tmp"
+  mv "$d/state/multi.meta.tmp" "$d/state/multi.meta"
+  FM_FAKE_UNINIT_DIR="$(cd "$d/wt" && pwd -P):$(cd "$d/api" && pwd -P)"
+  arm_idle_record "$d/state" multi
+  printf 'done: ready in branch fm/feat-multi of api\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  assert_contains "$out" "state: blocked" "a no-mistakes member's done without a PR read finished under a local-only task: $out"
+  assert_contains "$out" "PR/MR URL" "the no-mistakes member's refusal does not name the missing PR: $out"
+
+  d=$(make_multi_repo_case multi-anchor-pr)
+  printf 'pr=https://github.com/o/r/pull/7\n' >> "$d/state/multi.meta"
+  FM_FAKE_UNINIT_DIR="$(cd "$d/wt" && pwd -P):$(cd "$d/api" && pwd -P)"
+  arm_idle_record "$d/state" multi
+  printf 'done: ready in branch fm/feat-multi of api\n' > "$d/state/multi.status"
+  out=$(run_crew_state "$d" multi)
+  unset FM_FAKE_UNINIT_DIR
+  assert_contains "$out" "state: blocked" "the task's recorded PR hid a member done without its own PR: $out"
+  assert_contains "$out" "PR/MR URL" "the member refusal does not name the missing PR: $out"
+  pass "a member done's PR/MR requirement follows that member's mode and recorded PR"
+}
+
 test_live_runs_in_two_repositories_read_unknown() {
   reset_fakes
   local d out
@@ -7208,6 +7253,7 @@ test_edit_member_run_is_attributed_to_its_repository
 test_own_run_of_a_multi_repo_task_names_no_member
 test_live_runs_in_two_repositories_read_unknown
 test_member_handoff_done_requires_pr_and_named_head
+test_member_done_pr_requirement_follows_the_named_member
 test_multi_repo_done_survives_missing_run_overview
 test_multi_repo_done_yields_to_busy_pane_without_run_overview
 test_multi_repo_done_reads_gone_target_as_unknown_without_run_overview

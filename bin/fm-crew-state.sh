@@ -10,9 +10,9 @@
 # current state from a tail of the log: it reads the authoritative source (a
 # no-mistakes run-step attributed under bin/fm-nm-run-lib.sh's contract, else
 # the pane busy-signature) and reconciles the possibly-stale log against it.
-# A ship `done:` is current-state done only after the PR/MR modes name a
-# PR/MR, and bin/fm-dod-lib.sh accepts the named head as reachable outside the
-# worker's disposable copy; otherwise blocked.
+# A ship `done:` is current-state done only when bin/fm-dod-lib.sh accepts it:
+# a PR/MR-mode done must name or follow a PR/MR, and the named head must be
+# reachable outside the worker's disposable copy; otherwise blocked.
 #
 # The determinism lives entirely here - run-step / pane / log reads, fixed
 # mapping logic, and terminal passed-run PR detail from bounded evidence only,
@@ -364,37 +364,18 @@ fi
 # a crew with no active run and an idle pane that declared a known external wait
 # reports `paused` distinctly, so a supervisor reading this sees a declared pause
 # and its reason rather than a wedge-suspect idle.
-# A PR/MR ship's `done:` without a PR/MR is a delivery handoff, not a
-# finished task. The named-head gate still handles a ready report's custody.
+# A ship `done:` is not current-state done while bin/fm-dod-lib.sh refuses it
+# (a PR/MR-mode done naming no PR/MR, or a named head only in the disposable
+# copy): that claim is blocked so it reads unfinished and actionable.
 # This read never refreshes remote-tracking refs: a fetch bounded at 30 seconds
 # per remote does not fit a caller's per-task bound (bin/fm-fleet-snapshot.sh
 # defaults to 10 seconds) and would repeat on every read. bin/fm-pr-check.sh,
 # which runs when a ready report is registered, and on each watcher sweep when
 # config/pr-register-scan is on, refreshes the same copy before it refuses, so
 # a read after it sees the fetched head.
-ship_done_line_has_pr_url() {
-  local token
-  while IFS= read -r token; do
-    if fm_dod_note_has_pr_reference "$token" || fm_pr_url_parse "$token"; then
-      return 0
-    fi
-  done < <(printf '%s\n' "$(status_line_note "$LOG_LINE")" | tr '[:space:]' '\n' | grep '^https://')
-  return 1
-}
-
 emit_ship_status_done() {  # [extra-detail]
-  local extra=${1:-} reason mode
-  mode=$(meta_value mode)
-  if [ "$KIND" = ship ] && [ "$(meta_value forge)" != external ]; then
-    case "$mode" in
-      no-mistakes|direct-PR)
-        if [ -z "$(meta_value pr)" ] && ! ship_done_line_has_pr_url; then
-          emit blocked status-log "done declared without a PR/MR URL; complete the $mode delivery path"
-        fi
-        ;;
-    esac
-  fi
-  if reason=$(fm_dod_accept_ship_done "$KIND" "$mode" "$ANCHOR_WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
+  local extra=${1:-} reason
+  if reason=$(fm_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$ANCHOR_WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
     emit "done" status-log "$(status_line_note "$LOG_LINE")${extra:+${SEP}$extra}"
   fi
   emit blocked status-log "$reason"

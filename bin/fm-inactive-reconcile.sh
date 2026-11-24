@@ -17,11 +17,11 @@
 # carrying the child's recorded PR, delivery mode, merge posture, and scout
 # report pointer, without consulting fm-crew-state.sh. A ship `done:` is
 # published only when bin/fm-dod-lib.sh accepts the named head, so an
-# unpushed copy is not reported upstream as ready. The cadence path uses
-# fm-crew-state.sh, which applies the same gate: a no-mistakes
-# pre-validation `done: {summary}` still reads done (the pipeline handoff),
-# while a CI-ready or direct-PR/local-only done whose head lives only in the
-# disposable copy reads blocked and is not a terminal inactive outcome.
+# unpushed copy is not reported upstream as ready, and a no-mistakes or
+# direct-PR done naming no PR/MR is not reported upstream at all. The cadence
+# path uses fm-crew-state.sh, which applies the same gate: such a done without
+# a PR/MR, or a CI-ready or direct-PR/local-only done whose head lives only in
+# the disposable copy, reads blocked and is not a terminal inactive outcome.
 # Neither path refreshes remote-tracking refs before that gate: it runs under
 # the child's meta lock inside a scan budget of at most 30 seconds, which a
 # fetch bounded at 30 seconds per remote does not fit. The home's own
