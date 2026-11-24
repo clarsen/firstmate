@@ -1279,7 +1279,7 @@ Priority projects are opt-in `project-priority` items in the private ledger; no 
 `page --publish` renders the open ledger to `.lavish/captain-asks.html`, opens a Lavish session, binds its captured-answer source, and arms the existing process-event listener.
 The page is one table with a row per open ask, sorted by project and then by whether the captain or firstmate currently owns the wait.
 Its columns are the project, the ask, its kind, state, verifier result, priority coverage, who it is waiting on, its age, and the decision actions.
-A legend below the table defines the values of each column in one group per column.
+A legend below the table defines the values of the kind, state, verifier, priority coverage, and decide columns, one group per column.
 The latest verifier detail, or the reason priority coverage could not be read, sits on one line beneath the ask and expands when it does not fit.
 Each row offers Accept and Rework as two icon buttons; choosing one opens a single-line strip under that row holding the note field and the send button.
 Accept records the captured selection and optional exact note as `captain-accept` evidence and closes the ask without claiming a programmatic verifier pass.
