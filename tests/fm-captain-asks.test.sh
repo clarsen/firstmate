@@ -194,6 +194,10 @@ with tempfile.TemporaryDirectory() as temp:
     assert "Outstanding asks" in page.read_text() and "parallel" in page.read_text()
     assert 'id="decision-page-data"' in page.read_text()
     assert "Terms on this page" in page.read_text() and "Waiting on" in page.read_text()
+    embedded = page.read_text().split('<script id="decision-page-data" type="application/json">', 1)[1]
+    page_rows = json.loads(embedded.split("</script>", 1)[0])["rows"]
+    assert {r["verifier"] for r in page_rows if r["kind"] == "project-priority"} == {""}
+    assert {r["verifier"] for r in page_rows if r["key"] == f"captain-ask.{unknown}"} == {"unknown"}
 
 def fresh_home(temp):
     home = Path(temp)

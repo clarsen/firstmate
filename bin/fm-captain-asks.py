@@ -513,7 +513,8 @@ def render_page(doc, home, output):
                 idle = f"unavailable: {str(error)[:160]}"
         rows.append({"key": f"captain-ask.{row['id']}", "project": row["project"],
                      "title": row["target"], "kind": row["kind"], "state": row["state"],
-                     "verifier": (row.get("verification") or {}).get("result", "unchecked"),
+                     "verifier": "" if row["kind"] == "project-priority"
+                     else (row.get("verification") or {}).get("result", "unchecked"),
                      "verifier_detail": (row.get("verification") or {}).get("detail", ""),
                      "priority": idle, "owner": "Captain" if row["state"] == "awaiting-approval"
                      or row.get("waiting_question") else "Firstmate",
@@ -564,7 +565,7 @@ items=document.createElement('div');items.className='ask-list';group.append(labe
 const card=document.createElement('article');card.className='ask';const title=document.createElement('h3');title.className='ask-title';title.textContent=row.title;card.appendChild(title);
 const kind={"deploy-prod":"production deploy","deploy-dev":"development deploy","merge":"merge","project-priority":"priority project"}[row.kind]||row.kind;
 const state={"awaiting-approval":"waiting","needs-evidence":"needs evidence"}[row.state]||row.state;
-const meta=document.createElement('div');meta.className='meta';for(const value of [kind,state,'verifier: '+row.verifier,row.priority?'priority: '+row.priority:null,row.age+'m old']){
+const meta=document.createElement('div');meta.className='meta';for(const value of [kind,state,row.verifier?'verifier: '+row.verifier:null,row.priority?'priority: '+row.priority:null,row.age+'m old']){
 if(value){const span=document.createElement('span');span.textContent=value;meta.appendChild(span)}}card.appendChild(meta);
 if(row.verifier_detail){const detail=document.createElement('p');detail.className='detail';detail.textContent='Verifier detail: '+row.verifier_detail;card.appendChild(detail)}
 const form=document.createElement('form');form.setAttribute('data-lavish-question',row.key);form.innerHTML='<div class="choices"><label><input type="radio" name="answer" value="accept">Accept</label><label><input type="radio" name="answer" value="rework">Rework</label></div><input class="note" name="note" aria-label="Note for this ask" placeholder="Note (required for rework)"><button type="submit">Send decision</button> <span class="queued">Queued</span><div class="error" role="alert"></div>';
