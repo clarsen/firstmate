@@ -314,6 +314,25 @@ with tempfile.TemporaryDirectory() as temp:
     assert {a["id"] for a in model["captain_asks"]} == {slow, intake}
     assert any(o["surface"].startswith("captain asks config invalid") for o in model["omitted"])
 
+# A recorded wait that lands while a row's check is in flight is not overwritten by a stale reminder.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    racing = add_ask(home, run, "racing", "deploy-prod", "vantage", sha,
+                     {"type": "http-json-field-equals", "url": base + "/api/slow", "path": "git_sha", "expected_prefix": sha})
+    edit(home, racing, created="2020-01-01T00:00:00Z", state="working",
+         alert={"at": "2020-01-01T00:00:00Z", "fingerprint": f"{sha}:False:mismatch"})
+    sweeper = subprocess.Popen([sys.executable, cli, "sweep"], env={**os.environ, "FM_HOME": str(home)},
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    threading.Event().wait(0.7)
+    run("update", racing, "--state", "awaiting-approval", "--evidence", "release job awaits approval")
+    assert sweeper.poll() is None, "setup error: sweep finished before the concurrent update"
+    out, err = sweeper.communicate(timeout=30)
+    assert sweeper.returncode == 0, err
+    assert racing not in out, out
+    assert not (home / "state/.wake-queue").exists() or racing not in (home / "state/.wake-queue").read_text()
+    assert row(run, racing)["state"] == "awaiting-approval"
+
 def daily(home, day):
     result = subprocess.run([sys.executable, str(Path(cli).parent / "fm-wake-daily.py"), day, "--home", str(home)],
                             env={**os.environ, "PATH": f"{home / 'bin'}:{os.environ['PATH']}"}, text=True, capture_output=True)

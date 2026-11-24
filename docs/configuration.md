@@ -1257,6 +1257,7 @@ These checks observe outcomes; they grant no deploy or merge permission.
 
 The watcher starts `sweep` in the background on its existing check cadence and rings the result on a later cycle, so slow checks never delay other watcher work; a second sweep exits while one is running.
 Each row is checked without holding the ledger lock, which is taken only to record that row's result, so `add` and `update` never wait for a slow check.
+A row whose state, verifier, target, linked task, waiting question, or due time changed during its check is left for the next pass.
 A failed sweep is reported once as a `check: captain asks scan failed` wake until its error changes.
 The sweep checks at most 12 due open items per pass and stores its per-item `next_check` time.
 It appends typed `check` wakes through the durable wake helper before storing an alert fingerprint.

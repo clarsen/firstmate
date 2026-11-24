@@ -32,6 +32,7 @@ OPEN = ("queued", "working", "awaiting-approval", "blocked", "verifying", "needs
 DELIVERY = KINDS[:3]
 MAX_SWEEP = 12
 SWEEP_BUSY = 75
+SWEEP_INPUTS = ("state", "verifier", "target", "linked_task", "waiting_question", "due")
 
 
 def utcnow():
@@ -372,7 +373,7 @@ def sweep(home, path, now):
             doc = load(path)
             row = find(doc, snapshot["id"])
             if (row is None or row["state"] not in OPEN or parse_time(row["next_check"]) > now
-                    or row["verifier"] != snapshot["verifier"] or row["target"] != snapshot["target"]):
+                    or any(row.get(field) != snapshot.get(field) for field in SWEEP_INPUTS)):
                 continue
             if verification is not None:
                 record_verification(row, verification)
