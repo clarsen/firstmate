@@ -40,6 +40,13 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/v4/projects/sample%2Fvantage/jobs/71/artifacts/deploy-event.json":
             value = {"schema_version": 1, "events": live["receipt"]}
         elif self.path.startswith("/api/v4/projects/sample%2Fvantage/repository/merge_base?"):
+            # GitLab answers 404 when a ref is not in the project; "c"*40 stands for such a foreign commit.
+            if "c" * 40 in self.path:
+                self.send_error(404)
+                return
+            if "e" * 40 in self.path:
+                self.send_error(500)
+                return
             value = {"id": sha if live["ancestor"] else "f" * 40}
         else:
             self.send_error(404)
@@ -249,6 +256,15 @@ with tempfile.TemporaryDirectory() as temp:
     live["ancestor"] = True
     assert json.loads(run("verify", ask).stdout)["result"] == "pass"
     assert row(run, ask)["state"] == "verified"
+    mixed = add_ask(home, run, "rollout-mixed", "deploy-prod", "vantage", sha, spec)
+    live["receipt"] = [receipt("one.invalid", "c" * 40), receipt("one.invalid", sha), receipt("two.invalid", sha)]
+    assert json.loads(run("verify", mixed).stdout)["result"] == "pass"
+    foreign = add_ask(home, run, "rollout-foreign", "deploy-prod", "vantage", sha, spec)
+    live["receipt"] = [receipt("one.invalid", sha), receipt("two.invalid", "c" * 40)]
+    checked = json.loads(run("verify", foreign).stdout)
+    assert checked["result"] == "mismatch" and checked["detail"] == "unproven hosts: two.invalid", checked
+    live["receipt"] = [receipt("one.invalid", sha), receipt("two.invalid", "e" * 40)]
+    assert json.loads(run("verify", foreign).stdout)["result"] == "unknown"
     bad = {**spec, "hosts": []}
     (home / "verifier.json").write_text(json.dumps(bad))
     assert run("add", "--key", "bad", "--kind", "deploy-prod", "--intent-file", str(home / "intent.txt"),

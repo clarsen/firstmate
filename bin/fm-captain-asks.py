@@ -212,11 +212,23 @@ def fetch_gitlab_mr(parsed, project, number):
     return json.loads(result.stdout)
 
 
+class GitLabRefused(ValueError):
+    """GitLab answered 400 or 404 for a well-formed request."""
+
+
 def fetch_gitlab_project(parsed, endpoint):
     if parsed.scheme == "http":
-        return fetch_json(f"{parsed.scheme}://{parsed.netloc}/api/v4/{endpoint}")
+        try:
+            return fetch_json(f"{parsed.scheme}://{parsed.netloc}/api/v4/{endpoint}")
+        except urllib.error.HTTPError as error:
+            if error.code in (400, 404):
+                raise GitLabRefused(f"GitLab answered HTTP {error.code}") from error
+            raise
     result = subprocess.run(["glab", "api", "--hostname", parsed.hostname, endpoint],
                             capture_output=True, text=True, timeout=4)
+    refused = re.search(r"\(HTTP (400|404)\)", result.stderr)
+    if result.returncode and refused:
+        raise GitLabRefused(f"GitLab answered HTTP {refused.group(1)}")
     if result.returncode or len(result.stdout) > 262144:
         raise ValueError("GitLab rollout evidence is unavailable through authenticated read-only API")
     return json.loads(result.stdout)
@@ -250,7 +262,10 @@ def verify_host_rollout(spec, parsed):
             continue
         if commit.lower() != spec["sha"].lower():
             query = urllib.parse.urlencode([("refs[]", spec["sha"]), ("refs[]", commit)])
-            base = fetch_gitlab_project(parsed, f"{root}/repository/merge_base?{query}")
+            try:
+                base = fetch_gitlab_project(parsed, f"{root}/repository/merge_base?{query}")
+            except GitLabRefused:
+                continue
             if (not isinstance(base, dict) or not isinstance(base.get("id"), str)
                     or base["id"].lower() != spec["sha"].lower()):
                 continue

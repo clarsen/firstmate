@@ -1256,7 +1256,7 @@ The GitLab check reads through the home's authenticated `glab api` access, inclu
 A `host-rollout-receipt` verifier has a GitLab job `url`, a full requested `sha`, and a nonempty `hosts` array of unique host names.
 It passes when the job is successful and its retained `deploy-event.json` artifact has a successful `changed` or `no_change` event for every named host, with zero Ansible and runner exit codes and a successful event job status.
 Each event's commit must equal or descend from the requested SHA, proven through GitLab's repository merge-base API.
-An absent host, unsuccessful event, or unrelated commit is a mismatch; an unreadable job, artifact, or ancestry response is unknown.
+An absent host, unsuccessful event, or unrelated commit (including one GitLab reports as absent from the job's project with HTTP 400 or 404) is a mismatch; an unreadable job, artifact, or ancestry response is unknown.
 The job URL identifies one job in one GitLab project, so evidence from different jobs cannot be combined silently.
 Unknown verifiers, unreadable endpoints, and mismatches do not automatically close an ask: the result is stored in `verification` and appended to `evidence`, and the recorded workflow `state` is left unchanged.
 Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a 256 KiB response limit; the HTTP read times out after two seconds and the `glab api` read after four.
