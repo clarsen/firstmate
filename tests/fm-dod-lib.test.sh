@@ -308,15 +308,27 @@ test_moved_branch_without_named_head_is_refused() {
   pass "a moved remote branch that lacks the named head is refused"
 }
 
-test_no_mistakes_prevalidation_done_is_not_gated() {
-  local repo wt
+test_no_mistakes_prevalidation_done_needs_a_pr() {
+  local repo wt state meta reason rc
   repo="$TMP_ROOT/preval-repo"
   wt="$TMP_ROOT/preval-wt"
+  state="$TMP_ROOT/preval-state"
+  meta="$state/preval.meta"
+  mkdir -p "$state"
   fm_git_worktree "$repo" "$wt" fm/preval
   git -C "$wt" commit -q --allow-empty -m 'only in the disposable copy'
-  accept_done ship no-mistakes "$wt" "$repo" 'done: implementation complete' \
-    || fail "no-mistakes pre-validation done: must not require named-head reachability"
-  pass "no-mistakes pre-validation done: is not gated"
+  fm_write_meta "$meta" kind=ship mode=no-mistakes "worktree=$wt" "project=$repo"
+  reason=$(accept_done ship no-mistakes "$wt" "$repo" 'done: implementation complete' "$state" preval "$meta")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "no-mistakes done: without a PR/MR was accepted as finished"
+  case "$reason" in
+    *"without a PR/MR URL"*) ;;
+    *) fail "the refusal did not name the missing PR/MR: $reason" ;;
+  esac
+  printf 'pr=https://example.test/o/r/pull/3\n' >> "$meta"
+  accept_done ship no-mistakes "$wt" "$repo" 'done: implementation complete' "$state" preval "$meta" \
+    || fail "no-mistakes pre-validation done: after a recorded PR must not require named-head reachability"
+  pass "no-mistakes pre-validation done: needs a PR/MR, then is not gated"
 }
 
 test_local_only_linked_branch_is_accepted() {
@@ -375,7 +387,7 @@ test_free_text_sha_is_not_the_named_head() {
   git -C "$wt" update-ref refs/remotes/origin/main "$old"
   git -C "$wt" commit -q --allow-empty -m 'actual fix'
   new=$(git -C "$wt" rev-parse HEAD)
-  reason=$(accept_done ship direct-PR "$wt" "$repo" "done: reverted $old and fixed the retry")
+  reason=$(accept_done ship direct-PR "$wt" "$repo" "done: PR https://example.test/o/r/pull/5 reverted $old and fixed the retry")
   rc=$?
   [ "$rc" -eq 1 ] || fail "free-text SHA on origin/main made an unpushed HEAD accept"
   case "$reason" in
@@ -675,7 +687,7 @@ EOF
 
 test_scout_done_is_not_gated
 test_unpushed_ship_done_is_refused
-test_no_mistakes_prevalidation_done_is_not_gated
+test_no_mistakes_prevalidation_done_needs_a_pr
 test_remote_containing_named_head_is_accepted
 test_gate_mirror_only_named_head_is_refused
 test_head_pushed_from_gate_clone_is_accepted_after_refresh

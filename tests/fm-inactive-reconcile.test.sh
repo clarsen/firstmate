@@ -303,6 +303,28 @@ test_unpushed_ci_ready_done_is_not_published() {
   pass "unpushed CI-ready ship done: is not published upstream"
 }
 
+# A publishing-mode child's done: that names no PR/MR is a delivery handoff,
+# not an outcome: the parent channel never hears it as done, whether the note
+# names nothing or only mentions another PR in prose.
+test_publishing_done_without_pr_is_not_published() {
+  local mode note
+  for mode in no-mistakes direct-PR; do
+    for note in 'done: implementation complete' \
+      'done: ported the fix from https://example.test/up/stream/pull/42, ready for validation'; do
+      make_world "no-pr-$mode-${#note}"; bind_secondmate local
+      write_child "$MATE" child "$note"
+      awk -v mode="$mode" '$0 !~ /^pr=|^pr_head=/ { sub(/^mode=no-mistakes$/, "mode=" mode); print }' \
+        "$MATE/state/child.meta" > "$MATE/state/child.meta.tmp"
+      mv "$MATE/state/child.meta.tmp" "$MATE/state/child.meta"
+      FM_FAKE_CREW_STATE='unknown' run_reconcile "$MATE"
+      [ ! -s "$MAIN/state/mate.status" ] \
+        || fail "$mode done without a PR/MR was published upstream: $(cat "$MAIN/state/mate.status")"
+      [ "$(outcome_count "$MATE" reported)" = 0 ] || fail "$mode done without a PR/MR left a delivery receipt"
+    done
+  done
+  pass "a publishing-mode child done without a PR/MR is not published upstream"
+}
+
 # Local readiness is recorded by the real ledger pass while it owns metadata.
 test_local_done_head_is_pinned_before_parent_delivery() {
   local project worker sha
@@ -594,7 +616,7 @@ test_ledger_report_without_scan_opt_in_keeps_recorded_pr() {
 test_pr_field_requires_recorded_pr_or_ready_signal_line() {
   local id prose_key ready_key stamped_key placeholder_key scout_key
   make_world pr-provenance; bind_secondmate local
-  write_child "$MATE" prose $'working: context in https://example.test/other/repo/pull/33\ndone: cleanup finished'
+  write_child "$MATE" prose $'working: context in https://example.test/other/repo/pull/33\nfailed: cleanup aborted'
   write_child "$MATE" ready 'done: PR https://example.test/owner/repo/pull/44 checks green'
   write_child "$MATE" stamped 'done [at=1788576000]: PR https://example.test/owner/repo/pull/66 checks green'
   write_child "$MATE" placeholder 'done [at=<epoch>]: PR https://example.test/owner/repo/pull/77 checks green'
@@ -607,13 +629,13 @@ test_pr_field_requires_recorded_pr_or_ready_signal_line() {
     > "$MATE/state/lookout.meta.tmp"
   mv "$MATE/state/lookout.meta.tmp" "$MATE/state/lookout.meta"
   FM_FAKE_CREW_STATE='unknown' run_reconcile "$MATE"
-  prose_key=$(reported_outcome_key "$MATE" prose 'done') || fail "prose receipt key missing"
+  prose_key=$(reported_outcome_key "$MATE" prose failed) || fail "prose receipt key missing"
   ready_key=$(reported_outcome_key "$MATE" ready 'done') || fail "ready receipt key missing"
   stamped_key=$(reported_outcome_key "$MATE" stamped 'done') || fail "stamped ready receipt key missing"
   placeholder_key=$(reported_outcome_key "$MATE" placeholder 'done') \
     || fail "unsubstituted-stamp ready receipt key missing"
   scout_key=$(reported_outcome_key "$MATE" lookout 'done') || fail "scout receipt key missing"
-  sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" | grep -Fxq "done [key=$prose_key]: child prose done: cleanup finished mode=no-mistakes yolo=off" \
+  sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" | grep -Fxq "failed [key=$prose_key]: child prose failed: cleanup aborted mode=no-mistakes yolo=off" \
     || fail "a PR mentioned only in prose was claimed as the delivery: $(cat "$MAIN/state/mate.status")"
   sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" | grep -Fxq "done [key=$ready_key]: child ready done: PR https://example.test/owner/repo/pull/44 checks green pr=https://example.test/owner/repo/pull/44 mode=no-mistakes yolo=off" \
     || fail "a ready-signal terminal line did not carry its PR: $(cat "$MAIN/state/mate.status")"
@@ -1488,6 +1510,7 @@ test_unpushed_ci_ready_done_is_not_published
 test_local_done_head_is_pinned_before_parent_delivery
 test_delivered_ledger_done_skips_git_gate
 test_local_secondmate_delivers_terminal_ledger_line
+test_publishing_done_without_pr_is_not_published
 test_secondmate_multiline_terminal_outcome_is_delivered_once
 test_secondmate_unterminated_prose_reports_run_outcome
 test_inactive_receipt_ignores_later_status_prose

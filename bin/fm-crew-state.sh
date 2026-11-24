@@ -10,8 +10,9 @@
 # current state from a tail of the log: it reads the authoritative source (a
 # no-mistakes run-step attributed under bin/fm-nm-run-lib.sh's contract, else
 # the pane busy-signature) and reconciles the possibly-stale log against it.
-# A ship `done:` is current-state done only when bin/fm-dod-lib.sh accepts the
-# named head as reachable outside the worker's disposable copy; otherwise blocked.
+# A ship `done:` is current-state done only when bin/fm-dod-lib.sh accepts it:
+# a PR/MR-mode done must name or follow a PR/MR, and the named head must be
+# reachable outside the worker's disposable copy; otherwise blocked.
 #
 # The determinism lives entirely here - run-step / pane / log reads, fixed
 # mapping logic, and terminal passed-run PR detail from bounded evidence only,
@@ -363,9 +364,9 @@ fi
 # a crew with no active run and an idle pane that declared a known external wait
 # reports `paused` distinctly, so a supervisor reading this sees a declared pause
 # and its reason rather than a wedge-suspect idle.
-# A ship `done:` is not current-state done while bin/fm-dod-lib.sh refuses the
-# named-head reachability gate: that claim is blocked so a disposable copy is
-# not treated as finished-and-safe.
+# A ship `done:` is not current-state done while bin/fm-dod-lib.sh refuses it
+# (a PR/MR-mode done naming no PR/MR, or a named head only in the disposable
+# copy): that claim is blocked so it reads unfinished and actionable.
 # This read never refreshes remote-tracking refs: a fetch bounded at 30 seconds
 # per remote does not fit a caller's per-task bound (bin/fm-fleet-snapshot.sh
 # defaults to 10 seconds) and would repeat on every read. bin/fm-pr-check.sh,

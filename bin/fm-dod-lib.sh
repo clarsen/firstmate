@@ -41,9 +41,11 @@
 # (fm_dod_named_head_reachable_outside_worktree); the other callers read the
 # refs as that refresh left them.
 # The check tests that head, not whether some branch moved. In no-mistakes
-# mode the pre-validation `done: {summary}` is the pipeline handoff and is
-# not gated; only the later CI-ready `done: PR <url> checks green` is, or on a
-# Gerrit project the later `done: PR <change url> published for review`. The
+# and direct-PR mode a ship `done:` that neither starts `PR <url>` nor follows a
+# recorded PR (pr=, or the named member's PR) is refused as an unfinished
+# delivery handoff, so callers read it as actionable, not finished. With a PR,
+# no-mistakes gates the head only on the CI-ready `done: PR <url> checks green`,
+# or on a Gerrit project the `done: PR <change url> published for review`. The
 # named head is the worker copy's HEAD, except that a done naming the task's
 # recorded pr= passes when the forge holds that head: a forge-reported
 # pr_head= in no-mistakes mode, or a recorded merge
@@ -838,7 +840,8 @@ fm_dod_accept_external_review_done() {  # <worktree> <project> <line> <meta>
 }
 
 # 0 when this ship done: is one the named-head gate must accept or refuse.
-# no-mistakes pre-validation done: is the pipeline handoff and is not gated.
+# A no-mistakes done: that is not a CI-ready or published report skips the
+# named-head test; fm_dod_accept_ship_done has already refused it without a PR.
 # Empty mode is treated as no-mistakes, the unregistered-project default.
 fm_dod_should_gate_ship_done() {  # <kind> <mode> <line>
   local note
@@ -1146,7 +1149,10 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
   fm_dod_named_head_on_surviving_ref "$@"
 }
 
-# 0 when <line> is not a ship done: to gate, when the task's meta records
+# 1 when a no-mistakes or direct-PR ship done: names no PR/MR (a note starting
+# `PR <url>`) and the resolved repository records none (in a task with edit
+# members, a done naming no repository reads anchor_pr=, never pr=). Otherwise 0 when <line>
+# is not a ship done: to gate, when the task's meta records
 # forge=external and fm_dod_accept_external_review_done accepts it, when it
 # names the task's recorded PR whose head the forge holds, when it names a
 # Gerrit change whose current patch set carries the worker copy's HEAD tree, or otherwise when its named
@@ -1159,9 +1165,13 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> [meta-locked]]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha pr_key=pr gerrit captured='' member=''
-  # A task with edit members gates a done on the repository it names.
-  if [ "$kind" = ship ] && [ -n "$meta" ] && [ -f "$meta" ] && fm_member_has_edit "$meta" \
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha pr_key=pr own_pr_key=pr gerrit captured='' member=''
+  # A task with edit members gates a done on the repository it names; one
+  # naming none is its own repository's, whose PR is anchor_pr=.
+  if [ "$kind" = ship ] && [ -n "$meta" ] && [ -f "$meta" ] && fm_member_has_edit "$meta"; then
+    own_pr_key=anchor_pr
+  fi
+  if [ "$own_pr_key" = anchor_pr ] \
     && fm_member_resolve_done_note "$meta" "$(status_line_note "$line")"; then
     wt=$FM_MEMBER_MATCH_WORKTREE
     project=$FM_MEMBER_MATCH_PROJECT
@@ -1172,6 +1182,19 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     else
       pr_key=anchor_pr
     fi
+    own_pr_key=$pr_key
+  fi
+  if [ "$kind" = ship ] && [ "$(status_line_verb "$line")" = "done" ] \
+    && [ "$(fm_dod_meta_value "$meta" forge)" != external ]; then
+    case "$mode" in
+      no-mistakes|direct-PR)
+        if [ -z "$(fm_dod_meta_value "$meta" "$own_pr_key")" ] \
+          && ! fm_dod_pr_url_from_done_note "$(status_line_note "$line")" >/dev/null; then
+          printf '%s\n' "done declared without a PR/MR URL; complete the $mode delivery path"
+          return 1
+        fi
+        ;;
+    esac
   fi
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   # local_done_head= pins the task's own repository; a local-only edit member
