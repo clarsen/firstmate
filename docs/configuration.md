@@ -1235,7 +1235,7 @@ Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](f
 `bin/fm-captain-asks.py` owns the home-local `fm-captain-asks.v1` JSON record.
 An absent record means no asks.
 The top level contains `schema` and `asks`.
-Each ask has an immutable `id`, stable idempotency `key`, exact `intent`, `source`, `kind`, `project`, `linked_task` or `no_task_reason`, optional `waiting_question` ID, immutable `requested_target`, current `target`, UTC `created`, optional UTC `due`, UTC `next_check`, `state`, `evidence` history, `verifier`, `alert`, and an optional `archive_reason`.
+Each ask has an immutable `id`, stable idempotency `key`, exact `intent`, `source`, `kind`, `project`, `linked_task` or `no_task_reason`, optional `waiting_question` ID, immutable `requested_target`, current `target`, UTC `created`, optional UTC `due`, UTC `next_check`, workflow `state`, `evidence` history, `verifier`, latest `verification` result, `alert`, and an optional `archive_reason`.
 Kinds are `deploy-prod`, `deploy-dev`, `merge`, and `project-priority`.
 Open states are `queued`, `working`, `awaiting-approval`, `blocked`, `verifying`, and `needs-evidence`.
 Closed states are `verified` after a passing verifier and `archived` after an explicit reasoned removal.
@@ -1249,9 +1249,9 @@ The command's `--help` is the exact flag reference.
 
 An `http-json-field-equals` verifier has `url`, dot-separated JSON `path`, and `expected_prefix` string fields.
 It passes only when the live string field starts with that exact prefix; use a full SHA to require exact SHA equality.
-A `forge-mr-merged-at-sha` verifier has a GitLab MR `url` and expected full merge `sha`; it passes only when the MR is merged at that SHA.
+A `forge-mr-merged-at-sha` verifier has a GitLab MR `url` and expected full `sha`; it passes only when the MR is merged and that SHA is its merge commit, squash commit, or merged head (the fast-forward case).
 The GitLab check reads through the home's authenticated `glab api` access, including private merge requests.
-Unknown verifiers, unreadable endpoints, and mismatches remain open as `needs-evidence` when checked.
+Unknown verifiers, unreadable endpoints, and mismatches keep the ask open: the result is stored in `verification` and appended to `evidence`, and the recorded workflow `state` is left unchanged.
 Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a two-second timeout and a 256 KiB response limit.
 These checks observe outcomes; they grant no deploy or merge permission.
 
@@ -1259,10 +1259,13 @@ The watcher calls `sweep` on its existing check cadence.
 The sweep checks at most 12 due open items per pass and stores its per-item `next_check` time.
 It appends typed `check` wakes through the durable wake helper before storing an alert fingerprint.
 The default scan interval is 600 seconds, first undriven delivery alert is after 1800 seconds, and repeat reminder is after 3600 seconds.
+A delivery ask is undriven when its own `linked_task` has no worker that `bin/fm-crew-state.sh` reports as `working`; another worker on the same project does not cover it.
+A delivery ask whose state is `awaiting-approval`, or whose `waiting_question` is open, gets no hourly reminders and stays in Bearings and the wake-drain list.
+A row whose check fails is alerted with the failure and the sweep continues with the remaining rows.
 The optional gitignored `config/captain-asks.json` overrides these values with positive integer `scan_seconds`, `first_alert_seconds`, and `reminder_seconds` up to 86400.
-The priority-project detector wakes when the project's home `state/*.meta` shows no live worker, its configured backlog has no startable queued row, and no open captain hold or linked `waiting_question` exists.
+The priority-project detector wakes when no project worker in `state/*.meta` is `working` according to `bin/fm-crew-state.sh`, the configured backlog read through `bin/fm-tasks-axi.sh` has no startable queued row, and neither a `hold-kind: captain` hold nor the linked open `waiting_question` exists.
 Priority projects are opt-in `project-priority` items in the private ledger; no project roster is shipped in tracked files.
-`page --publish` renders the open ledger to `.lavish/captain-asks.html` and establishes a read-only Lavish session.
+`page --publish` renders the open ledger to `.lavish/captain-asks.html` and establishes a read-only Lavish session; a priority row whose detector fails shows the failure instead of failing the page.
 Bearings projects a compact list of open asks from the same store.
 
 ## Captain Preferences (data/captain.md / data/captain-shared.md)

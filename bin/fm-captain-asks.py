@@ -130,6 +130,8 @@ def validate(doc):
             parse_time(row["due"])
         if not isinstance(row.get("evidence"), list) or not isinstance(row.get("alert"), dict):
             raise ValueError("ask evidence or alert is invalid")
+        if row.get("verification") is not None and not isinstance(row["verification"], dict):
+            raise ValueError("ask verification is invalid")
         validate_verifier(row.get("verifier"), allow_unknown=True)
         if row["state"] == "verified" and not any(e.get("result") == "pass" for e in row["evidence"]):
             raise ValueError("verified ask lacks passing evidence")
@@ -224,9 +226,13 @@ def verify_predicate(spec):
             raise ValueError("forge MR URL is invalid")
         project = urllib.parse.quote(urllib.parse.unquote(match.group(1)), safe="")
         doc = fetch_gitlab_mr(parsed, project, match.group(2))
-        merged_sha = doc.get("merge_commit_sha") if isinstance(doc, dict) else None
-        passed = doc.get("state") == "merged" and merged_sha == spec["sha"]
-        return ("pass" if passed else "mismatch"), f"state={doc.get('state')} merge_sha={merged_sha}", spec["url"]
+        if not isinstance(doc, dict):
+            raise ValueError("forge MR response is invalid")
+        landed = {doc.get(field) for field in ("merge_commit_sha", "squash_commit_sha", "sha")}
+        passed = doc.get("state") == "merged" and spec["sha"] in landed
+        detail = (f"state={doc.get('state')} merge_sha={doc.get('merge_commit_sha')} "
+                  f"squash_sha={doc.get('squash_commit_sha')} head_sha={doc.get('sha')}")
+        return ("pass" if passed else "mismatch"), detail, spec["url"]
     except (ValueError, KeyError, TypeError, OSError, subprocess.TimeoutExpired,
             urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         return "unknown", str(error)[:240], spec.get("url")
@@ -235,95 +241,86 @@ def verify_predicate(spec):
 def observe(row, now):
     result, detail, url = verify_predicate(row["verifier"])
     entry = {"at": stamp(now), "result": result, "detail": detail, "url": url}
+    row["verification"] = entry
     if not row["evidence"] or row["evidence"][-1]["result"] != result or row["evidence"][-1]["detail"] != detail:
         row["evidence"].append(entry)
     if result == "pass":
         row["state"] = "verified"
-    else:
-        row["state"] = "needs-evidence"
     return result
 
 
-def task_state(home, project, include_backlog=True, question_id=None):
-    state = home / "state"
-    live = False
-    for meta in sorted(state.glob("*.meta"))[:500]:
+def worker_live(home, task_id):
+    meta = home / "state" / f"{task_id}.meta"
+    if not task_id or not re.fullmatch(r"[A-Za-z0-9._-]+", task_id) or meta.is_symlink() or not meta.is_file():
+        return False
+    result = subprocess.run([str(ROOT / "bin/fm-crew-state.sh"), task_id],
+                            env={**os.environ, "FM_HOME": str(home), "FM_CREW_STATE_NO_FORGE": "1"},
+                            capture_output=True, text=True, timeout=10)
+    match = re.match(r"state: ([a-z]+) · source: ", result.stdout)
+    if match is None:
+        raise ValueError(f"crew state unavailable for {task_id}")
+    return match.group(1) == "working"
+
+
+def project_live(home, project):
+    for meta in sorted((home / "state").glob("*.meta"))[:500]:
         if meta.is_symlink() or not meta.is_file():
             continue
         fields = dict(line.split("=", 1) for line in meta.read_text(encoding="utf-8", errors="replace").splitlines() if "=" in line)
-        if fields.get("project", fields.get("repo")) != project or fields.get("kind") == "secondmate" or not fields.get("window"):
+        if fields.get("project", fields.get("repo")) != project or fields.get("kind") == "secondmate":
             continue
-        status = meta.with_suffix(".status")
-        lines = status.read_text(encoding="utf-8", errors="replace").splitlines() if status.is_file() and not status.is_symlink() else []
-        if not lines or not re.match(r"^(done|failed)\b", lines[-1]):
-            live = True
-            break
-    if not include_backlog:
-        return live, False, False
-    queued = held = False
-    # Prefer the configured backlog adapter, so markdown and Beads homes have
-    # the same startable/held verdict. The direct markdown path is a bounded
-    # fallback for fixtures and a temporarily unavailable tasks-axi binary.
-    adapter_ok = False
-    try:
-        def task_list(state_name):
-            result = subprocess.run([str(ROOT / "bin/fm-tasks-axi.sh"), "list", "--state", state_name,
-                                     "--repo", project, "--fields", "blocked,held"],
-                                    env={**os.environ, "FM_HOME": str(home)}, capture_output=True, text=True, timeout=1)
-            if result.returncode:
-                raise ValueError("backlog reader unavailable")
-            return result.stdout
-        listed = task_list("queued")
-        adapter_ok = True
-        count = re.search(r"^count: ([0-9]+)$", listed, re.M)
-        if count is None:
-            raise ValueError("queued backlog response is invalid")
-        header = next((line for line in listed.splitlines() if line.startswith("tasks[") and "{" in line), "")
-        if int(count.group(1)) and not header:
-            raise ValueError("queued backlog rows are unavailable")
-        if header:
-            columns = header.split("{", 1)[1].split("}", 1)[0].split(",")
-            if not {"id", "blocked", "held"}.issubset(columns):
-                raise ValueError("queued backlog fields are unavailable")
-            for line in listed.splitlines():
-                if not line.startswith("  ") or line.startswith("  -"):
-                    continue
-                values = next(csv.reader([line.strip()]))
-                if len(values) == len(columns):
-                    row = dict(zip(columns, values))
-                    queued = queued or (row.get("blocked") == "no" and row.get("held") == "no")
-        held_text = task_list("held")
-        if not re.search(r"^count: [0-9]+$", held_text, re.M):
-            raise ValueError("held backlog response is invalid")
-        held = bool(re.search(r"^count: [1-9][0-9]*$", held_text, re.M))
-    except (ValueError, OSError, subprocess.TimeoutExpired):
-        adapter_ok = False
-    backlog = home / "data/backlog.md"
-    if not adapter_ok and (not backlog.is_file() or backlog.is_symlink()):
-        raise ValueError("priority backlog unavailable")
-    if not adapter_ok:
-        section = ""
-        for line in backlog.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("## "):
-                section = line[3:].strip().lower()
-            if not line.startswith("- [ ] ") or f"(repo: {project})" not in line:
-                continue
-            if "(hold-kind: captain)" in line or "(hold: captain)" in line:
-                held = True
-            elif section == "queued" and "blocked-by:" not in line and "(hold:" not in line:
-                queued = True
+        if worker_live(home, meta.stem):
+            return True
+    return False
+
+
+def backlog_rows(home, project, state_name):
+    result = subprocess.run([str(ROOT / "bin/fm-tasks-axi.sh"), "list", "--state", state_name, "--repo", project,
+                             "--limit", "500", "--fields", "blocked,held,hold_kind"],
+                            env={**os.environ, "FM_HOME": str(home)}, capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise ValueError(f"backlog reader unavailable: {result.stderr.strip()[:160]}")
+    count = re.search(r"^count: ([0-9]+)$", result.stdout, re.M)
+    if count is None:
+        raise ValueError(f"{state_name} backlog response is invalid")
+    header = next((line for line in result.stdout.splitlines() if line.startswith("tasks[") and "{" in line), "")
+    if not header:
+        if int(count.group(1)):
+            raise ValueError(f"{state_name} backlog rows are unavailable")
+        return []
+    columns = header.split("{", 1)[1].split("}", 1)[0].split(",")
+    if not {"id", "blocked", "held", "hold_kind"}.issubset(columns):
+        raise ValueError(f"{state_name} backlog fields are unavailable")
+    rows = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("  ") or line.startswith("  -"):
+            continue
+        values = next(csv.reader([line.strip()]))
+        if len(values) == len(columns):
+            rows.append(dict(zip(columns, values)))
+    return rows
+
+
+def open_question_ids(home):
     questions = home / "data/captain-questions.json"
     if questions.is_symlink():
-        raise ValueError("priority captain questions record is a symlink")
-    if questions.is_file() and not questions.is_symlink():
-        try:
-            document = json.loads(questions.read_text(encoding="utf-8"))
-            if document.get("schema") != "fm-captain-questions.v1" or not isinstance(document.get("questions"), list):
-                raise ValueError("invalid captain questions record")
-            held = held or any((q.get("project") == project or (question_id is not None and q.get("id") == question_id))
-                               and q.get("state") == "open" for q in document.get("questions", []))
-        except (ValueError, TypeError) as error:
-            raise ValueError("priority captain questions unavailable") from error
+        raise ValueError("captain questions record is a symlink")
+    if not questions.is_file():
+        return set()
+    try:
+        document = json.loads(questions.read_text(encoding="utf-8"))
+        if document.get("schema") != "fm-captain-questions.v1" or not isinstance(document.get("questions"), list):
+            raise ValueError("invalid captain questions record")
+        return {q.get("id") for q in document["questions"] if q.get("state") == "open"}
+    except (ValueError, TypeError, AttributeError) as error:
+        raise ValueError("captain questions unavailable") from error
+
+
+def priority_state(home, row):
+    live = project_live(home, row["project"])
+    queued = any(r["blocked"] == "no" and r["held"] == "no" for r in backlog_rows(home, row["project"], "queued"))
+    held = (any(r["hold_kind"] == "captain" for r in backlog_rows(home, row["project"], "held"))
+            or row.get("waiting_question") in open_question_ids(home))
     return live, queued, held
 
 
@@ -343,36 +340,41 @@ def sweep(home, path, doc, now):
     for row in sorted((r for r in doc["asks"] if r["state"] in OPEN), key=lambda r: r["next_check"])[:MAX_SWEEP]:
         if parse_time(row["next_check"]) > now:
             continue
-        old_state = row["state"]
-        if row["kind"] in DELIVERY:
-            observe(row, now)
-        if row["state"] == "verified":
-            continue
-        if row["kind"] == "project-priority":
-            live, queued, held = task_state(home, row["project"], question_id=row.get("waiting_question"))
-            actionable = not (live or queued or held)
-            detail = "idle priority project: no live worker, startable queued task, or open captain hold/question"
-            fingerprint = f"priority:{live}:{queued}:{held}"
-        else:
-            live, _, _ = task_state(home, row["project"], include_backlog=False)
-            age = int((now - parse_time(row["created"])).total_seconds())
-            actionable = bool(row["due"] and parse_time(row["due"]) <= now) or (not live and age >= settings["first_alert_seconds"])
-            detail = f"{row['kind']} target {row['target']} remains {row['state']} ({age // 60}m old; worker={'live' if live else 'absent'})"
-            fingerprint = f"{row['state']}:{row['target']}:{live}:{row['evidence'][-1]['result'] if row['evidence'] else 'none'}"
+        waiting = False
+        try:
+            if row["kind"] in DELIVERY:
+                observe(row, now)
+            if row["state"] == "verified":
+                continue
+            if row["kind"] == "project-priority":
+                live, queued, held = priority_state(home, row)
+                actionable = not (live or queued or held)
+                detail = "idle priority project: no live worker, startable queued task, or open captain hold/question"
+                fingerprint = f"priority:{live}:{queued}:{held}"
+            else:
+                live = worker_live(home, row["linked_task"])
+                waiting = row["state"] == "awaiting-approval" or row.get("waiting_question") in open_question_ids(home)
+                age = int((now - parse_time(row["created"])).total_seconds())
+                actionable = bool(row["due"] and parse_time(row["due"]) <= now) or (not live and age >= settings["first_alert_seconds"])
+                detail = (f"{row['kind']} target {row['target']} remains {row['state']} "
+                          f"({age // 60}m old; linked worker={'live' if live else 'absent'})")
+                fingerprint = f"{row['target']}:{live}:{(row.get('verification') or {}).get('result', 'none')}"
+        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+            actionable = True
+            detail = f"check failed: {str(error)[:200]}"
+            fingerprint = f"error:{detail}"
         alert = row["alert"]
         last = parse_time(alert["at"]) if alert.get("at") else None
-        reminder = last is not None and (now - last).total_seconds() >= settings["reminder_seconds"]
+        reminder = not waiting and last is not None and (now - last).total_seconds() >= settings["reminder_seconds"]
+        row["next_check"] = stamp(now + dt.timedelta(seconds=settings["scan_seconds"]))
         if actionable and (alert.get("fingerprint") != fingerprint or reminder):
             reason = f"check: captain ask {row['id']} ({row['project']}): {detail}"
-            save(path, doc)
             append_wake(home, f"captain-ask:{row['id']}", reason)
             row["alert"] = {"at": stamp(now), "fingerprint": fingerprint}
+            save(path, doc)
             emitted.append(reason)
         elif not actionable and alert:
             row["alert"] = {}
-        row["next_check"] = stamp(now + dt.timedelta(seconds=settings["scan_seconds"]))
-        if old_state != row["state"] and row["state"] == "verified":
-            row["evidence"].append({"at": stamp(now), "result": "closed", "detail": "verifier passed", "url": None})
     save(path, doc)
     return emitted
 
@@ -382,12 +384,15 @@ def render_page(doc, home, output):
     rows = [r for r in doc["asks"] if r["state"] in OPEN]
     cards = []
     for row in rows:
-        status = row["evidence"][-1]["result"] if row["evidence"] else "unchecked"
+        status = (row.get("verification") or {}).get("result", "unchecked")
         age = max(0, int((now - parse_time(row["created"])).total_seconds() // 60))
         idle = ""
         if row["kind"] == "project-priority":
-            live, queued, held = task_state(home, row["project"], question_id=row.get("waiting_question"))
-            idle = "idle" if not (live or queued or held) else "covered"
+            try:
+                live, queued, held = priority_state(home, row)
+                idle = "idle" if not (live or queued or held) else "covered"
+            except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+                idle = f"unavailable: {str(error)[:160]}"
         cards.append(f'<tr><td data-label="Project">{html.escape(row["project"])}</td>'
                      f'<td data-label="Kind">{html.escape(row["kind"])}</td>'
                      f'<td data-label="Target">{html.escape(row["target"])}</td>'
@@ -497,7 +502,7 @@ def main():
                    "waiting_question": args.waiting_question,
                    "requested_target": args.target, "target": args.target,
                    "created": stamp(now), "due": due, "next_check": stamp(now), "state": "queued",
-                   "evidence": [], "verifier": verifier, "alert": {}, "archive_reason": None}
+                   "evidence": [], "verifier": verifier, "verification": None, "alert": {}, "archive_reason": None}
             doc["asks"].append(row)
             save(path, doc)
             print(row["id"])
@@ -534,7 +539,7 @@ def main():
                     raise ValueError("priority items use the idle detector")
                 observe(row, now)
                 row["next_check"] = stamp(now + dt.timedelta(seconds=config(home)["scan_seconds"]))
-                print(json.dumps(row["evidence"][-1], ensure_ascii=False))
+                print(json.dumps(row["verification"], ensure_ascii=False))
             else:
                 row["state"] = "archived"
                 row["archive_reason"] = args.reason

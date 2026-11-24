@@ -936,7 +936,7 @@ fi
 
 # Current obligations are a bounded projection of the separate private ledger.
 if ASK_STORE=$(FM_HOME="${FM_HOME:-$(dirname "$SCRIPT_DIR")}" python3 "$SCRIPT_DIR/fm-captain-asks.py" list 2>/dev/null); then
-  ASK_ROWS=$(printf '%s\n' "$ASK_STORE" | jq -c '[.asks[] | {id,project,kind,target,state,created,next_check,verifier_status:(.evidence[-1].result // "unchecked")}]') || exit 1
+  ASK_ROWS=$(printf '%s\n' "$ASK_STORE" | jq -c '[.asks[] | {id,project,kind,target,state,created,next_check,verifier_status:(.verification.result // "unchecked")}]') || exit 1
   MODEL=$(printf '%s\n' "$MODEL" | jq --argjson asks "$ASK_ROWS" '. + {captain_asks:$asks}') || exit 1
 else
   MODEL=$(printf '%s\n' "$MODEL" | jq '. + {captain_asks:null} | .omitted += [{surface:"captain asks unavailable",reveal:"inspect data/captain-asks.json"}]') || exit 1

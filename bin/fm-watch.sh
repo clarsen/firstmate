@@ -4298,23 +4298,20 @@ EOF
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     # The ask ledger owns its own ten-minute default and durable alert cursor.
-    # It appends check wakes before reporting them, so a failed append retries.
+    # It appends check wakes before reporting them, so its wake is rung only
+    # after the remaining checks below have run.
     captain_ask_out=
+    captain_ask_reason=
     if [ ! -e "$FM_HOME/data/captain-asks.json" ] && [ ! -L "$FM_HOME/data/captain-asks.json" ]; then
       :
     elif captain_ask_out=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm-captain-asks.py" sweep 2>&1); then
       rm -f "$STATE/.captain-asks-scan-error"
-      if [ -n "$captain_ask_out" ]; then
-        touch "$STATE/.last-check"
-        wake "${captain_ask_out%%$'\n'*}"
-      fi
+      [ -z "$captain_ask_out" ] || captain_ask_reason="${captain_ask_out%%$'\n'*}"
     elif [ ! -f "$STATE/.captain-asks-scan-error" ] \
         || [ "$(cat "$STATE/.captain-asks-scan-error" 2>/dev/null)" != "$captain_ask_out" ]; then
-      reason="check: captain asks scan failed: ${captain_ask_out:0:240}"
-      fm_wake_append check captain-asks-error "$reason" || exit 1
+      captain_ask_reason="check: captain asks scan failed: ${captain_ask_out:0:240}"
+      fm_wake_append check captain-asks-error "$captain_ask_reason" || exit 1
       printf '%s\n' "$captain_ask_out" > "$STATE/.captain-asks-scan-error"
-      touch "$STATE/.last-check"
-      wake "$reason"
     fi
     # The finite collector runs outside the watch loop, so forge reads never
     # delay an actionable wake. Its own lock dedupes simultaneous watcher
@@ -4551,6 +4548,7 @@ EOF
       wake "$reason"
     fi
     touch "$STATE/.last-check"
+    [ -z "$captain_ask_reason" ] || wake "$captain_ask_reason"
     [ -z "$pr_register_reason" ] || wake "$pr_register_reason"
     if [ -n "$contribution_check_output" ]; then
       wake "$contribution_check_output"

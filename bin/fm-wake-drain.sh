@@ -823,8 +823,8 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     local asks
     if asks=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm-captain-asks.py" list 2>/dev/null); then
       printf '%s\n' "$asks" | jq -r '
-        [.asks[] | select(.alert.at != null)
-          | "\(.id) \(.project) \(.kind) \(.target) \(.state) verifier=\(.evidence[-1].result // "unchecked")"]
+        [.asks[] | select(.alert.at != null or .state == "awaiting-approval" or .waiting_question != null)
+          | "\(.id) \(.project) \(.kind) \(.target) \(.state) verifier=\(.verification.result // "unchecked")"]
         | if length == 0 then empty else "DUE CAPTAIN ASKS (verify the target before closing):\n" + (.[0:20] | join("\n")) +
           (if length > 20 then "\n... more omitted" else "" end) end' || rc=1
     else

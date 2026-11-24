@@ -23,6 +23,11 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             value = {"git_sha": live["sha"]}
         elif self.path == "/api/v4/projects/sample%2Fvantage/merge_requests/57":
             value = {"state": "merged", "merge_commit_sha": live["mr"]}
+        elif self.path == "/api/v4/projects/sample%2Fvantage/merge_requests/58":
+            # GitLab reports a fast-forward merge with a null merge_commit_sha; the head sha is what landed.
+            value = {"state": "merged", "merge_commit_sha": None, "squash_commit_sha": None, "sha": sha}
+        elif self.path == "/api/v4/projects/sample%2Fvantage/merge_requests/59":
+            value = {"state": "opened", "merge_commit_sha": None, "squash_commit_sha": None, "sha": sha}
         else:
             self.send_error(404)
             return
@@ -116,7 +121,8 @@ with tempfile.TemporaryDirectory() as temp:
     unknown = add("chat-2", "deploy-dev", "sample", "target",
                   {"type": "future-verifier"})
     assert json.loads(run("verify", unknown).stdout)["result"] == "unknown"
-    assert next(a for a in json.loads(run("dump").stdout)["asks"] if a["id"] == unknown)["state"] == "needs-evidence"
+    unknown_row = next(a for a in json.loads(run("dump").stdout)["asks"] if a["id"] == unknown)
+    assert unknown_row["state"] == "queued" and unknown_row["verification"]["result"] == "unknown"
     missing = add("chat-2-missing", "deploy-dev", "sample", "target",
                   {"type": "http-json-field-equals", "url": base + "/api/missing",
                    "path": "git_sha", "expected_prefix": sha})
@@ -166,6 +172,225 @@ with tempfile.TemporaryDirectory() as temp:
     page = home / "view.html"
     run("page", "--output", str(page))
     assert "Outstanding asks" in page.read_text() and "parallel" in page.read_text()
+
+def fresh_home(temp):
+    home = Path(temp)
+    for name in ("data", "state", "config"):
+        (home / name).mkdir()
+    (home / "data/backlog.md").write_text("## Queued\n")
+    (home / "intent.txt").write_text("Deploy the requested commit.\n")
+    return home
+
+def cli_runner(home):
+    env = {**os.environ, "FM_HOME": str(home)}
+    def run(*args, good=True):
+        result = subprocess.run([sys.executable, cli, *args], env=env, text=True, capture_output=True)
+        if good and result.returncode:
+            raise AssertionError(f"{args}: {result.stderr}")
+        return result
+    return run
+
+def add_ask(home, run, key, kind, project, target, spec=None, task="release", reason=""):
+    args = ["add", "--key", key, "--kind", kind, "--intent-file", str(home / "intent.txt"),
+            "--source", f"fixture:{key}", "--project", project, "--target", target]
+    args += ["--task", task] if task else ["--no-task-reason", reason or "roster entry"]
+    if spec is not None:
+        (home / "verifier.json").write_text(json.dumps(spec))
+        args += ["--verifier-file", str(home / "verifier.json")]
+    return run(*args).stdout.strip()
+
+def edit(home, ask_id, **fields):
+    store = home / "data/captain-asks.json"
+    record = json.loads(store.read_text())
+    next(a for a in record["asks"] if a["id"] == ask_id).update(fields)
+    store.write_text(json.dumps(record))
+
+def row(run, ask_id):
+    return next(a for a in json.loads(run("dump").stdout)["asks"] if a["id"] == ask_id)
+
+health = {"type": "http-json-field-equals", "url": base + "/api/health", "path": "git_sha", "expected_prefix": sha}
+
+# Fast-forward and squash merges leave merge_commit_sha null; an open MR at the SHA is not merged.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    ff = add_ask(home, run, "ff", "merge", "vantage", sha,
+                 {"type": "forge-mr-merged-at-sha", "url": base + "/sample/vantage/-/merge_requests/58", "sha": sha})
+    assert json.loads(run("verify", ff).stdout)["result"] == "pass"
+    opened = add_ask(home, run, "open-mr", "merge", "vantage", sha,
+                     {"type": "forge-mr-merged-at-sha", "url": base + "/sample/vantage/-/merge_requests/59", "sha": sha})
+    assert json.loads(run("verify", opened).stdout)["result"] == "mismatch"
+
+# A non-passing check keeps the recorded workflow state, and a recorded wait suppresses reminders.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    live["sha"] = old
+    wait = add_ask(home, run, "await", "deploy-prod", "vantage", sha, health)
+    run("update", wait, "--state", "awaiting-approval", "--evidence", "release job needs approval")
+    assert json.loads(run("verify", wait).stdout)["result"] == "mismatch"
+    assert row(run, wait)["state"] == "awaiting-approval"
+    assert row(run, wait)["verification"]["result"] == "mismatch"
+    edit(home, wait, created="2020-01-01T00:00:00Z", next_check="2020-01-01T00:00:00Z")
+    assert wait in run("sweep").stdout
+    edit(home, wait, next_check="2020-01-01T00:00:00Z", alert={**row(run, wait)["alert"], "at": "2020-01-01T00:00:00Z"})
+    assert wait not in run("sweep").stdout
+    assert row(run, wait)["state"] == "awaiting-approval"
+    run("update", wait, "--state", "working", "--evidence", "approval granted", "--next-check", "2020-01-01T00:00:00Z")
+    edit(home, wait, alert={**row(run, wait)["alert"], "at": "2020-01-01T00:00:00Z"})
+    assert wait in run("sweep").stdout
+
+# An unrelated worker on the same project does not cover a delivery ask's own linked task.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    (home / "state/unrelated.meta").write_text("project=vantage\nrepo=vantage\nwindow=fm:unrelated\nkind=ship\n")
+    undriven = add_ask(home, run, "undriven", "deploy-prod", "vantage", sha, health, task="release-0932")
+    edit(home, undriven, created="2020-01-01T00:00:00Z")
+    out = run("sweep").stdout
+    assert undriven in out and "linked worker=absent" in out
+
+# Only a captain hold explains an idle priority project; a check failure on one row alerts and the rest still run.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    (home / "data/backlog.md").write_text(
+        "## Queued\n"
+        "- [ ] ci-wait - Wait for CI (repo: other-hold) (kind: ship) (hold: waiting on CI)\n"
+        "- [ ] cap-wait - Ask first (repo: captain-hold) (kind: ship) (hold-kind: captain) (hold: may this proceed)\n")
+    other = add_ask(home, run, "p-other", "project-priority", "other-hold", "next task", task="")
+    captain = add_ask(home, run, "p-captain", "project-priority", "captain-hold", "next task", task="")
+    out = run("sweep").stdout
+    assert other in out and captain not in out
+    backlog = home / "data/backlog.md"
+    backlog.rename(home / "data/backlog-real.md")
+    backlog.symlink_to(home / "data/backlog-real.md")
+    late = add_ask(home, run, "late", "deploy-prod", "vantage", sha, health)
+    edit(home, late, due="2020-01-01T00:00:00Z", next_check="2099-01-01T00:00:00Z")
+    edit(home, other, next_check="2020-01-01T00:00:00Z")
+    edit(home, captain, next_check="2020-01-01T00:00:00Z")
+    edit(home, late, next_check="2020-01-02T00:00:00Z")
+    out = run("sweep").stdout
+    assert f"captain ask {captain}" in out and "check failed" in out
+    assert late in out
+    queue = (home / "state/.wake-queue").read_text()
+    assert captain in queue and late in queue
+    page = home / "page.html"
+    run("page", "--output", str(page))
+    text = page.read_text()
+    assert "captain-hold" in text and "unavailable" in text
+
+def daily(home, day):
+    result = subprocess.run([sys.executable, str(Path(cli).parent / "fm-wake-daily.py"), day, "--home", str(home)],
+                            env={**os.environ, "PATH": f"{home / 'bin'}:{os.environ['PATH']}"}, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    return json.loads((home / f"data/wake/daily/{day}.json").read_text())["captain_asks"]
+
+def ask_record(ask_id, created, evidence=(), state="queued", **extra):
+    return {"id": ask_id, "key": ask_id, "kind": "deploy-prod", "intent": "Deploy.", "source": "fixture",
+            "project": "vantage", "linked_task": "release", "no_task_reason": "", "waiting_question": None,
+            "requested_target": sha, "target": sha, "created": created, "due": None,
+            "next_check": created, "state": state, "evidence": list(evidence), "verifier": None,
+            "verification": None, "alert": {}, "archive_reason": extra.get("archive_reason")}
+
+# Wake reconstructs asks open at the end of the Pacific day (2026-11-21 ends 2026-11-22T08:00Z under PST).
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    (home / "bin").mkdir()
+    (home / "bin/glab").write_text("#!/bin/sh\nexit 1\n")
+    (home / "bin/glab").chmod(0o755)
+    store = home / "data/captain-asks.json"
+    asks = [ask_record("a-20261120-00000001", "2026-11-20T18:00:00Z"),
+            ask_record("a-20261120-00000002", "2026-11-20T18:00:00Z", state="verified",
+                       evidence=[{"at": "2026-11-21T20:00:00Z", "result": "pass", "detail": "live", "url": None}]),
+            ask_record("a-20261122-00000003", "2026-11-22T12:00:00Z"),
+            ask_record("a-20261120-00000004", "2026-11-20T18:00:00Z", state="archived", archive_reason="superseded",
+                       evidence=[{"at": "2026-11-22T10:00:00Z", "result": "archive", "detail": "superseded", "url": None}])]
+    store.write_text(json.dumps({"schema": "fm-captain-asks.v1", "asks": asks}))
+    section = daily(home, "2026-11-21")
+    assert section["status"] == "measured" and section["open_count"] == 2
+    assert {i["id"]: i["lag_minutes"] for i in section["items"]} == {"a-20261120-00000001": 2280, "a-20261120-00000004": 2280}
+    many = [ask_record(f"a-20261120-{n:08x}", "2026-11-20T18:00:00Z") for n in range(21)]
+    store.write_text(json.dumps({"schema": "fm-captain-asks.v1", "asks": many}))
+    section = daily(home, "2026-11-21")
+    assert section["open_count"] == 21 and section["items"] == [] and section["follow_up"]
+    store.write_text(json.dumps({"schema": "other", "asks": []}))
+    section = daily(home, "2026-11-21")
+    assert section["status"] == "not_measurable" and section["open_count"] is None
+
+    # Bearings projects open asks with their latest verifier result, and discloses an unreadable ledger.
+    bearings = str(Path(cli).parent / "fm-bearings-snapshot.sh")
+    open_row = ask_record("a-20261120-00000001", "2026-11-20T18:00:00Z")
+    open_row["verification"] = {"at": "2026-11-21T00:00:00Z", "result": "mismatch", "detail": "observed old", "url": None}
+    store.write_text(json.dumps({"schema": "fm-captain-asks.v1", "asks": [open_row, asks[1]]}))
+    benv = {**os.environ, "FM_HOME": str(home), "FM_BEARINGS_NOW": "2026-11-22T18:00:00Z"}
+    model = json.loads(subprocess.run([bearings, "--json"], env=benv, text=True, capture_output=True, check=True).stdout)
+    assert [(a["id"], a["verifier_status"]) for a in model["captain_asks"]] == [("a-20261120-00000001", "mismatch")]
+    store.write_text("{not json")
+    model = json.loads(subprocess.run([bearings, "--json"], env=benv, text=True, capture_output=True, check=True).stdout)
+    assert model["captain_asks"] is None
+    assert any(o["surface"] == "captain asks unavailable" for o in model["omitted"])
+
+    # The wake drain lists alerted asks and recorded waits, not quiet queued asks.
+    alerted = ask_record("a-20261120-0000000a", "2026-11-20T18:00:00Z")
+    alerted["alert"] = {"at": "2026-11-22T00:00:00Z", "fingerprint": "x"}
+    waiting = ask_record("a-20261120-0000000b", "2026-11-20T18:00:00Z", state="awaiting-approval")
+    quiet = ask_record("a-20261120-0000000c", "2026-11-20T18:00:00Z")
+    store.write_text(json.dumps({"schema": "fm-captain-asks.v1", "asks": [alerted, waiting, quiet]}))
+    (home / "config/supervision-host-off").write_text("")
+    drain = subprocess.run([str(Path(cli).parent / "fm-wake-drain.sh")], text=True, capture_output=True,
+                           env={**os.environ, "FM_HOME": str(home), "FM_STATE_OVERRIDE": str(home / "state"),
+                                "FM_CONFIG_OVERRIDE": str(home / "config")})
+    assert drain.returncode == 0, drain.stderr
+    assert "DUE CAPTAIN ASKS" in drain.stdout
+    assert alerted["id"] in drain.stdout and waiting["id"] in drain.stdout and quiet["id"] not in drain.stdout
+
+# The watcher rings a sweep wake only after the rest of its check block ran, and dedupes a repeated scan failure.
+def watch_once(home, seconds):
+    bin_dir = home / "watch-bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "tmux").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (bin_dir / "python3").write_text(
+        "#!/usr/bin/env bash\n"
+        f"if [[ \"$1\" == */fm-wake-daily.py ]]; then echo collector >> '{home}/collector.log'; exit 0; fi\n"
+        f"exec '{sys.executable}' \"$@\"\n")
+    for item in bin_dir.iterdir():
+        item.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FM_HOME": str(home),
+           "FM_STATE_OVERRIDE": str(home / "state"), "FM_WAKE_DAILY_DISABLE": "0", "FM_POLL": "1",
+           "FM_CHECK_INTERVAL": "0", "FM_HEARTBEAT": "999999"}
+    watcher = subprocess.Popen(["bash", str(Path(cli).parent / "fm-watch.sh")], env=env, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        out, _ = watcher.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        watcher.terminate()
+        out, _ = watcher.communicate()
+    return out
+
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    idle = add_ask(home, run, "watch-idle", "project-priority", "watched", "next task", task="")
+    out = watch_once(home, 60)
+    assert f"check: captain ask {idle}" in out, out
+    for _ in range(50):
+        if (home / "collector.log").exists():
+            break
+        threading.Event().wait(0.1)
+    assert (home / "collector.log").exists(), "watcher skipped later checks after a captain ask sweep wake"
+
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    (home / "config/supervision-host-off").write_text("")
+    (home / "data/captain-asks.json").write_text("{not json")
+    failed = watch_once(home, 60)
+    assert "captain asks scan failed" in failed, failed
+    subprocess.run([str(Path(cli).parent / "fm-wake-drain.sh")], text=True, capture_output=True, check=True,
+                   env={**os.environ, "FM_HOME": str(home), "FM_STATE_OVERRIDE": str(home / "state"),
+                        "FM_CONFIG_OVERRIDE": str(home / "config")})
+    repeated = watch_once(home, 4)
+    assert not repeated.strip(), repeated
 server.shutdown()
-print("ok - captain asks ledger, verification, sweep, idempotency, and concurrent writes")
+print("ok - captain asks ledger, verification, sweep, consumers, watcher, idempotency, and concurrent writes")
 PY
