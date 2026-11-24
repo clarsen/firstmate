@@ -1252,7 +1252,7 @@ It passes only when the live string field starts with that exact prefix; use a f
 A `forge-mr-merged-at-sha` verifier has a GitLab MR `url` and expected full `sha`; it passes only when the MR is merged and that SHA is its merge commit, squash commit, or merged head (the fast-forward case).
 The GitLab check reads through the home's authenticated `glab api` access, including private merge requests.
 Unknown verifiers, unreadable endpoints, and mismatches keep the ask open: the result is stored in `verification` and appended to `evidence`, and the recorded workflow `state` is left unchanged.
-Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a two-second timeout and a 256 KiB response limit.
+Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a 256 KiB response limit; the HTTP read times out after two seconds and the `glab api` read after four.
 These checks observe outcomes; they grant no deploy or merge permission.
 
 The watcher starts `sweep` in the background on its existing check cadence and rings the result on a later cycle, so slow checks never delay other watcher work; a second sweep exits while one is running.
@@ -1262,7 +1262,7 @@ A failed sweep is reported once as a `check: captain asks scan failed` wake unti
 The sweep checks at most 12 due open items per pass and stores its per-item `next_check` time.
 It appends typed `check` wakes through the durable wake helper before storing an alert fingerprint.
 The default scan interval is 600 seconds, first undriven delivery alert is after 1800 seconds, and repeat reminder is after 3600 seconds.
-A delivery ask is undriven when its own `linked_task` has no worker that `bin/fm-crew-state.sh` reports as `working`; another worker on the same project does not cover it.
+A delivery ask alerts once its `due` time has passed, or when it is undriven: its own `linked_task` has no worker that `bin/fm-crew-state.sh` reports as `working`; another worker on the same project does not cover it.
 A delivery ask whose state is `awaiting-approval`, or whose `waiting_question` is open, gets no hourly reminders and stays in Bearings and the wake-drain list.
 A row whose check fails is alerted with the failure and the sweep continues with the remaining rows.
 The optional gitignored `config/captain-asks.json` overrides these values with positive integer `scan_seconds`, `first_alert_seconds`, and `reminder_seconds` up to 86400.
