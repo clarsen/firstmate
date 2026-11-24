@@ -819,6 +819,18 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     fi
   fi
   if [ "$rc" -eq 0 ] && [ -n "$snapshot" ]; then print_status_sections "$snapshot" "$fully_presented" || rc=1; fi
+  if [ "$rc" -eq 0 ] && [ "$ACTOR" = main ] && [ -f "$FM_HOME/data/captain-asks.json" ]; then
+    local asks
+    if asks=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm-captain-asks.py" list 2>/dev/null); then
+      printf '%s\n' "$asks" | jq -r '
+        [.asks[] | select(.alert.at != null)
+          | "\(.id) \(.project) \(.kind) \(.target) \(.state) verifier=\(.evidence[-1].result // "unchecked")"]
+        | if length == 0 then empty else "DUE CAPTAIN ASKS (verify the target before closing):\n" + (.[0:20] | join("\n")) +
+          (if length > 20 then "\n... more omitted" else "" end) end' || rc=1
+    else
+      printf 'CAPTAIN ASKS: ledger unavailable; inspect data/captain-asks.json\n' || rc=1
+    fi
+  fi
   fm_lock_release "$lock"
   return "$rc"
 }

@@ -912,6 +912,7 @@ def build(day, home):
     backlog_path = home / "data/backlog.md"
     archive_path = home / "data/done-archive.md"
     questions_path = home / "data/captain-questions.json"
+    asks_path = home / "data/captain-asks.json"
     uses_ledger = day >= LEDGER_CUTOFF
     ledger, dropped = [], 0
     if uses_ledger:
@@ -933,6 +934,37 @@ def build(day, home):
             questions = document["questions"]
         except (ValueError, AttributeError, TypeError):
             coverage[str(questions_path)] = {"status": "not_measurable", "reason": "invalid JSON or schema"}
+
+    # Reconstruct the prior day's end from immutable creation and closure
+    # evidence, so re-collection is byte stable when the ledger is unchanged.
+    asks_text = read_text(asks_path, coverage)
+    if asks_text is None and coverage[str(asks_path)]["reason"] == "absent":
+        coverage[str(asks_path)] = {"status": "readable", "note": "absent means zero asks"}
+    asks_section = {"status": "measured", "open_count": 0, "items": [], "follow_up": None}
+    if asks_text is not None:
+        try:
+            ask_doc = json.loads(asks_text)
+            if ask_doc.get("schema") != "fm-captain-asks.v1" or not isinstance(ask_doc.get("asks"), list):
+                raise ValueError("invalid schema")
+            cutoff = (datetime.fromisoformat(day).replace(tzinfo=PACIFIC) + timedelta(days=1)).astimezone(timezone.utc)
+            def ask_was_open(a):
+                if datetime.fromisoformat(a["created"].replace("Z", "+00:00")) >= cutoff:
+                    return False
+                closes = [datetime.fromisoformat(e["at"].replace("Z", "+00:00"))
+                          for e in a["evidence"] if e.get("result") in ("pass", "archive")]
+                return not closes or min(closes) >= cutoff
+            open_asks = [a for a in ask_doc["asks"] if ask_was_open(a)]
+            asks_section["open_count"] = len(open_asks)
+            if len(open_asks) <= 20:
+                asks_section["items"] = [{"id": a["id"], "project": a["project"], "kind": a["kind"],
+                                           "lag_minutes": max(0, int((cutoff -
+                                               datetime.fromisoformat(a["created"].replace("Z", "+00:00"))).total_seconds() // 60))}
+                                          for a in open_asks]
+            else:
+                asks_section["follow_up"] = "Inspect data/captain-asks.json for the open ask ledger."
+        except (ValueError, KeyError, TypeError):
+            asks_section.update(status="not_measurable", open_count=None, items=[], follow_up="Repair data/captain-asks.json.")
+            coverage[str(asks_path)] = {"status": "not_measurable", "reason": "invalid JSON or schema"}
 
     by_task = {}
     day_rows = {}
@@ -1132,6 +1164,7 @@ def build(day, home):
         "production_evidence": production,
         "hostupdate_deploy_receipts": {"events": receipts},
         "firstmate_updates": {"updates": updates},
+        "captain_asks": asks_section,
         "coverage": {
             "inputs": {name: coverage[name] for name in sorted(coverage)},
             "signals": counts,

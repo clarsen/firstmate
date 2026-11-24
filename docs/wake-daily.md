@@ -13,7 +13,10 @@ A selected-day run always rebuilds that day from current sources.
 The script refuses today and future dates in `America/Los_Angeles`.
 It replaces the output atomically and leaves a byte-identical file alone on a repeat run with unchanged inputs.
 
-The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, `production_evidence`, `hostupdate_deploy_receipts`, `firstmate_updates`, and `coverage` sections.
+The `fm-wake-daily.v1` record has `day`, `timezone`, `contributions`, `links`, `rework`, `hostupdate_mr_pipeline_wall_time`, `production_evidence`, `hostupdate_deploy_receipts`, `firstmate_updates`, `captain_asks`, and `coverage` sections.
+`captain_asks` reconstructs obligations open at the end of the selected Pacific day from creation and closing evidence, with `open_count` and lag in minutes for at most 20 items.
+When more than 20 are open, `follow_up` directs the reader to the private ledger instead of expanding the daily record.
+[`configuration.md`](configuration.md#captain-ask-ledger-datacaptain-asksjson) owns the ledger schema and verification rules.
 `contributions.projects` groups ships, scouts, and closed decisions by recorded project, using `none recorded` when a project was not recorded.
 Rows with no recorded kind appear in `unclassified` under their recorded project or `none recorded`.
 `coverage.signals.unclassified` reports their day count alongside ships, so a ship count can be read with its classification gap.

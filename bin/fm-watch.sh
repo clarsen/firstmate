@@ -4297,6 +4297,25 @@ EOF
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+    # The ask ledger owns its own ten-minute default and durable alert cursor.
+    # It appends check wakes before reporting them, so a failed append retries.
+    captain_ask_out=
+    if [ ! -e "$FM_HOME/data/captain-asks.json" ] && [ ! -L "$FM_HOME/data/captain-asks.json" ]; then
+      :
+    elif captain_ask_out=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm-captain-asks.py" sweep 2>&1); then
+      rm -f "$STATE/.captain-asks-scan-error"
+      if [ -n "$captain_ask_out" ]; then
+        touch "$STATE/.last-check"
+        wake "${captain_ask_out%%$'\n'*}"
+      fi
+    elif [ ! -f "$STATE/.captain-asks-scan-error" ] \
+        || [ "$(cat "$STATE/.captain-asks-scan-error" 2>/dev/null)" != "$captain_ask_out" ]; then
+      reason="check: captain asks scan failed: ${captain_ask_out:0:240}"
+      fm_wake_append check captain-asks-error "$reason" || exit 1
+      printf '%s\n' "$captain_ask_out" > "$STATE/.captain-asks-scan-error"
+      touch "$STATE/.last-check"
+      wake "$reason"
+    fi
     # The finite collector runs outside the watch loop, so forge reads never
     # delay an actionable wake. Its own lock dedupes simultaneous watcher
     # cycles; it recovers missed days and retries recent unmeasured ones.

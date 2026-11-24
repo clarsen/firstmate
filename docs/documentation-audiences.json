@@ -146,6 +146,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/captain-asks/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/captain-hold-lifecycle/SKILL.md",
       "audience": "agent-runtime"
     },
