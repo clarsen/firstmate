@@ -8,7 +8,7 @@
 // each opens the decision strip of the row with that question key, types the note, and sends it (or
 // cancels instead when `cancel` is true).
 // Prints one JSON document:
-//   { count, captain, empty,
+//   { count, empty,
 //     rows: [{ key, cells: {<column label>: text}, tones: {<column label>: tone},
 //              details: [{text, clipped}], actions: [label],
 //              panelOpen, noteLabel, send, error }],
@@ -142,7 +142,6 @@ const ledger = byId.get("ledger");
 const shown = ledger ? ledger.parentNode.children[0] : null;
 process.stdout.write(JSON.stringify({
   count: byId.get("count")?.textContent ?? "",
-  captain: byId.get("captain")?.textContent ?? "",
   empty: shown && shown !== ledger ? shown.textContent : "",
   rows,
   queued,

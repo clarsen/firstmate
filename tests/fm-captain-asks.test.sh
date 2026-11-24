@@ -248,7 +248,7 @@ with tempfile.TemporaryDirectory() as temp:
     if view is not None:
         open_ids = [a["id"] for a in json.loads(run("list").stdout)["asks"]]
         assert sorted(r["key"] for r in view["rows"]) == sorted(f"captain-ask.{i}" for i in open_ids), view["rows"]
-        assert view["count"] == str(len(open_ids)) and not view["captain"] and not view["empty"]
+        assert view["count"] == str(len(open_ids)) and not view["empty"]
         for shown in view["rows"]:
             cells = shown["cells"]
             assert list(cells) == COLUMNS and not shown["panelOpen"], shown
@@ -489,7 +489,7 @@ with tempfile.TemporaryDirectory() as temp:
     run("page", "--output", str(page))
     view = rendered(page)
     if view is not None:
-        assert view["count"] == "2" and view["captain"] == " · 1 waiting on captain" and not view["empty"], view
+        assert view["count"] == "2" and not view["empty"], view
         first, second = view["rows"]
         assert first["key"] == f"captain-ask.{approval}" and first["cells"]["Waiting on"] == "Captain", first
         assert first["cells"]["State"] == "Waiting" and first["tones"]["State"] == "attn", first

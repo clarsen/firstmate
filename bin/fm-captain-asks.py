@@ -576,7 +576,7 @@ button:focus-visible,input:focus-visible{outline:3px solid #b17631;outline-offse
 .asks .age{text-align:left}.act{width:40px;height:40px}.act+.act{margin-left:10px}
 .asks tr.decide-row{display:block;margin-top:6px}.asks tr.decide-row td{border:1px solid var(--edge);border-radius:12px;padding:12px 14px}}
 </style></head><body><main><h1>Outstanding asks</h1>
-<p class="sub"><span class="count" id="count"></span> open<span class="count" id="captain"></span> · Updated <span id="updated"></span></p>
+<p class="sub"><span class="count" id="count"></span> open · Updated <span id="updated"></span></p>
 <div class="table-wrap" id="ledger"><table class="asks" aria-label="Open asks"><colgroup><col style="width:132px"><col><col style="width:128px">
 <col style="width:146px"><col style="width:116px"><col style="width:96px"><col style="width:94px"><col style="width:52px"><col style="width:84px"></colgroup>
 <thead><tr><th scope="col">Project</th><th scope="col">Ask</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Verifier</th>
@@ -617,9 +617,7 @@ const cell=function(label,cls,text){const td=el('td',cls,text);td.dataset.label=
 const status=function(label,value){const td=cell(label);
 if(value)td.appendChild(el('span','st'+(ATTN.includes(value)?' attn':OK.includes(value)?' ok':''),value));return td};
 const age=function(minutes){return minutes<60?minutes+'m':minutes<2880?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d'};
-const waiting=data.rows.filter(function(row){return row.owner==='Captain'}).length;
 document.getElementById("count").textContent=data.rows.length;document.getElementById("updated").textContent=data.generated;
-if(waiting)document.getElementById("captain").textContent=' · '+waiting+' waiting on captain';
 const ledger=document.getElementById("ledger");
 if(!data.rows.length){ledger.replaceWith(el('p','empty','No open asks.'));return}
 const body=document.getElementById("rows");let project=null;data.rows.forEach(function(row,index){
