@@ -31,6 +31,7 @@ KINDS = ("deploy-prod", "deploy-dev", "merge", "project-priority")
 OPEN = ("queued", "working", "awaiting-approval", "blocked", "verifying", "needs-evidence")
 DELIVERY = KINDS[:3]
 MAX_SWEEP = 12
+SWEEP_BUSY = 75
 
 
 def utcnow():
@@ -238,15 +239,17 @@ def verify_predicate(spec):
         return "unknown", str(error)[:240], spec.get("url")
 
 
-def observe(row, now):
-    result, detail, url = verify_predicate(row["verifier"])
-    entry = {"at": stamp(now), "result": result, "detail": detail, "url": url}
+def check_verifier(spec, now):
+    result, detail, url = verify_predicate(spec)
+    return {"at": stamp(now), "result": result, "detail": detail, "url": url}
+
+
+def record_verification(row, entry):
     row["verification"] = entry
-    if not row["evidence"] or row["evidence"][-1]["result"] != result or row["evidence"][-1]["detail"] != detail:
+    if not row["evidence"] or row["evidence"][-1]["result"] != entry["result"] or row["evidence"][-1]["detail"] != entry["detail"]:
         row["evidence"].append(entry)
-    if result == "pass":
+    if entry["result"] == "pass":
         row["state"] = "verified"
-    return result
 
 
 def worker_live(home, task_id):
@@ -332,50 +335,60 @@ def append_wake(home, key, reason):
         raise ValueError(f"wake append failed: {result.stderr.strip()[:200]}")
 
 
-def sweep(home, path, doc, now):
-    if not doc["asks"] and not path.exists():
+def sweep(home, path, now):
+    if not path.exists() and not path.is_symlink():
         return []
     settings = config(home)
+    doc = load(path)
     emitted = []
-    for row in sorted((r for r in doc["asks"] if r["state"] in OPEN), key=lambda r: r["next_check"])[:MAX_SWEEP]:
-        if parse_time(row["next_check"]) > now:
-            continue
+    due = [r for r in sorted((r for r in doc["asks"] if r["state"] in OPEN), key=lambda r: r["next_check"])[:MAX_SWEEP]
+           if parse_time(r["next_check"]) <= now]
+    for snapshot in due:
         waiting = False
+        verification = None
         try:
-            if row["kind"] in DELIVERY:
-                observe(row, now)
-            if row["state"] == "verified":
-                continue
-            if row["kind"] == "project-priority":
-                live, queued, held = priority_state(home, row)
+            if snapshot["kind"] in DELIVERY:
+                verification = check_verifier(snapshot["verifier"], now)
+            if verification is not None and verification["result"] == "pass":
+                actionable, detail, fingerprint = False, "", ""
+            elif snapshot["kind"] == "project-priority":
+                live, queued, held = priority_state(home, snapshot)
                 actionable = not (live or queued or held)
                 detail = "idle priority project: no live worker, startable queued task, or open captain hold/question"
                 fingerprint = f"priority:{live}:{queued}:{held}"
             else:
-                live = worker_live(home, row["linked_task"])
-                waiting = row["state"] == "awaiting-approval" or row.get("waiting_question") in open_question_ids(home)
-                age = int((now - parse_time(row["created"])).total_seconds())
-                actionable = bool(row["due"] and parse_time(row["due"]) <= now) or (not live and age >= settings["first_alert_seconds"])
-                detail = (f"{row['kind']} target {row['target']} remains {row['state']} "
+                live = worker_live(home, snapshot["linked_task"])
+                waiting = snapshot["state"] == "awaiting-approval" or snapshot.get("waiting_question") in open_question_ids(home)
+                age = int((now - parse_time(snapshot["created"])).total_seconds())
+                actionable = bool(snapshot["due"] and parse_time(snapshot["due"]) <= now) or (not live and age >= settings["first_alert_seconds"])
+                detail = (f"{snapshot['kind']} target {snapshot['target']} remains {snapshot['state']} "
                           f"({age // 60}m old; linked worker={'live' if live else 'absent'})")
-                fingerprint = f"{row['target']}:{live}:{(row.get('verification') or {}).get('result', 'none')}"
+                fingerprint = f"{snapshot['target']}:{live}:{verification['result']}"
         except (ValueError, OSError, subprocess.TimeoutExpired) as error:
             actionable = True
             detail = f"check failed: {str(error)[:200]}"
             fingerprint = f"error:{detail}"
-        alert = row["alert"]
-        last = parse_time(alert["at"]) if alert.get("at") else None
-        reminder = not waiting and last is not None and (now - last).total_seconds() >= settings["reminder_seconds"]
-        row["next_check"] = stamp(now + dt.timedelta(seconds=settings["scan_seconds"]))
-        if actionable and (alert.get("fingerprint") != fingerprint or reminder):
-            reason = f"check: captain ask {row['id']} ({row['project']}): {detail}"
-            append_wake(home, f"captain-ask:{row['id']}", reason)
-            row["alert"] = {"at": stamp(now), "fingerprint": fingerprint}
+        with locked(path):
+            doc = load(path)
+            row = find(doc, snapshot["id"])
+            if (row is None or row["state"] not in OPEN or parse_time(row["next_check"]) > now
+                    or row["verifier"] != snapshot["verifier"] or row["target"] != snapshot["target"]):
+                continue
+            if verification is not None:
+                record_verification(row, verification)
+            if row["state"] != "verified":
+                alert = row["alert"]
+                last = parse_time(alert["at"]) if alert.get("at") else None
+                reminder = not waiting and last is not None and (now - last).total_seconds() >= settings["reminder_seconds"]
+                row["next_check"] = stamp(now + dt.timedelta(seconds=settings["scan_seconds"]))
+                if actionable and (alert.get("fingerprint") != fingerprint or reminder):
+                    reason = f"check: captain ask {row['id']} ({row['project']}): {detail}"
+                    append_wake(home, f"captain-ask:{row['id']}", reason)
+                    row["alert"] = {"at": stamp(now), "fingerprint": fingerprint}
+                    emitted.append(reason)
+                elif not actionable and alert:
+                    row["alert"] = {}
             save(path, doc)
-            emitted.append(reason)
-        elif not actionable and alert:
-            row["alert"] = {}
-    save(path, doc)
     return emitted
 
 
@@ -475,8 +488,29 @@ def main():
             print(output)
             if args.publish:
                 publish_page(output)
+        elif args.command == "dump":
+            print(json.dumps(doc, ensure_ascii=False))
         else:
-            print(json.dumps(doc if args.command == "dump" else {**doc, "asks": [r for r in doc["asks"] if r["state"] in OPEN]}, ensure_ascii=False))
+            try:
+                config(home)
+                config_error = None
+            except (ValueError, OSError) as error:
+                config_error = str(error)
+            print(json.dumps({**doc, "asks": [r for r in doc["asks"] if r["state"] in OPEN],
+                              "config_error": config_error}, ensure_ascii=False))
+        return
+    if args.command == "sweep":
+        sweep_lock = home / "state/.captain-asks-sweep.lock"
+        sweep_lock.parent.mkdir(parents=True, exist_ok=True)
+        if sweep_lock.is_symlink():
+            raise ValueError("captain asks sweep lock is a symlink")
+        with sweep_lock.open("a+") as stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                sys.exit(SWEEP_BUSY)
+            for reason in sweep(home, path, utcnow()):
+                print(reason)
         return
     with locked(path):
         doc = load(path)
@@ -506,9 +540,6 @@ def main():
             doc["asks"].append(row)
             save(path, doc)
             print(row["id"])
-        elif args.command == "sweep":
-            for reason in sweep(home, path, doc, now):
-                print(reason)
         else:
             row = find(doc, args.id)
             if row is None:
@@ -537,7 +568,7 @@ def main():
             elif args.command == "verify":
                 if row["kind"] not in DELIVERY:
                     raise ValueError("priority items use the idle detector")
-                observe(row, now)
+                record_verification(row, check_verifier(row["verifier"], now))
                 row["next_check"] = stamp(now + dt.timedelta(seconds=config(home)["scan_seconds"]))
                 print(json.dumps(row["verification"], ensure_ascii=False))
             else:

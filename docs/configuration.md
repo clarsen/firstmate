@@ -1255,7 +1255,9 @@ Unknown verifiers, unreadable endpoints, and mismatches keep the ask open: the r
 Verifier requests use HTTPS, except loopback HTTP for fixture tests, and have a two-second timeout and a 256 KiB response limit.
 These checks observe outcomes; they grant no deploy or merge permission.
 
-The watcher calls `sweep` on its existing check cadence.
+The watcher starts `sweep` in the background on its existing check cadence and rings the result on a later cycle, so slow checks never delay other watcher work; a second sweep exits while one is running.
+Each row is checked without holding the ledger lock, which is taken only to record that row's result, so `add` and `update` never wait for a slow check.
+A failed sweep is reported once as a `check: captain asks scan failed` wake until its error changes.
 The sweep checks at most 12 due open items per pass and stores its per-item `next_check` time.
 It appends typed `check` wakes through the durable wake helper before storing an alert fingerprint.
 The default scan interval is 600 seconds, first undriven delivery alert is after 1800 seconds, and repeat reminder is after 3600 seconds.
@@ -1263,6 +1265,7 @@ A delivery ask is undriven when its own `linked_task` has no worker that `bin/fm
 A delivery ask whose state is `awaiting-approval`, or whose `waiting_question` is open, gets no hourly reminders and stays in Bearings and the wake-drain list.
 A row whose check fails is alerted with the failure and the sweep continues with the remaining rows.
 The optional gitignored `config/captain-asks.json` overrides these values with positive integer `scan_seconds`, `first_alert_seconds`, and `reminder_seconds` up to 86400.
+A missing file means the defaults; an invalid file fails the sweep with that scan-failure wake, and `list` reports it as `config_error`, which Bearings discloses in `omitted`.
 The priority-project detector wakes when no project worker in `state/*.meta` is `working` according to `bin/fm-crew-state.sh`, the configured backlog read through `bin/fm-tasks-axi.sh` has no startable queued row, and neither a `hold-kind: captain` hold nor the linked open `waiting_question` exists.
 Priority projects are opt-in `project-priority` items in the private ledger; no project roster is shipped in tracked files.
 `page --publish` renders the open ledger to `.lavish/captain-asks.html` and establishes a read-only Lavish session; a priority row whose detector fails shows the failure instead of failing the page.

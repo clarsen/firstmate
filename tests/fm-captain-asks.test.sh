@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 cli = sys.argv[1]
 sha = "0932fe0" + "a" * 33
@@ -20,6 +21,9 @@ live = {"sha": old, "mr": sha}
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/health":
+            value = {"git_sha": live["sha"]}
+        elif self.path == "/api/slow":
+            threading.Event().wait(2)
             value = {"git_sha": live["sha"]}
         elif self.path == "/api/v4/projects/sample%2Fvantage/merge_requests/57":
             value = {"state": "merged", "merge_commit_sha": live["mr"]}
@@ -279,6 +283,36 @@ with tempfile.TemporaryDirectory() as temp:
     run("page", "--output", str(page))
     text = page.read_text()
     assert "captain-hold" in text and "unavailable" in text
+
+# A slow row check holds neither the ledger lock nor a second sweep slot, and an invalid config is visible.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    slow = add_ask(home, run, "slow", "deploy-prod", "vantage", sha,
+                   {"type": "http-json-field-equals", "url": base + "/api/slow", "path": "git_sha", "expected_prefix": sha})
+    sweeper = subprocess.Popen([sys.executable, cli, "sweep"], env={**os.environ, "FM_HOME": str(home)},
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    threading.Event().wait(0.7)
+    busy = run("sweep", good=False)
+    assert busy.returncode == 75 and not busy.stdout.strip(), busy
+    started = time.monotonic()
+    intake = add_ask(home, run, "intake-during-sweep", "deploy-dev", "vantage", sha, task="dev-release")
+    assert time.monotonic() - started < 1.0, "add waited for a slow sweep check"
+    assert sweeper.poll() is None, "setup error: sweep finished before the concurrent add"
+    sweeper.communicate(timeout=30)
+    assert sweeper.returncode == 0
+    assert row(run, slow)["verification"]["result"] == "mismatch"
+    assert row(run, intake)["state"] == "queued"
+
+    (home / "config/captain-asks.json").write_text(json.dumps({"scan_seconds": 0}))
+    failed = run("sweep", good=False)
+    assert failed.returncode == 1 and "intervals" in failed.stderr
+    assert "intervals" in json.loads(run("list").stdout)["config_error"]
+    bearings = str(Path(cli).parent / "fm-bearings-snapshot.sh")
+    model = json.loads(subprocess.run([bearings, "--json"], text=True, capture_output=True, check=True,
+                                      env={**os.environ, "FM_HOME": str(home)}).stdout)
+    assert {a["id"] for a in model["captain_asks"]} == {slow, intake}
+    assert any(o["surface"].startswith("captain asks config invalid") for o in model["omitted"])
 
 def daily(home, day):
     result = subprocess.run([sys.executable, str(Path(cli).parent / "fm-wake-daily.py"), day, "--home", str(home)],

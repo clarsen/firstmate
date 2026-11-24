@@ -938,6 +938,11 @@ fi
 if ASK_STORE=$(FM_HOME="${FM_HOME:-$(dirname "$SCRIPT_DIR")}" python3 "$SCRIPT_DIR/fm-captain-asks.py" list 2>/dev/null); then
   ASK_ROWS=$(printf '%s\n' "$ASK_STORE" | jq -c '[.asks[] | {id,project,kind,target,state,created,next_check,verifier_status:(.verification.result // "unchecked")}]') || exit 1
   MODEL=$(printf '%s\n' "$MODEL" | jq --argjson asks "$ASK_ROWS" '. + {captain_asks:$asks}') || exit 1
+  ASK_CONFIG_ERROR=$(printf '%s\n' "$ASK_STORE" | jq -r '.config_error // empty') || exit 1
+  if [ -n "$ASK_CONFIG_ERROR" ]; then
+    MODEL=$(printf '%s\n' "$MODEL" | jq --arg error "$ASK_CONFIG_ERROR" \
+      '.omitted += [{surface:("captain asks config invalid: " + $error),reveal:"repair config/captain-asks.json"}]') || exit 1
+  fi
 else
   MODEL=$(printf '%s\n' "$MODEL" | jq '. + {captain_asks:null} | .omitted += [{surface:"captain asks unavailable",reveal:"inspect data/captain-asks.json"}]') || exit 1
 fi
