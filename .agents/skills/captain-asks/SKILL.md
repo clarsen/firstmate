@@ -19,7 +19,8 @@ The receipt tracks an obligation and grants no deploy, merge, or approval author
 
 After a `check: captain ask` wake, inspect the current ledger item and its linked task, drive the next permitted step, and give it an owner or a recorded wait.
 Run `verify` against the declared read-only predicate when evidence may have changed.
-A worker's completion, a green pipeline, or a successful no-change deploy job is progress evidence and does not close a delivery ask.
-Only a passing verifier closes a deploy or merge ask; archive requires an explicit reason that remains in the record.
-Keep priority items open until the priority designation is explicitly withdrawn.
+A worker's completion, a green pipeline, or a successful no-change deploy job without its required rollout receipt is progress evidence and does not close a delivery ask.
+Only a passing verifier or a captured captain acceptance closes a deploy or merge ask; archive requires an explicit reason that remains in the record.
+On a captured Rework wake, read its ledger evidence and decide the next fix before dispatching work.
+Keep priority items open until the priority designation is explicitly withdrawn or the captain accepts the ledger item.
 The watcher repeats due checks; a live task does not prevent target verification.

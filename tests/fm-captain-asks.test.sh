@@ -16,7 +16,7 @@ import time
 cli = sys.argv[1]
 sha = "0932fe0" + "a" * 33
 old = "611f7e7" + "b" * 33
-live = {"sha": old, "mr": sha}
+live = {"sha": old, "mr": sha, "job": "success", "receipt": [], "ancestor": True}
 # /api/slow answers once the test releases it after its concurrent step, so the reply never races
 # the CLI's 2s fetch timeout; the long wait only bounds a handler whose test already failed.
 slow_release = threading.Event()
@@ -35,6 +35,19 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             value = {"state": "merged", "merge_commit_sha": None, "squash_commit_sha": None, "sha": sha}
         elif self.path == "/api/v4/projects/sample%2Fvantage/merge_requests/59":
             value = {"state": "opened", "merge_commit_sha": None, "squash_commit_sha": None, "sha": sha}
+        elif self.path == "/api/v4/projects/sample%2Fvantage/jobs/71":
+            value = {"id": 71, "status": live["job"]}
+        elif self.path == "/api/v4/projects/sample%2Fvantage/jobs/71/artifacts/deploy-event.json":
+            value = {"schema_version": 1, "events": live["receipt"]}
+        elif self.path.startswith("/api/v4/projects/sample%2Fvantage/repository/merge_base?"):
+            # GitLab answers 404 when a ref is not in the project; "c"*40 stands for such a foreign commit.
+            if "c" * 40 in self.path:
+                self.send_error(404)
+                return
+            if "e" * 40 in self.path:
+                self.send_error(500)
+                return
+            value = {"id": sha if live["ancestor"] else "f" * 40}
         else:
             self.send_error(404)
             return
@@ -179,6 +192,12 @@ with tempfile.TemporaryDirectory() as temp:
     page = home / "view.html"
     run("page", "--output", str(page))
     assert "Outstanding asks" in page.read_text() and "parallel" in page.read_text()
+    assert 'id="decision-page-data"' in page.read_text()
+    assert "Terms on this page" in page.read_text() and "Waiting on" in page.read_text()
+    embedded = page.read_text().split('<script id="decision-page-data" type="application/json">', 1)[1]
+    page_rows = json.loads(embedded.split("</script>", 1)[0])["rows"]
+    assert {r["verifier"] for r in page_rows if r["kind"] == "project-priority"} == {""}
+    assert {r["verifier"] for r in page_rows if r["key"] == f"captain-ask.{unknown}"} == {"unknown"}
 
 def fresh_home(temp):
     home = Path(temp)
@@ -216,6 +235,84 @@ def row(run, ask_id):
     return next(a for a in json.loads(run("dump").stdout)["asks"] if a["id"] == ask_id)
 
 health = {"type": "http-json-field-equals", "url": base + "/api/health", "path": "git_sha", "expected_prefix": sha}
+
+def receipt(host, commit, outcome="changed"):
+    return {"host": host, "commit_sha": commit, "outcome": outcome,
+            "ansible_exit_code": 0, "runner_exit_code": 0, "job_status": "success"}
+
+# A successful job is insufficient until every named host has a successful receipt at or after the requested SHA.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    spec = {"type": "host-rollout-receipt", "url": base + "/sample/vantage/-/jobs/71",
+            "sha": sha, "hosts": ["one.invalid", "two.invalid"]}
+    ask = add_ask(home, run, "rollout", "deploy-prod", "vantage", sha, spec)
+    live["receipt"] = [receipt("one.invalid", sha)]
+    assert json.loads(run("verify", ask).stdout)["result"] == "mismatch"
+    live["receipt"].append(receipt("two.invalid", old, "failed"))
+    assert json.loads(run("verify", ask).stdout)["result"] == "mismatch"
+    live["job"] = "failed"
+    assert json.loads(run("verify", ask).stdout)["result"] == "mismatch"
+    live["job"] = "success"
+    live["receipt"][-1] = receipt("two.invalid", old)
+    live["ancestor"] = False
+    assert json.loads(run("verify", ask).stdout)["result"] == "mismatch"
+    live["ancestor"] = True
+    assert json.loads(run("verify", ask).stdout)["result"] == "pass"
+    assert row(run, ask)["state"] == "verified"
+    mixed = add_ask(home, run, "rollout-mixed", "deploy-prod", "vantage", sha, spec)
+    live["receipt"] = [receipt("one.invalid", "c" * 40), receipt("one.invalid", sha), receipt("two.invalid", sha)]
+    assert json.loads(run("verify", mixed).stdout)["result"] == "pass"
+    foreign = add_ask(home, run, "rollout-foreign", "deploy-prod", "vantage", sha, spec)
+    live["receipt"] = [receipt("one.invalid", sha), receipt("two.invalid", "c" * 40)]
+    checked = json.loads(run("verify", foreign).stdout)
+    assert checked["result"] == "mismatch" and checked["detail"] == "unproven hosts: two.invalid", checked
+    live["receipt"] = [receipt("one.invalid", sha), receipt("two.invalid", "e" * 40)]
+    assert json.loads(run("verify", foreign).stdout)["result"] == "unknown"
+    bad = {**spec, "hosts": []}
+    (home / "verifier.json").write_text(json.dumps(bad))
+    assert run("add", "--key", "bad", "--kind", "deploy-prod", "--intent-file", str(home / "intent.txt"),
+               "--source", "fixture:bad", "--project", "vantage", "--task", "release", "--target", sha,
+               "--verifier-file", str(home / "verifier.json"), good=False).returncode != 0
+    pending = add_ask(home, run, "pending", "deploy-prod", "vantage", sha)
+    assert run("update", pending, "--state", "working", "--evidence", "check later",
+               "--verifier-file", str(home / "verifier.json"), good=False).returncode != 0
+    assert row(run, pending)["verifier"] is None
+    decision = "captain-ask." + pending
+    capture = home / "answer.result"
+    capture.write_text('session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  ' +
+        ','.join(json.dumps(value) for value in ["2", "Answer - fixture: rework\n\nContext data:\n" +
+        json.dumps({"schema": "fm-decision-page-answer.v1", "question": decision,
+                    "selection": "rework", "note": "Fix deployment ordering"}),
+        "form", "choice", "fixture -> rework"]) + '\n')
+    extracted = subprocess.run(["bash", str(Path(cli).parent / "fm-procevent-lavish.sh"),
+                                "ask-answers", str(capture)], text=True, capture_output=True,
+                               env={**os.environ, "FM_HOME": str(home)})
+    assert extracted.returncode == 0, extracted.stderr
+    assert extracted.stdout == f"{decision}\trework\tFix deployment ordering\n"
+    refused = subprocess.run([sys.executable, cli, "captured-answers", "--source", "fixture empty"],
+                             input=f"{decision}\trework\t\n", text=True, capture_output=True,
+                             env={**os.environ, "FM_HOME": str(home)})
+    assert refused.returncode == 0 and row(run, pending)["state"] == "queued"
+    input_row = f"{decision}\trework\tFix deployment ordering\n"
+    result = subprocess.run([sys.executable, cli, "captured-answers", "--source", "fixture capture 1"],
+                            input=input_row, text=True, capture_output=True, env={**os.environ, "FM_HOME": str(home)})
+    assert result.returncode == 0, result.stderr
+    assert row(run, pending)["state"] == "working"
+    assert row(run, pending)["evidence"][-1]["detail"] == "Fix deployment ordering"
+    evidence_count = len(row(run, pending)["evidence"])
+    subprocess.run([sys.executable, cli, "captured-answers", "--source", "fixture capture 1"],
+                   input=input_row, text=True, capture_output=True,
+                   env={**os.environ, "FM_HOME": str(home)}, check=True)
+    assert len(row(run, pending)["evidence"]) == evidence_count
+    assert pending in (home / "state/.wake-queue").read_text()
+    result = subprocess.run([sys.executable, cli, "captured-answers", "--source", "fixture capture 2"],
+                            input=f"{decision}\taccept\t\n", text=True, capture_output=True,
+                            env={**os.environ, "FM_HOME": str(home)})
+    assert result.returncode == 0, result.stderr
+    assert row(run, pending)["state"] == "verified"
+    assert row(run, pending)["evidence"][-1]["result"] == "captain-accept"
+    assert row(run, pending)["verification"] is None
 
 # Fast-forward and squash merges leave merge_commit_sha null; an open MR at the SHA is not merged.
 with tempfile.TemporaryDirectory() as temp:

@@ -8,6 +8,7 @@
 #   fm-procevent-lavish.sh silent <result-file>
 #   fm-procevent-lavish.sh answered <source-id> <result-file> -- <argv>...
 #   fm-procevent-lavish.sh answers <result-file>
+#   fm-procevent-lavish.sh ask-answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
@@ -939,6 +940,9 @@ cmd_answered() {
 # is skipped. A time-limited rollout branch accepts the old question/answer
 # shape only for ordinary answers and rejects its bare or annotated reconcile
 # values because old rows do not separate the selected option from its note.
+# `ask-answers` extracts only decision-page choices keyed to captain asks as
+# `key<TAB>selection<TAB>note`; the caller must prove this is the bound ledger
+# page source before feeding them to the ledger.
 # The question cap is 128 so any task id fits, including the long legacy
 # `<origin>-decision-<key>` identities pre-collapse decks still carry; the
 # security property is the slug SHAPE, which is unchanged.
@@ -961,7 +965,7 @@ cmd_choice_rows() {
       my $ctx = $1;
       my $data = eval { decode_json($ctx) };
       next unless ref($data) eq "HASH";
-      my ($key, $selected, $note, $answer, $legacy);
+      my ($key, $selected, $note, $answer, $legacy, $schema);
       if (defined($data->{schema}) && !ref($data->{schema})
           && ($data->{schema} eq "fm-bearings-answer.v1"
             || $data->{schema} eq "fm-decision-page-answer.v1")) {
@@ -975,6 +979,7 @@ cmd_choice_rows() {
         next unless length($selected) || length($note);
         $answer = length($selected) ? $selected : $note;
         $legacy = 0;
+        $schema = $data->{schema};
       # Time-limited compatibility for captures from pre-change boards; remove
       # once no board carrying the old question/answer context can remain armed.
       } elsif (!exists($data->{schema}) && !exists($data->{selection})
@@ -987,6 +992,7 @@ cmd_choice_rows() {
         $selected = "";
         $note = "";
         $legacy = 1;
+        $schema = "";
       } else {
         next;
       }
@@ -1003,11 +1009,17 @@ cmd_choice_rows() {
       if (defined $seen{$key}) { $choices[$seen{$key}] = undef }
       $seen{$key} = scalar @choices;
       push @choices, {
-        key => $key, selection => $selected, note => $note, legacy => $legacy,
+        key => $key, selection => $selected, note => $note, legacy => $legacy, schema => $schema,
         answer => $answer, label => $label, mode => $mode
       };
     }
     for my $choice (grep { defined } @choices) {
+      if ($selection eq "ask-answers") {
+        next unless $choice->{key} =~ /\Acaptain-ask\.a-[0-9]{8}-[0-9a-f]{8}\z/;
+        next if $choice->{schema} ne "fm-decision-page-answer.v1";
+        print "$choice->{key}\t$choice->{selection}\t$choice->{note}\n";
+        next;
+      }
       if ($selection eq "reconciles") {
         next if $choice->{legacy};
         if ($choice->{selection} eq "reconcile") {
@@ -1032,6 +1044,7 @@ cmd_choice_rows() {
 
 cmd_answers() { cmd_choice_rows answers "$@"; }
 cmd_reconciles() { cmd_choice_rows reconciles "$@"; }
+cmd_ask_answers() { cmd_choice_rows ask-answers "$@"; }
 
 # Present one already-captured result for a handler. Body lines are prefixed
 # so a captain-supplied string cannot forge a section label. A freeform message
@@ -1155,6 +1168,7 @@ case "${1-}" in
   silent)    shift; cmd_silent "$@" ;;
   answered)  shift; cmd_answered "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
+  ask-answers) shift; cmd_ask_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;
   ''|-h|--help|help) usage ;;
