@@ -5511,7 +5511,8 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 
 # Backlog preflight (bin/fm-backlog-transition-lib.sh). A fresh dispatch must
 # prove the row is transitionable before creating an endpoint or task record.
-# Relaunch already has a task record and may keep a held or blocked row as is.
+# Relaunch already has a task record and may keep a held or blocked In-flight
+# row as is.
 # The authoritative mutation still runs under the meta lock below.
 BACKLOG_TRANSITION=0
 BACKLOG_ROW_STATE=
@@ -5533,7 +5534,7 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       exit 1
     fi
   elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE"; then
-    if [ "$RELAUNCH" -ne 1 ] || ! fm_backlog_row_held_or_blocked "$BACKLOG_ROW_STATE"; then
+    if [ "$RELAUNCH" -ne 1 ] || ! fm_backlog_row_in_flight_held_or_blocked "$BACKLOG_ROW_STATE"; then
       echo "error: this home's backlog item $ID is not dispatchable in state $BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy" >&2
       exit 1
     fi

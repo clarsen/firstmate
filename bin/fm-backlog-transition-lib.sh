@@ -806,16 +806,15 @@ fm_backlog_row_dispatchable() {
   esac
 }
 
-fm_backlog_row_held_or_blocked() {
+fm_backlog_row_in_flight_held_or_blocked() {
   case "$1" in
-    in_flight\ yes\ no|in_flight\ no\ yes|in_flight\ yes\ yes|\
-    queued\ yes\ no|queued\ no\ yes|queued\ yes\ yes) return 0 ;;
+    in_flight\ yes\ no|in_flight\ no\ yes|in_flight\ yes\ yes) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 fm_backlog_dispatch_transition() {
-  local meta=$1 data=$2 id=$3 state=$4 relaunch=${5:-0} row row_status
+  local meta=$1 data=$2 id=$3 state=$4 relaunch=$5 row row_status
   fm_backlog_record_present "$meta" "task record" "$state" || return 1
   fm_backlog_row_probe "$data" "$id"
   row_status=$?
@@ -830,7 +829,7 @@ fm_backlog_dispatch_transition() {
   row=$FM_BACKLOG_ROW_STATE
   if ! fm_backlog_row_dispatchable "$row"; then
     # A replacement worker keeps the existing task's held or blocked row intact.
-    if [ "$relaunch" = 1 ] && fm_backlog_row_held_or_blocked "$row"; then
+    if [ "$relaunch" = 1 ] && fm_backlog_row_in_flight_held_or_blocked "$row"; then
       return 0
     fi
     FM_BACKLOG_TRANSITION_ERROR="backlog item $id is not dispatchable in state $row"

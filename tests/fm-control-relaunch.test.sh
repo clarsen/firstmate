@@ -3291,6 +3291,40 @@ test_relaunch_preserves_held_and_blocked_backlog_items() {
   cmp -s "$before" "$dir/home/data/backlog.md" \
     || fail "direct spawn relaunch changed the blocked backlog item"
 
+  id=rl-held-blocked
+  dir=$(new_case held-blocked "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" in_flight
+  tasks-axi hold "$id" --reason "fixture merge decision" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi add rl-blocker "fixture dependency" --kind ship \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi block "$id" --by rl-blocker \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  rc=0
+  out=$(run_control "$dir" "$id" relaunch --note "continue held blocked task") || rc=$?
+  expect_code 0 "$rc" "control relaunch must accept a held and blocked backlog item"$'\n'"$out"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "control relaunch changed the held and blocked backlog item"
+
+  id=rl-queued-held
+  dir=$(new_case queued-held "$id")
+  add_ship_task "$dir" "$id" claude
+  seed_backlog "$dir" "$id" queued
+  tasks-axi hold "$id" --reason "fixture merge decision" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  before="$dir/backlog-before.md"
+  cp "$dir/home/data/backlog.md" "$before"
+  rc=0
+  out=$(run_control "$dir" "$id" relaunch --note "attempt queued held task") || rc=$?
+  expect_code 1 "$rc" "a queued held backlog item must still refuse relaunch"$'\n'"$out"
+  assert_contains "$out" "not dispatchable in state queued yes no" \
+    "the queued-held refusal did not reach the backlog preflight"
+  cmp -s "$before" "$dir/home/data/backlog.md" \
+    || fail "a refused queued-held relaunch changed the backlog item"
+
   id=rl-closed
   dir=$(new_case closed "$id")
   add_ship_task "$dir" "$id" claude
@@ -3302,7 +3336,7 @@ test_relaunch_preserves_held_and_blocked_backlog_items() {
   expect_code 1 "$rc" "a closed backlog item must still refuse relaunch"$'\n'"$out"
   assert_contains "$out" "not dispatchable in state done no no" \
     "the closed-row refusal did not reach the backlog preflight"
-  pass "existing workers relaunch from held or blocked rows without changing those rows; closed rows still refuse"
+  pass "existing workers relaunch from held or blocked In-flight rows without changing those rows; queued-held and closed rows still refuse"
 }
 
 test_away_branch_relaunch_accepts_existing_dispatchable_items() {
