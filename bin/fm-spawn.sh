@@ -141,8 +141,9 @@
 #   auto-detected (the paseo and tern markers, like bare hc markers, leak into
 #   every descendant process). An app-detected hc also records its signal in
 #   meta's backend_detect= line.
-#   Herdr leases its slot durably (treehouse get --lease) and moves the pane's
-#   top-level shell into it, because a restart restores that shell's cwd.
+#   Herdr leases its slot durably (treehouse get --lease, from the same
+#   per-home pool root as every other path) and moves the pane's top-level
+#   shell into it, because a restart restores that shell's cwd.
 #   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
 #   blocked backend contract. Default tmux spawns do not write backend= to meta;
 #   absent backend= means tmux. Orca, cmux, paseo, tern, and hc do not support
@@ -6160,7 +6161,9 @@ spawn_send_key() { # <target> <key>
 # outlives its pane, so an aborted spawn returns it (spawn_abort_cleanup) and
 # bin/fm-teardown.sh returns it for a finished task.
 spawn_lease_herdr_slot() {
-  WT=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID") || {
+  # A secondmate home leases from its own pool root (fm_treehouse_home_root);
+  # a main home keeps Treehouse's configured root.
+  WT=$(cd "$PROJ_ABS" && treehouse ${SPAWN_TREEHOUSE_ROOT:+--root "$SPAWN_TREEHOUSE_ROOT"} get --lease --lease-holder "$ID") || {
     echo "error: treehouse get --lease failed to lease a worktree for $ID from $PROJ_ABS; $(spawn_endpoint_hint)" >&2
     exit 1
   }

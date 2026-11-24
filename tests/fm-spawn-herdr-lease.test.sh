@@ -47,7 +47,12 @@ make_lease_case() {
 set -u
 D=$FM_FAKE_DIR
 printf '%s\n' "$*" >> "$D/treehouse-log"
-case "$*" in
+args="$*"
+case "$args" in
+  '--root '*) root=${args#--root }; root=${root%% *}; args=${args#--root "$root" }
+    printf '%s\n' "$root" > "$D/treehouse-root" ;;
+esac
+case "$args" in
   'get --lease '*) [ ! -f "$D/lease-fails" ] || { echo 'lease failed' >&2; exit 1; }
     printf '%s\n' "$FM_FAKE_SLOT" ;;
   'get') printf '%s' "$FM_FAKE_SLOT" > "$D/fg" ;;
@@ -159,6 +164,36 @@ test_fresh_spawn_leases_and_moves_the_top_level_shell() {
   [ "$(cat "$dir/fake/cd-sends")" = 1 ] || fail "an immediately ready pane received a redundant cd"
   assert_grep "worktree=$dir/slot" "$dir/home/state/$id.meta" "meta did not record the leased copy"
   pass "a fresh herdr spawn leases the copy and moves the pane's top-level shell into it"
+}
+
+test_main_home_leases_from_treehouses_own_root() {
+  local id=lease-main-root dir out status
+  dir=$(make_lease_case "$id")
+  out=$(run_lease_spawn "$dir" "$id")
+  status=$?
+  expect_code 0 "$status" "spawn should succeed"$'\n'"$out"
+  [ ! -e "$dir/fake/treehouse-root" ] \
+    || fail "a main home's lease named a pool root: $(cat "$dir/fake/treehouse-root")"
+  pass "a main home's durable lease keeps Treehouse's configured root"
+}
+
+test_secondmate_home_leases_from_its_own_pool_root() {
+  local id=lease-mate-root dir out status root
+  dir=$(make_lease_case "$id")
+  printf 'evo\n' > "$dir/home/.fm-secondmate-home"
+  out=$(run_lease_spawn "$dir" "$id")
+  status=$?
+  expect_code 0 "$status" "spawn should succeed"$'\n'"$out"
+  [ -s "$dir/fake/treehouse-root" ] \
+    || fail "a secondmate home leased from Treehouse's shared root, the main home's pool"$'\n'"$(cat "$dir/fake/treehouse-log")"
+  root=$(cat "$dir/fake/treehouse-root")
+  case "$root" in
+    "$dir/user-home/.treehouse/home-pools/evo-"*) ;;
+    *) fail "a secondmate home's lease root is not under \$HOME/.treehouse/home-pools/<mate-id>-: $root" ;;
+  esac
+  assert_grep "get --lease --lease-holder $id" "$dir/fake/treehouse-log" \
+    "the secondmate's copy was not leased durably under the task id"
+  pass "a secondmate home's durable lease draws from its own pool root, never the main home's pool"
 }
 
 test_failed_lease_refuses_without_a_record() {
@@ -294,6 +329,8 @@ test_dropped_worktree_entry
 test_never_moving_worktree_entry
 
 test_fresh_spawn_leases_and_moves_the_top_level_shell
+test_main_home_leases_from_treehouses_own_root
+test_secondmate_home_leases_from_its_own_pool_root
 test_failed_lease_refuses_without_a_record
 test_aborted_spawn_names_the_lease_it_keeps
 test_rolled_back_spawn_after_launch_names_the_lease_it_keeps
