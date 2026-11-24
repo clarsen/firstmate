@@ -1962,7 +1962,9 @@ spawn_member_rollback() {
     fi
     if [ "$held" = 1 ]; then
       fm_treehouse_slot_owner_release "$wt" "$ID" || true
-      if fm_member_return "$project" "$wt" "$lease"; then
+      if spawn_recorded_slot_owner "$wt"; then
+        echo "warning: member copy $wt is still recorded by task $SPAWN_RECORDED_SLOT_OWNER; leaving its lease for inspection after the aborted spawn of $ID" >&2
+      elif fm_member_return "$project" "$wt" "$lease"; then
         echo "spawn aborted: returned member copy $wt to its pool" >&2
       else
         echo "warning: could not return member copy $wt (lease $lease) after the aborted spawn of $ID: $FM_MEMBER_ERROR; return it with: (cd $(shell_quote "$project") && treehouse return --force --if-lease-id $(shell_quote "$lease") $(shell_quote "$wt"))" >&2
@@ -5105,6 +5107,35 @@ spawn_worktree_of_project() { # <path> <project>
   return 0
 }
 
+# A task record can predate slot-owner claims, and Treehouse's process lease
+# can lapse while that record still owns the copy. Check all task records in
+# this home under the project lock before a newly acquired slot is refreshed
+# or claimed. A member copy is a recorded worktree too.
+SPAWN_RECORDED_SLOT_OWNER=
+spawn_recorded_slot_owner() { # <worktree>; success means another task records it
+  local slot=$1 slot_real meta other_id line other_path
+  SPAWN_RECORDED_SLOT_OWNER=
+  slot_real=$(real_path_or_raw "$slot")
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    other_id=${meta##*/}
+    other_id=${other_id%.meta}
+    [ "$other_id" != "$ID" ] || continue
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        worktree=*|member.*.worktree=*) other_path=${line#*=} ;;
+        *) continue ;;
+      esac
+      [ -n "$other_path" ] || continue
+      if [ "$(real_path_or_raw "$other_path")" = "$slot_real" ]; then
+        SPAWN_RECORDED_SLOT_OWNER=$other_id
+        return 0
+      fi
+    done < "$meta"
+  done
+  return 1
+}
+
 # spawn_endpoint_hint: the operator pointer for a pre-launch refusal. Only a
 # fresh polytoken spawn closes its endpoint on abort, so only it points away
 # from the window; every other harness keeps the plain inspect pointer.
@@ -5126,6 +5157,21 @@ validate_spawn_worktree() { # <source> <inspect-target>
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${SPAWN_WT_TOP:-none}'; spawning project '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
     exit 1
   fi
+  case "$source" in
+    "treehouse get"|"treehouse get --lease")
+      if ! spawn_worktree_of_project "$WT" "$PROJ_ABS"; then
+        echo "error: $source gave $WT, but $SPAWN_WT_REASON; refusing to launch. Inspect target $inspect_target" >&2
+        exit 1
+      fi
+      if spawn_recorded_slot_owner "$WT"; then
+        # A durable lease taken by this attempt must not be returned over the
+        # older record on abort. Leave it for inspection instead.
+        HERDR_LEASED=0
+        echo "error: $source gave $WT, which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to launch or return that slot. Inspect target $inspect_target" >&2
+        exit 1
+      fi
+      ;;
+  esac
 }
 
 # A submodule checkout may be moved only when nothing in it, or in any
@@ -5286,6 +5332,10 @@ spawn_member_allocate() { # <index>
   SPAWN_MEMBER_LEASED_WTS+=("$wt")
   SPAWN_MEMBER_LEASED_IDS+=("$lease")
   SPAWN_MEMBER_LEASED_BASES+=("")
+  if spawn_recorded_slot_owner "$wt"; then
+    echo "error: member $name: Treehouse leased '$wt', which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to reuse that slot" >&2
+    return 1
+  fi
   if ! spawn_worktree_isolated "$wt" "$project" || ! spawn_worktree_of_project "$wt" "$project"; then
     echo "error: member $name: Treehouse leased '$wt', which is not an isolated copy of $project ($SPAWN_WT_REASON)" >&2
     return 1

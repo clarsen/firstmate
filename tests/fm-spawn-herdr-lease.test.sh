@@ -36,7 +36,7 @@ make_lease_case() {
   mkdir -p "$d" "$fb" "$dir/user-home"
   fm_test_spawn_home "$home" "$harness"
   fm_git_init_commit "$proj"
-  git clone -q "$proj" "$wt"
+  git -C "$proj" worktree add --quiet --detach "$wt" HEAD
   fm_test_spawn_brief "$home" "$name" "Exercise the Herdr task-copy lease for $name."
   printf '%s' "$proj" > "$d/cwd"
   printf '%s' "$proj" > "$d/fg"
@@ -324,9 +324,26 @@ test_never_moving_worktree_entry() {
   pass "Herdr refuses a never-moving pane with diagnostic context and no launch"
 }
 
+test_lease_from_another_clone_is_refused() {
+  local id=lease-foreign-clone dir out status before
+  dir=$(make_lease_case "$id")
+  git -C "$dir/project" worktree remove --force "$dir/slot"
+  git clone --quiet "$dir/project" "$dir/foreign-primary"
+  git -C "$dir/foreign-primary" worktree add --quiet --detach "$dir/slot" HEAD
+  before=$(git -C "$dir/slot" rev-parse HEAD)
+  out=$(run_lease_spawn "$dir" "$id"); status=$?
+  [ "$status" -ne 0 ] || fail "Herdr accepted a leased worktree of another clone"$'\n'"$out"
+  assert_contains "$out" "worktree of another clone" "refusal did not name the clone mismatch"$'\n'"$out"
+  [ ! -e "$dir/fake/launched-command" ] || fail "Herdr launched in another clone's copy"
+  [ ! -e "$dir/home/state/$id.meta" ] || fail "Herdr recorded another clone's copy"
+  [ "$(git -C "$dir/slot" rev-parse HEAD)" = "$before" ] || fail "spawn changed the other clone's HEAD"
+  pass "Herdr refuses a leased copy belonging to another clone of the same origin"
+}
+
 test_delayed_worktree_entry
 test_dropped_worktree_entry
 test_never_moving_worktree_entry
+test_lease_from_another_clone_is_refused
 
 test_fresh_spawn_leases_and_moves_the_top_level_shell
 test_main_home_leases_from_treehouses_own_root
