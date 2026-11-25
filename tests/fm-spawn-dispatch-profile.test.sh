@@ -158,6 +158,23 @@ run_spawn() {
     fm_test_run_spawn "$home" "$wt" "$fakebin" "$@"
 }
 
+# give_second_pair_its_own_copy <id>: a batch pair needs its own pool copy, so
+# the window of pair <id> reports a second worktree of PROJ_DIR instead of the
+# copy the first pair now records as its worktree.
+give_second_pair_its_own_copy() {
+  local id=$1
+  git -C "$PROJ_DIR" worktree add --quiet -b "wt-$id" "$CASE_DIR/wt-$id"
+  mv "$FAKEBIN_DIR/tmux" "$FAKEBIN_DIR/tmux-base"
+  cat > "$FAKEBIN_DIR/tmux" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *"fm-$id"*"#{pane_current_path}"*) export FM_FAKE_PANE_PATH='$CASE_DIR/wt-$id' ;;
+esac
+exec "\$(dirname "\$0")/tmux-base" "\$@"
+SH
+  chmod +x "$FAKEBIN_DIR/tmux"
+}
+
 # Ship spawns carry an explicit delivery contract (AGENTS.md section 7); these
 # tests are about profile resolution, so they pass a fixed valid one.
 run_ship_spawn() {
@@ -349,6 +366,9 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   assert_contains "$launch" "< '$home_real/data/$relative_id/launch-brief.md'" \
     "relative FM_HOME leaked into the default cross-process brief path"
 
+  # The fake pool hands every spawn the same copy; retire the earlier task's
+  # record as its teardown would, so the copy is free for the next spawn.
+  rm -f "$HOME_DIR/state/$relative_id.meta"
   linked_home="$CASE_DIR/home-link"
   ln -s "$HOME_DIR" "$linked_home"
   : > "$LAUNCH_LOG"
@@ -1505,6 +1525,7 @@ test_batch_preserves_native_ultra() {
   enable_dispatch_profile "$HOME_DIR"
   record_dispatch "$HOME_DIR" "$id1" clear pi codex-native/gpt-6-astra ultra
   record_dispatch "$HOME_DIR" "$id2" clear pi codex-native/gpt-6-astra ultra
+  give_second_pair_its_own_copy "$id2"
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model codex-native/gpt-6-astra --effort ultra)
   expect_code 0 "$?" "native Ultra batch failed: $out"
@@ -2117,6 +2138,7 @@ test_batch_forwards_shared_profile_flags() {
   enable_dispatch_profile "$HOME_DIR"
   record_dispatch "$HOME_DIR" "$id1" clear codex gpt-5 high
   record_dispatch "$HOME_DIR" "$id2" escalate
+  give_second_pair_its_own_copy "$id2"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)

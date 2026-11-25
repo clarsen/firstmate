@@ -959,6 +959,7 @@ tests/fm-spawn-home-pool-isolation.test.sh 31911
 tests/fm-spawn-members.test.sh 12000
 tests/fm-spawn-orca-worktree.test.sh 2400
 tests/fm-spawn-pool-base-freshen.test.sh 68652
+tests/fm-spawn-pool-recorded-slot.test.sh 30000
 tests/fm-spawn-project-setup.test.sh 17321
 tests/fm-spawn-worktree-settle.test.sh 9309
 tests/fm-startup-memory-budget.test.sh 8086

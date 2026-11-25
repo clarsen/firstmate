@@ -217,6 +217,9 @@ if out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" sm "$proj" --secondmate --ha
 assert_contains "$out" 'crewmate/scout adapter only' 'secondmate diagnostic'
 pass 'scout spawn carries native profile, interactive brief, hook overlay and metadata'
 
+# The fake pool hands every spawn the same copy; retire the earlier task's
+# record as its teardown would, so the copy is free for the next spawn.
+rm -f "$home/state/hermes-worker.meta"
 fm_test_spawn_brief "$home" hermes-stalled
 if out=$(FM_FAKE_HERMES_STALL_META="$home/state/hermes-stalled.meta" FM_FAKE_HERMES_KILL_LOG="$case_dir/kill" \
   FM_HERMES_READY_POLLS=2 FM_HERMES_POLL_INTERVAL=0 \

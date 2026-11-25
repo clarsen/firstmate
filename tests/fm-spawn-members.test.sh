@@ -470,6 +470,32 @@ test_real_member_failure_returns_every_lease() {
   pass "a member that fails returns every member lease the spawn took and publishes no record"
 }
 
+test_real_member_recorded_by_another_task_is_kept() {
+  local dir="$TMP_ROOT/recorded" home fakebin id=recorded-new-a1 old=recorded-old-a1 out status slot before
+  real_treehouse_available || { printf '# real-treehouse recorded member case not run: treehouse or jq is not installed\n'; return 0; }
+  use_user_home "$dir"
+  home="$dir/home"
+  make_home "$home"
+  slot=$(cd "$home/projects/notes" && env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME HOME="$USER_HOME" \
+    treehouse get --lease --lease-holder "fm-member:test:$old") || fail "could not lease the notes fixture slot"
+  (cd "$home/projects/notes" && env -u TREEHOUSE_ROOT -u XDG_CONFIG_HOME HOME="$USER_HOME" \
+    treehouse return --force "$slot") >/dev/null 2>&1 || fail "could not lapse the notes fixture lease"
+  printf 'worktree=%s\nproject=%s\nkind=scout\nmember.notes.worktree=%s\n' \
+    "$dir/old-copy" "$home/projects/proj" "$slot" > "$home/state/$old.meta"
+  before=$(git -C "$slot" rev-parse HEAD)
+  fakebin=$(make_real_pool_fakebin "$dir/fake")
+  out=$(run_spawn "$home" "$fakebin" "$dir/pane" "$id" --member notes=projects/notes:ref@refs/review/side)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a spawn reused a member copy another task records"$'\n'"$out"
+  assert_contains "$out" "which task $old still records as its worktree" "the refusal did not name the recording task"$'\n'"$out"
+  [ ! -e "$home/state/$id.meta" ] || fail "the refused spawn published a task record"
+  assert_equals "$slot" "$(pool_leases_for_task "$home/projects/notes" "$id")" \
+    "the refused spawn returned the recorded member copy instead of keeping its lease"
+  assert_equals "$before" "$(git -C "$slot" rev-parse HEAD)" "the refused spawn moved the recorded member copy"
+  grep -Fq 'encode launch-brief' "$dir/pane.literal" 2>/dev/null && fail "the refused member spawn still launched an agent"
+  pass "a member copy another task records is refused and kept leased, never returned or moved"
+}
+
 test_real_member_branch_pins_origin_tip_over_a_stale_local_branch() {
   local dir="$TMP_ROOT/stale" home fakebin id=stale-a1 out meta api
   real_treehouse_available || { printf '# real-treehouse stale-branch member case not run: treehouse or jq is not installed\n'; return 0; }
@@ -913,6 +939,7 @@ test_member_refusals_leave_nothing_behind
 test_relaunch_shows_the_recorded_members_again
 test_real_members_are_leased_pinned_set_up_and_shown
 test_real_member_failure_returns_every_lease
+test_real_member_recorded_by_another_task_is_kept
 test_real_member_branch_pins_origin_tip_over_a_stale_local_branch
 test_real_teardown_returns_only_this_tasks_members
 test_real_forced_retirement_returns_child_members

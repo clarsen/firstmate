@@ -372,6 +372,7 @@ A fresh task leases its task copy durably with `treehouse get --lease`, from the
 Herdr restores a pane from the cwd of that top-level shell, and the pane's `cwd` field does not follow the nested shell an interactive `treehouse get` opens, so a restart would otherwise reopen the worker in the primary clone.
 The lease outlives the pane: teardown closes the exact pane before it returns the lease, because returning the copy ends the pane's top-level shell and Herdr would then remove the pane outside the focus-preserving close.
 An aborted spawn returns the lease only when Herdr confirms the task pane gone and the copy holds no uncommitted work; otherwise it names the `treehouse return --force` command.
+A leased copy that any local home's task record still names is refused before launch and never returned by the abort, so the older owner's checkout is left untouched (`spawn_recorded_slot_owner` in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh)).
 
 Recovery is deliberately conservative and presentation-only.
 An existing journal suppresses another projected create.

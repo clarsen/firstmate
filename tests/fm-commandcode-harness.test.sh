@@ -151,6 +151,9 @@ wt="$case_dir/wt"
 fm_test_spawn_home "$home" commandcode
 fm_git_worktree "$proj" "$wt" commandcode-test
 spawn_case() {  # <id> <model> <effort>
+  # The fake pool hands every spawn the same copy; retire earlier tasks'
+  # records as their teardown would, so the copy is free for this spawn.
+  rm -f "$home/state/"cc-*.meta
   fm_test_spawn_brief "$home" "$1"
   FM_FAKE_LAUNCH_LOG="$case_dir/$1.launch" fm_test_run_spawn "$home" "$wt" "$fakebin" "$1" "$proj" \
     --scout --harness commandcode --model "$2" --effort "$3" 2>&1
