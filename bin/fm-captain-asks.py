@@ -5,6 +5,9 @@ The fm-captain-asks.v1 store is data/captain-asks.json. An absent store is empty
 Use --help for commands. sweep is the watcher entry point; it appends a durable
 check wake through fm-wake-lib.sh before remembering an alert. Verification is
 read-only. A passing predicate or captured captain acceptance closes an ask.
+Every ledger change and every sweep re-renders the ledger page while its Lavish
+session is open, replacing the file only when the open asks it shows changed; a refresh failure is logged to
+state/captain-asks-page.log and never fails the command.
 """
 
 import argparse
@@ -13,9 +16,12 @@ import contextlib
 import datetime as dt
 import fcntl
 import json
+import logging
+import logging.handlers
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +38,7 @@ DELIVERY = KINDS[:3]
 MAX_SWEEP = 12
 SWEEP_BUSY = 75
 SWEEP_INPUTS = ("state", "verifier", "target", "linked_task", "waiting_question", "due")
+PAGE = ".lavish/captain-asks.html"
 
 
 def utcnow():
@@ -160,12 +167,15 @@ def load(path):
 
 def save(path, doc):
     validate(doc)
+    replace_text(path, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+
+
+def replace_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, staged = tempfile.mkstemp(prefix=".captain-asks.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as out:
-            json.dump(doc, out, ensure_ascii=False, indent=2)
-            out.write("\n")
+            out.write(text)
             out.flush()
             os.fsync(out.fileno())
         os.replace(staged, path)
@@ -326,7 +336,8 @@ def record_verification(row, entry):
 
 
 def captured_answers(home, path, source):
-    """Apply choices already extracted from a bound Lavish result."""
+    """Apply choices already extracted from a bound Lavish result; return how many changed the ledger."""
+    applied = 0
     for line in sys.stdin:
         fields = line.rstrip("\n").split("\t")
         if len(fields) != 3 or not fields[0].startswith("captain-ask."):
@@ -356,6 +367,8 @@ def captured_answers(home, path, source):
                         f"check: captain ask {ask_id} ({row['project']}): captain {selection}"
                         + (f" - {note[:160]}" if selection == "rework" else ""))
             save(path, doc)
+            applied += 1
+    return applied
 
 
 def worker_live(home, task_id):
@@ -499,7 +512,9 @@ def sweep(home, path, now):
 
 
 def render_page(doc, home, output):
-    now = utcnow()
+    """Write the ledger page, leaving the file untouched when only its Updated stamp would change."""
+    if output.is_symlink():
+        raise ValueError("captain asks page is a symlink")
     rows = []
     for row in doc["asks"]:
         if row["state"] not in OPEN:
@@ -518,81 +533,213 @@ def render_page(doc, home, output):
                      "verifier_detail": (row.get("verification") or {}).get("detail", ""),
                      "priority": idle, "owner": "Captain" if row["state"] == "awaiting-approval"
                      or row.get("waiting_question") else "Firstmate",
-                     "age": max(0, int((now - parse_time(row["created"])).total_seconds() // 60))})
+                     "created": row["created"]})
     rows.sort(key=lambda item: (item["project"].casefold(), item["owner"], item["title"].casefold()))
     payload = {"schema": "fm-decision-page.v1", "questions": [{"key": row["key"]} for row in rows],
-               "rows": rows, "generated": stamp(now)}
+               "rows": rows}
     data = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
-    content = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    head = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Outstanding asks</title>
 <style>
-:root{font-family:system-ui,sans-serif;color:#172a36;background:#f5f7f6;color-scheme:light}
-*{box-sizing:border-box}body{margin:0}main{max-width:1060px;margin:auto;padding:42px 24px 80px}
-h1{font-size:clamp(1.8rem,4vw,2.8rem);letter-spacing:-.025em;margin:0 0 8px}h2{font-size:1.35rem;margin:36px 0 12px}
-h3{font-size:1rem;margin:20px 0 8px}p{line-height:1.5}.sub{color:#52636d;margin:0}.count{font-variant-numeric:tabular-nums}
-.project{border-top:1px solid #b9c8cb;margin-top:32px}.group{display:grid;grid-template-columns:150px minmax(0,1fr);gap:20px;margin-top:16px}
-.group-label{color:#52636d;font-weight:650;padding-top:12px}.ask-list{display:grid;gap:12px}.ask{background:#fff;border:1px solid #ccd6d7;border-radius:12px;padding:18px 20px}
-.ask-title{font-size:1.08rem;font-weight:650;overflow-wrap:anywhere;margin:0 0 9px}.meta{color:#52636d;font-size:.89rem;display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-.detail{font-size:.88rem;color:#40565f;margin:0 0 14px;overflow-wrap:anywhere}
-.meta span+span:before{content:'·';margin-right:8px}.choices{display:flex;gap:18px;flex-wrap:wrap}.choices label{display:inline-flex;align-items:center;gap:7px;min-height:38px;cursor:pointer}
-.choices input{accent-color:#275a55}.note{display:block;width:100%;max-width:580px;padding:10px;border:1px solid #9bafb3;border-radius:6px;font:inherit;margin:8px 0}
-button{background:#275a55;color:#fff;border:0;border-radius:6px;padding:10px 17px;font:inherit;font-weight:650;cursor:pointer;min-height:42px}
-button:hover{background:#17423e}button:focus-visible,input:focus-visible{outline:3px solid #b17631;outline-offset:3px}
-.error{color:#a12020;font-size:.9rem;min-height:1.4em}.queued{color:#275a55;font-weight:650;display:none}.is-queued .queued{display:inline}.is-queued button{display:none}
-.glossary{border-collapse:collapse;width:100%;font-size:.91rem;background:#fff}.glossary th,.glossary td{text-align:left;padding:10px 12px;border-bottom:1px solid #dbe2e3;vertical-align:top}
-.glossary th{background:#e9efee}.glossary td:first-child{font-weight:650;white-space:nowrap}.empty{padding:25px;background:#fff;border:1px solid #ccd6d7;border-radius:12px}
-@media(max-width:700px){main{padding:24px 16px 48px}.group{display:block}.group-label{margin:18px 0 8px}.glossary td:first-child{white-space:normal}}
-</style></head><body><main><h1>Outstanding asks</h1><p class="sub"><span class="count" id="count"></span> open · Updated <span id="updated"></span></p>
-<div id="projects"></div><section aria-labelledby="glossary-title"><h2 id="glossary-title">Terms on this page</h2>
-<table class="glossary"><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody>
-<tr><td>Production deploy</td><td>Roll out a change to production.</td></tr><tr><td>Development deploy</td><td>Roll out a change to a development environment.</td></tr>
-<tr><td>Merge</td><td>Land a proposed change.</td></tr><tr><td>Priority project</td><td>Keep work moving on a named project.</td></tr>
-<tr><td>Queued</td><td>The ask is recorded and work has not started.</td></tr><tr><td>Working</td><td>Firstmate is driving the ask.</td></tr>
-<tr><td>Waiting</td><td>The captain’s decision or approval is needed.</td></tr><tr><td>Blocked</td><td>Progress needs a dependency or intervention.</td></tr>
-<tr><td>Verifying</td><td>Delivery evidence is being checked.</td></tr><tr><td>Verified</td><td>Evidence passed or the captain accepted the ask.</td></tr>
-<tr><td>Needs evidence</td><td>Delivery still needs proof.</td></tr><tr><td>Archived</td><td>The ask was removed with a recorded reason.</td></tr><tr><td>Pass</td><td>The configured check proved delivery.</td></tr>
-<tr><td>Mismatch</td><td>The check ran but did not prove delivery.</td></tr><tr><td>Unknown</td><td>No usable check or evidence is available yet.</td></tr>
-<tr><td>Unchecked</td><td>The verifier has not run yet.</td></tr>
-<tr><td>Covered</td><td>A priority project has work or a captain hold.</td></tr><tr><td>Idle</td><td>A priority project has no qualifying work or hold.</td></tr>
-</tbody></table></section></main><script id="decision-page-data" type="application/json">\n''' + data + '''\n</script><script>
+:root{font-family:system-ui,sans-serif;color:#172a36;background:#f5f7f6;color-scheme:light;
+--muted:#52636d;--soft:#40565f;--line:#d5dedf;--edge:#ccd6d7;--accent:#275a55;--attn:#9a4a14}
+*{box-sizing:border-box}[hidden]{display:none!important}::selection{background:#cfe3df;color:#172a36}
+body{margin:0}main{max-width:1320px;margin:auto;padding:36px 24px 72px}
+h1{font-size:clamp(1.6rem,3vw,2.1rem);letter-spacing:-.025em;margin:0 0 6px}h2{font-size:1.1rem;margin:40px 0 14px}
+h3{font-size:.8rem;font-weight:650;color:var(--muted);margin:0 0 6px}
+.sub{color:var(--muted);margin:0 0 20px}.count{font-variant-numeric:tabular-nums}
+.table-wrap{background:#fff;border:1px solid var(--edge);border-radius:12px;overflow:hidden}
+.asks{border-collapse:collapse;width:100%;table-layout:fixed;font-size:.875rem;line-height:1.35}
+.asks th,.asks td{text-align:left;padding:9px 10px;vertical-align:top;border-bottom:1px solid var(--line);overflow-wrap:break-word}
+.asks thead th{background:#e9efee;font-size:.78rem;font-weight:650;color:var(--soft);vertical-align:bottom}
+.asks tbody tr:last-child td{border-bottom:0}.asks tr.ask:hover{background:#f6f9f8}
+.asks .age{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.project{font-weight:600}.project.repeat,.owner{color:var(--muted);font-weight:400}.owner.captain{color:inherit;font-weight:650}
+.ask-title{font-weight:600;overflow-wrap:anywhere}
+.detail{display:block;width:100%;margin:2px 0 0;padding:0;border:0;background:none;font:inherit;font-size:.78rem;color:var(--muted);text-align:left;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button.detail{cursor:pointer}button.detail:hover{color:#172a36}button.detail[aria-expanded=true]{white-space:normal;overflow-wrap:anywhere}
+.st{display:inline-flex;align-items:baseline;gap:7px}
+.st:before{content:'';flex:none;width:8px;height:8px;border-radius:50%;border:1.5px solid #8a9aa1}
+.st.ok:before{background:var(--accent);border-color:var(--accent)}
+.st.attn{color:var(--attn);font-weight:600}.st.attn:before{background:var(--attn);border-color:var(--attn)}
+.asks td.decide{padding-top:5px;padding-bottom:5px;white-space:nowrap}
+.act{display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #b9c8cb;border-radius:6px;
+background:#fff;color:var(--soft);cursor:pointer;vertical-align:top}.act+.act{margin-left:6px}
+.act:hover{border-color:var(--accent);color:var(--accent);background:#eef4f3}
+.act[aria-expanded=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+.queued{display:inline-block;padding:4px 0;color:var(--accent);font-weight:650;font-size:.8rem;white-space:normal}
+.asks tr.decide-row td{background:#f1f6f5;padding:9px 10px}
+.decide-row form{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.note-label{font-weight:650;font-size:.82rem;white-space:nowrap}
+.note{flex:1 1 260px;min-width:0;max-width:560px;padding:6px 10px;border:1px solid #9bafb3;border-radius:6px;
+font:inherit;color:inherit;background:#fff;caret-color:var(--accent)}.note::placeholder{color:#5d6e77;opacity:1}
+.send{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:inherit;font-weight:650;cursor:pointer}
+.send:hover{background:#17423e}
+.cancel{background:none;border:0;padding:7px 4px;font:inherit;color:var(--soft);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+button:focus-visible,input:focus-visible{outline:3px solid #b17631;outline-offset:2px}
+.error{flex-basis:100%;color:#a12020;font-size:.82rem}.error:empty{display:none}
+.empty{margin:0;padding:22px;background:#fff;border:1px solid var(--edge);border-radius:12px}
+.legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px 36px;align-items:start;font-size:.84rem;line-height:1.4}
+.legend .tall{grid-row:span 2}.legend dl{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px}
+.legend dt{font-weight:600}.legend dd{margin:0;color:var(--soft)}.legend dt svg{vertical-align:-3px;margin-right:6px}
+@media(max-width:860px){main{padding:22px 14px 48px}.table-wrap{background:none;border:0;border-radius:0;overflow:visible}
+.asks colgroup,.asks thead{display:none}.asks,.asks tbody,.asks td{display:block}
+.asks tr.ask{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 14px;background:#fff;border:1px solid var(--edge);border-radius:12px;padding:12px 14px;margin-top:10px}
+.asks tr.ask td{border:0;padding:0}.asks td:empty{display:none}.asks td[data-label]:before{content:attr(data-label);display:block;font-size:.72rem;font-weight:400;color:var(--muted)}
+.asks td.project,.asks td.title{grid-column:1/-1}.asks td.project:before,.asks td.title:before{display:none}.project.repeat{color:inherit;font-weight:600}
+.asks .age{text-align:left}.act{width:40px;height:40px}.act+.act{margin-left:10px}
+.asks tr.decide-row{display:block;margin-top:6px}.asks tr.decide-row td{border:1px solid var(--edge);border-radius:12px;padding:12px 14px}}
+</style></head><body><main><h1>Outstanding asks</h1>
+<p class="sub"><span class="count" id="count"></span> open · Updated <span id="updated">'''
+    tail = '''</span></p>
+<div class="table-wrap" id="ledger"><table class="asks" aria-label="Open asks"><colgroup><col style="width:132px"><col><col style="width:128px">
+<col style="width:146px"><col style="width:116px"><col style="width:96px"><col style="width:94px"><col style="width:52px"><col style="width:84px"></colgroup>
+<thead><tr><th scope="col">Project</th><th scope="col">Ask</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Verifier</th>
+<th scope="col">Priority coverage</th><th scope="col">Waiting on</th><th scope="col" class="age">Age</th><th scope="col">Decide</th></tr></thead>
+<tbody id="rows"></tbody></table></div>
+<section aria-labelledby="legend-title"><h2 id="legend-title">Legend</h2><div class="legend">
+<section><h3>Kind</h3><dl><dt>Prod deploy</dt><dd>Roll out a change to production.</dd>
+<dt>Dev deploy</dt><dd>Roll out a change to a development environment.</dd>
+<dt>Merge</dt><dd>Land a proposed change.</dd><dt>Priority project</dt><dd>Keep work moving on a named project.</dd></dl></section>
+<section class="tall"><h3>State</h3><dl><dt><span class="st">Queued</span></dt><dd>The ask is recorded and work has not started.</dd>
+<dt><span class="st">Working</span></dt><dd>Firstmate is driving the ask.</dd>
+<dt><span class="st attn">Waiting</span></dt><dd>The captain’s decision or approval is needed.</dd>
+<dt><span class="st attn">Blocked</span></dt><dd>Progress needs a dependency or intervention.</dd>
+<dt><span class="st">Verifying</span></dt><dd>Delivery evidence is being checked.</dd>
+<dt><span class="st attn">Needs evidence</span></dt><dd>Delivery still needs proof.</dd>
+<dt><span class="st ok">Verified</span></dt><dd>Evidence passed or the captain accepted the ask.</dd>
+<dt><span class="st">Archived</span></dt><dd>The ask was removed with a recorded reason.</dd></dl></section>
+<section><h3>Verifier</h3><dl><dt><span class="st ok">Pass</span></dt><dd>The configured check proved delivery.</dd>
+<dt><span class="st">Mismatch</span></dt><dd>The check ran but did not prove delivery.</dd>
+<dt><span class="st">Unknown</span></dt><dd>No usable check or evidence is available yet.</dd>
+<dt><span class="st">Unchecked</span></dt><dd>The verifier has not run yet.</dd></dl></section>
+<section><h3>Priority coverage</h3><dl><dt><span class="st ok">Covered</span></dt><dd>A priority project has work or a captain hold.</dd>
+<dt><span class="st attn">Idle</span></dt><dd>A priority project has no qualifying work or hold.</dd>
+<dt><span class="st attn">Unavailable</span></dt><dd>Coverage could not be read; the reason is under the ask.</dd></dl></section>
+<section><h3>Decide</h3><dl><dt id="legend-accept">Accept</dt><dd>Close the ask as delivered. A note is optional.</dd>
+<dt id="legend-rework">Rework</dt><dd>Send the ask back to firstmate with a note.</dd></dl></section>
+</div></section></main><script id="decision-page-data" type="application/json">\n''' + data + '''\n</script><script>
 (function(){"use strict";const data=JSON.parse(document.getElementById("decision-page-data").textContent);
-document.getElementById("count").textContent=data.rows.length;document.getElementById("updated").textContent=data.generated;
-const root=document.getElementById("projects");if(!data.rows.length){root.innerHTML='<p class="empty">No open asks.</p>';return}
-let project='',owner='',section,items;for(const row of data.rows){if(row.project!==project){project=row.project;owner='';section=document.createElement('section');section.className='project';
-const heading=document.createElement('h2');heading.textContent=project;section.appendChild(heading);root.appendChild(section)}
-if(row.owner!==owner){owner=row.owner;const group=document.createElement('div');group.className='group';const label=document.createElement('div');label.className='group-label';label.textContent='Waiting on '+owner.toLowerCase();
-items=document.createElement('div');items.className='ask-list';group.append(label,items);section.appendChild(group)}
-const card=document.createElement('article');card.className='ask';const title=document.createElement('h3');title.className='ask-title';title.textContent=row.title;card.appendChild(title);
-const kind={"deploy-prod":"production deploy","deploy-dev":"development deploy","merge":"merge","project-priority":"priority project"}[row.kind]||row.kind;
-const state={"awaiting-approval":"waiting","needs-evidence":"needs evidence"}[row.state]||row.state;
-const meta=document.createElement('div');meta.className='meta';for(const value of [kind,state,row.verifier?'verifier: '+row.verifier:null,row.priority?'priority: '+row.priority:null,row.age+'m old']){
-if(value){const span=document.createElement('span');span.textContent=value;meta.appendChild(span)}}card.appendChild(meta);
-if(row.verifier_detail){const detail=document.createElement('p');detail.className='detail';detail.textContent='Verifier detail: '+row.verifier_detail;card.appendChild(detail)}
-const form=document.createElement('form');form.setAttribute('data-lavish-question',row.key);form.innerHTML='<div class="choices"><label><input type="radio" name="answer" value="accept">Accept</label><label><input type="radio" name="answer" value="rework">Rework</label></div><input class="note" name="note" aria-label="Note for this ask" placeholder="Note (required for rework)"><button type="submit">Send decision</button> <span class="queued">Queued</span><div class="error" role="alert"></div>';
-form.addEventListener('submit',function(event){event.preventDefault();const selection=new FormData(form).get('answer');const note=form.elements.note.value.trim();const error=form.querySelector('.error');
-if(!selection){error.textContent='Choose Accept or Rework.';return}if(selection==='rework'&&!note){error.textContent='Add a rework note.';return}
-if(new TextEncoder().encode(selection+(note?' - '+note:'')).length>512){error.textContent='Decision is too long (512 bytes maximum).';return}
+const el=function(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node};
+const cap=function(text){return text?text.charAt(0).toUpperCase()+text.slice(1):''};
+const svg=function(path){return '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+path+'"/></svg>'};
+const ICON={accept:svg('M3 8.5l3.2 3.2L13 4.8'),rework:svg('M6 3L3 6l3 3M3 6h6.5a3.5 3.5 0 010 7H7')};
+for(const mode of ['accept','rework'])document.getElementById('legend-'+mode).insertAdjacentHTML('afterbegin',ICON[mode]);
+const KIND={"deploy-prod":"Prod deploy","deploy-dev":"Dev deploy","merge":"Merge","project-priority":"Priority project"};
+const STATE={"awaiting-approval":"Waiting","needs-evidence":"Needs evidence"};
+const ATTN=['Waiting','Blocked','Needs evidence','Idle','Unavailable'],OK=['Pass','Covered'];
+const cell=function(label,cls,text){const td=el('td',cls,text);td.dataset.label=label;return td};
+const status=function(label,value){const td=cell(label);
+if(value)td.appendChild(el('span','st'+(ATTN.includes(value)?' attn':OK.includes(value)?' ok':''),value));return td};
+const age=function(minutes){return minutes<60?minutes+'m':minutes<2880?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d'};
+document.getElementById("count").textContent=data.rows.length;
+const ledger=document.getElementById("ledger");
+if(!data.rows.length){ledger.replaceWith(el('p','empty','No open asks.'));return}
+const body=document.getElementById("rows"),ages=[];let project=null;data.rows.forEach(function(row,index){
+const tr=el('tr','ask');tr.appendChild(cell('Project','project'+(row.project===project?' repeat':''),row.project));project=row.project;
+const title=cell('Ask','title');title.appendChild(el('div','ask-title',row.title));
+let coverage=cap(row.priority);const details=[];if(row.verifier_detail)details.push('Verifier detail: '+row.verifier_detail);
+if(coverage.startsWith('Unavailable')){details.push('Priority coverage u'+coverage.slice(1));coverage='Unavailable'}
+for(const text of details)title.appendChild(el('div','detail',text));
+tr.append(title,cell('Kind','',KIND[row.kind]||row.kind),status('State',STATE[row.state]||cap(row.state)),status('Verifier',cap(row.verifier)),
+status('Priority coverage',coverage),cell('Waiting on','owner'+(row.owner==='Captain'?' captain':''),row.owner),cell('Age','age'));
+ages.push({cell:tr.lastChild,created:Date.parse(row.created)});
+const decide=cell('Decide','decide'),panel=el('tr','decide-row'),holder=el('td'),form=el('form');panel.hidden=true;holder.colSpan=9;
+form.noValidate=true;form.id='decide-'+index;form.setAttribute('data-lavish-question',row.key);
+const label=el('label','note-label'),note=el('input','note'),send=el('button','send'),cancel=el('button','cancel','Cancel'),error=el('div','error');
+note.id=label.htmlFor='note-'+index;note.name='note';note.autocomplete='off';send.type='submit';cancel.type='button';error.setAttribute('role','alert');
+form.append(label,note,send,cancel,error);const buttons={};let selection='';
+const show=function(mode){selection=mode;panel.hidden=!mode;error.textContent='';
+for(const name in buttons)buttons[name].setAttribute('aria-expanded',String(name===mode));if(!mode)return;
+label.textContent=mode==='accept'?'Accept note (optional)':'Rework note';
+note.placeholder=mode==='accept'?'Anything to record with the acceptance':'What needs to change';
+send.textContent=mode==='accept'?'Send accept':'Send rework';note.focus()};
+for(const mode of ['accept','rework']){const button=el('button','act');button.type='button';button.innerHTML=ICON[mode];button.title=cap(mode);
+button.setAttribute('aria-label',cap(mode)+': '+row.title);button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',form.id);
+button.addEventListener('click',function(){show(selection===mode?'':mode)});buttons[mode]=button;decide.appendChild(button)}
+const close=function(){const opener=buttons[selection];show('');if(opener)opener.focus()};
+cancel.addEventListener('click',close);
+form.addEventListener('keydown',function(event){if(event.key==='Escape'){event.preventDefault();close()}});
+form.addEventListener('submit',function(event){event.preventDefault();const text=note.value.trim();
+if(selection==='rework'&&!text){error.textContent='Add a rework note.';note.focus();return}
+if(new TextEncoder().encode(selection+(text?' - '+text:'')).length>512){error.textContent='Decision is too long (512 bytes maximum).';return}
 if(!window.lavish||!window.lavish.queuePrompt){error.textContent='Decision capture is unavailable. Open the published Lavish page.';return}
-window.lavish.queuePrompt('Answer - '+row.title+': '+selection+(note?' - '+note:''),{tag:'choice',text:row.title+' -> '+selection+(note?' - '+note:''),element:form,
-data:{schema:'fm-decision-page-answer.v1',question:row.key,selection:selection,note:note}});error.textContent='';card.classList.add('is-queued')});
-card.appendChild(form);items.appendChild(card)}
+window.lavish.queuePrompt('Answer - '+row.title+': '+selection+(text?' - '+text:''),{tag:'choice',text:row.title+' -> '+selection+(text?' - '+text:''),element:form,
+data:{schema:'fm-decision-page-answer.v1',question:row.key,selection:selection,note:text}});
+const queued=el('span','queued',cap(selection)+' queued');queued.tabIndex=-1;queued.setAttribute('role','status');
+panel.hidden=true;decide.replaceChildren(queued);queued.focus()});
+tr.appendChild(decide);holder.appendChild(form);panel.appendChild(holder);body.append(tr,panel)});
+const fit=function(){for(const node of body.querySelectorAll('.detail')){const open=node.getAttribute('aria-expanded')==='true';
+const tag=open||node.scrollWidth>node.clientWidth?'button':'div';if(node.localName===tag)continue;const next=el(tag,'detail',node.textContent);
+if(tag==='button'){next.type='button';next.title='Show or hide the full detail';next.setAttribute('aria-expanded','false');
+next.addEventListener('click',function(){next.setAttribute('aria-expanded',String(next.getAttribute('aria-expanded')!=='true'))})}
+node.replaceWith(next)}};fit();window.addEventListener('resize',fit);
+const tick=function(){const now=Date.now();for(const item of ages){const minutes=Math.max(0,Math.floor((now-item.created)/60000));
+item.cell.textContent=age(minutes);item.cell.title=minutes+' minutes'}};tick();window.addEventListener('focus',tick);
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')tick()})
 })();
 </script></body></html>'''
-    if output.is_symlink():
-        raise ValueError("captain asks page is a symlink")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(content, encoding="utf-8")
+    generated = stamp(utcnow())
+    try:
+        current = output.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        current = ""
+    if current[:len(head)] == head and current[len(head) + len(generated):] == tail:
+        return
+    replace_text(output, head + generated + tail)
+
+
+def listed_open(listing, output):
+    """Whether a Lavish session listing shows this page's session as live; only a live one is listed open."""
+    real = str(output.resolve())
+    return any(line.strip().startswith(real + ",open,") for line in listing.splitlines())
+
+
+def page_log(home):
+    log = logging.getLogger("fm-captain-asks.page")
+    if not log.handlers:
+        # A refresh must stay silent on stderr: the watcher rings a sweep's first output line as a wake.
+        logging.raiseExceptions = False
+        target = home / "state/captain-asks-page.log"
+        handler = (logging.NullHandler() if target.is_symlink() else
+                   logging.handlers.RotatingFileHandler(target, maxBytes=1048576, backupCount=1, delay=True))
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(message)s"))
+        log.addHandler(handler)
+        log.propagate = False
+    return log
+
+
+def refresh_page(home):
+    """Re-render the home's published ledger page in place after a ledger change or sweep.
+
+    Lavish reloads an open session from its changed file, so this never opens or
+    reopens a session: with no rendered page or no live session it does nothing.
+    A failure is logged and never raised, so it cannot fail the ledger command.
+    """
+    output = home / PAGE
+    try:
+        if not output.is_file() or shutil.which("lavish-axi") is None:
+            return
+        listing = subprocess.run(["lavish-axi"], capture_output=True, text=True, timeout=15)
+        if listing.returncode:
+            raise ValueError(f"Lavish session listing failed: {listing.stderr.strip()[:200]}")
+        if not listed_open(listing.stdout, output):
+            return
+        with locked(output):
+            render_page(load(home / "data/captain-asks.json"), home, output)
+    except (ValueError, OSError, KeyError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:
+        page_log(home).error("ledger page refresh failed: %s", error)
 
 
 def publish_page(home, output):
-    real = str(output.resolve())
     command = ["lavish-axi", str(output)]
     for attempt in range(2):
         result = subprocess.run(command + (["--reopen"] if attempt else []), capture_output=True, text=True)
         if result.returncode:
             raise ValueError(f"Lavish publish failed: {result.stderr.strip()[:200]}")
         listing = subprocess.run(["lavish-axi"], capture_output=True, text=True)
-        if listing.returncode == 0 and any(line.strip().startswith(real + ",open,") for line in listing.stdout.splitlines()):
+        if listing.returncode == 0 and listed_open(listing.stdout, output):
             env = {**os.environ, "FM_HOME": str(home)}
             adapter = str(ROOT / "bin/fm-procevent-lavish.sh")
             source = subprocess.run([adapter, "source-id", str(output)], env=env,
@@ -665,8 +812,12 @@ def main():
         if args.command == "page":
             if args.publish and args.output:
                 raise ValueError("published captain asks page uses the home-local page path")
-            output = Path(args.output) if args.output else home / ".lavish/captain-asks.html"
-            render_page(doc, home, output)
+            output = Path(args.output) if args.output else home / PAGE
+            if args.output:
+                render_page(doc, home, output)
+            else:
+                with locked(output):
+                    render_page(load(path), home, output)
             print(output)
             if args.publish:
                 publish_page(home, output)
@@ -693,9 +844,11 @@ def main():
                 sys.exit(SWEEP_BUSY)
             for reason in sweep(home, path, utcnow()):
                 print(reason)
+            refresh_page(home)
         return
     if args.command == "captured-answers":
-        captured_answers(home, path, args.source)
+        if captured_answers(home, path, args.source):
+            refresh_page(home)
         return
     with locked(path):
         doc = load(path)
@@ -761,6 +914,7 @@ def main():
                 row["archive_reason"] = args.reason
                 row["evidence"].append({"at": stamp(now), "result": "archive", "detail": args.reason, "url": None})
             save(path, doc)
+    refresh_page(home)
 
 
 if __name__ == "__main__":

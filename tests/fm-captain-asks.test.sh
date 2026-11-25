@@ -3,10 +3,13 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python3 - "$ROOT/bin/fm-captain-asks.py" <<'PY'
+import datetime as dt
+from html.parser import HTMLParser
 import http.server
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,6 +67,52 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 base = f"http://127.0.0.1:{server.server_port}"
+COLUMNS = ["Project", "Ask", "Kind", "State", "Verifier", "Priority coverage", "Waiting on", "Age", "Decide"]
+
+class PageShape(HTMLParser):
+    """Collect a built ledger page's table column headings and its legend's term groups."""
+    def __init__(self):
+        super().__init__()
+        self.columns, self.groups, self.capture = [], {}, None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("th", "h3", "dt"):
+            self.capture, self.text = tag, ""
+
+    def handle_data(self, data):
+        if self.capture:
+            self.text += data
+
+    def handle_endtag(self, tag):
+        if tag != self.capture:
+            return
+        if tag == "th":
+            self.columns.append(self.text.strip())
+        elif tag == "h3":
+            self.group = self.groups.setdefault(self.text.strip(), [])
+        else:
+            self.group.append(self.text.strip())
+        self.capture = None
+
+def page_shape(page):
+    shape = PageShape()
+    shape.feed(page.read_text())
+    return shape.columns, shape.groups
+
+node = shutil.which("node")
+if node is None:
+    print("skip: node not found; the ledger page's rendered rows and decisions are not checked")
+
+def rendered(page, actions=(), later=0):
+    """Run the built page's own script, driving the given row decisions; None without node.
+
+    With later, the page regains focus that many minutes after it loaded before its rows are read."""
+    if node is None:
+        return None
+    harness = Path(cli).parent.parent / "tests/assets/asks-page-harness.mjs"
+    result = subprocess.run([node, str(harness), str(page), json.dumps(list(actions)), str(later)], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
 
 with tempfile.TemporaryDirectory() as temp:
     home = Path(temp)
@@ -193,7 +242,28 @@ with tempfile.TemporaryDirectory() as temp:
     run("page", "--output", str(page))
     assert "Outstanding asks" in page.read_text() and "parallel" in page.read_text()
     assert 'id="decision-page-data"' in page.read_text()
-    assert "Terms on this page" in page.read_text() and "Waiting on" in page.read_text()
+    # The page is one table and a legend with one group of defined values per table column.
+    columns, legend = page_shape(page)
+    assert columns == COLUMNS, columns
+    assert list(legend) == ["Kind", "State", "Verifier", "Priority coverage", "Decide"], legend
+    assert legend["Verifier"] == ["Pass", "Mismatch", "Unknown", "Unchecked"] and legend["Decide"] == ["Accept", "Rework"]
+    view = rendered(page)
+    if view is not None:
+        open_ids = [a["id"] for a in json.loads(run("list").stdout)["asks"]]
+        assert sorted(r["key"] for r in view["rows"]) == sorted(f"captain-ask.{i}" for i in open_ids), view["rows"]
+        assert view["count"] == str(len(open_ids)) and not view["empty"]
+        for shown in view["rows"]:
+            cells = shown["cells"]
+            assert list(cells) == COLUMNS and not shown["panelOpen"], shown
+            assert cells["Kind"] in legend["Kind"] and cells["State"] in legend["State"], shown
+            assert cells["Verifier"] in ["", *legend["Verifier"]], shown
+            assert cells["Priority coverage"] in ["", *legend["Priority coverage"]], shown
+            assert shown["actions"] == [f"Accept: {cells['Ask']}", f"Rework: {cells['Ask']}"], shown
+        by_key = {r["key"]: r for r in view["rows"]}
+        assert by_key[f"captain-ask.{unknown}"]["cells"]["Verifier"] == "Unknown"
+        roster = [r for r in view["rows"] if r["cells"]["Kind"] == "Priority project"]
+        assert len(roster) == 12 and {r["cells"]["Verifier"] for r in roster} == {""}
+        assert {(r["cells"]["Priority coverage"], r["tones"]["Priority coverage"]) for r in roster} == {("Idle", "attn")}
     embedded = page.read_text().split('<script id="decision-page-data" type="application/json">', 1)[1]
     page_rows = json.loads(embedded.split("</script>", 1)[0])["rows"]
     assert {r["verifier"] for r in page_rows if r["kind"] == "project-priority"} == {""}
@@ -280,11 +350,27 @@ with tempfile.TemporaryDirectory() as temp:
     assert row(run, pending)["verifier"] is None
     decision = "captain-ask." + pending
     capture = home / "answer.result"
+    answer = {"schema": "fm-decision-page-answer.v1", "question": decision,
+              "selection": "rework", "note": "Fix deployment ordering"}
+    # The row's Rework and Accept actions queue exactly the answer the capture path reads.
+    page = home / "decide.html"
+    run("page", "--output", str(page))
+    view = rendered(page, [{"key": decision, "choose": "rework"}])
+    if view is not None:
+        blank = next(r for r in view["rows"] if r["key"] == decision)
+        assert not view["queued"] and blank["panelOpen"] and blank["noteLabel"] == "Rework note", blank
+        assert blank["error"] == "Add a rework note." and len(blank["actions"]) == 2, blank
+        view = rendered(page, [{"key": decision, "choose": "accept", "cancel": True},
+                               {"key": decision, "choose": "rework", "note": " Fix deployment ordering "}])
+        sent = next(r for r in view["rows"] if r["key"] == decision)
+        assert [(q["tag"], q["question"], q["data"]) for q in view["queued"]] == [("choice", decision, answer)], view["queued"]
+        assert sent["cells"]["Decide"] == "Rework queued" and not sent["actions"] and not sent["panelOpen"], sent
+        view = rendered(page, [{"key": decision, "choose": "accept"}])
+        assert [q["data"] for q in view["queued"]] == [{**answer, "selection": "accept", "note": ""}], view["queued"]
+        assert next(r for r in view["rows"] if r["key"] == decision)["send"] == "Send accept"
     capture.write_text('session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  ' +
         ','.join(json.dumps(value) for value in ["2", "Answer - fixture: rework\n\nContext data:\n" +
-        json.dumps({"schema": "fm-decision-page-answer.v1", "question": decision,
-                    "selection": "rework", "note": "Fix deployment ordering"}),
-        "form", "choice", "fixture -> rework"]) + '\n')
+        json.dumps(answer), "form", "choice", "fixture -> rework"]) + '\n')
     extracted = subprocess.run(["bash", str(Path(cli).parent / "fm-procevent-lavish.sh"),
                                 "ask-answers", str(capture)], text=True, capture_output=True,
                                env={**os.environ, "FM_HOME": str(home)})
@@ -383,6 +469,117 @@ with tempfile.TemporaryDirectory() as temp:
     run("page", "--output", str(page))
     text = page.read_text()
     assert "captain-hold" in text and "unavailable" in text
+    view = rendered(page)
+    if view is not None:
+        roster = [r for r in view["rows"] if r["cells"]["Kind"] == "Priority project"]
+        assert roster and all(r["cells"]["Priority coverage"] == "Unavailable" for r in roster), roster
+        assert all(r["tones"]["Priority coverage"] == "attn" for r in roster), roster
+        # The reason sits under the ask as an expandable line, since it does not fit the row.
+        assert all([d["text"].startswith("Priority coverage unavailable: ") and d["clipped"]
+                    for d in r["details"]] == [True] for r in roster), roster
+
+# A home with no open asks says so instead of drawing an empty table, and an ask waiting on the captain stands out.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    run = cli_runner(home)
+    page = home / "page.html"
+    run("page", "--output", str(page))
+    view = rendered(page)
+    assert view is None or (view["empty"] == "No open asks." and not view["rows"] and view["count"] == "0"), view
+    approval = add_ask(home, run, "approval", "merge", "vantage", "Merge the fixture change")
+    add_ask(home, run, "driven", "deploy-dev", "vantage", sha)
+    run("update", approval, "--state", "awaiting-approval", "--evidence", "ready for the captain")
+    run("page", "--output", str(page))
+    view = rendered(page)
+    if view is not None:
+        assert view["count"] == "2" and not view["empty"], view
+        first, second = view["rows"]
+        assert first["key"] == f"captain-ask.{approval}" and first["cells"]["Waiting on"] == "Captain", first
+        assert first["cells"]["State"] == "Waiting" and first["tones"]["State"] == "attn", first
+        assert second["cells"]["Waiting on"] == "Firstmate" and second["tones"]["State"] == "", second
+        assert second["cells"]["Verifier"] == "Unchecked" and not second["details"], second
+    # Age counts from the ask's creation in the open page itself: minutes under an hour, hours under two days,
+    # then days, refreshed when the page regains focus rather than by rewriting the page.
+    created = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3, minutes=1)
+    edit(home, approval, created=created.isoformat(timespec="seconds").replace("+00:00", "Z"))
+    run("page", "--output", str(page))
+    view = rendered(page)
+    if view is not None:
+        assert view["rows"][0]["cells"]["Age"] == "3h", view["rows"][0]
+        assert rendered(page, later=48 * 60)["rows"][0]["cells"]["Age"] == "2d"
+
+# Every ledger change and every sweep re-renders the published page in place while its Lavish session is
+# open, reusing that session; with no rendered page or no open session nothing is rendered or opened.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    fakebin, calls, listed = home / "fakebin", home / "lavish-calls", home / "lavish-open"
+    fakebin.mkdir()
+    # Stands in for lavish-axi: a bare call lists the sessions named in lavish-open, as the real listing
+    # does (`<file>,<status>,"<url>",<pending>`); every call is recorded so an opened session would show.
+    (fakebin / "lavish-axi").write_text(
+        '#!/usr/bin/env bash\n'
+        'printf \'call:%s\\n\' "$*" >> "$LAVISH_FAKE_CALLS"\n'
+        '[ -z "${LAVISH_FAKE_FAIL-}" ] || { echo "listing refused" >&2; exit 3; }\n'
+        'printf \'sessions[1]{file,status,url,pending_prompts}:\\n\'\n'
+        'while IFS= read -r listed; do printf \'  %s,open,"http://127.0.0.1:4387/session/0123456789abcdef",0\\n\' "$listed"; done'
+        ' < "$LAVISH_FAKE_OPEN"\n')
+    (fakebin / "lavish-axi").chmod(0o755)
+    listed.write_text("")
+    live_env = {**os.environ, "FM_HOME": str(home), "PATH": f"{fakebin}{os.pathsep}{os.environ['PATH']}",
+                "LAVISH_FAKE_CALLS": str(calls), "LAVISH_FAKE_OPEN": str(listed)}
+
+    def ledger(*args, stdin=None, **extra):
+        result = subprocess.run([sys.executable, cli, *args], env={**live_env, **extra}, input=stdin,
+                                text=True, capture_output=True)
+        assert result.returncode == 0, f"{args}: {result.stderr}"
+        return result
+
+    def shown():
+        embedded = published.read_text().split('<script id="decision-page-data" type="application/json">', 1)[1]
+        return {r["key"].removeprefix("captain-ask."): r for r in json.loads(embedded.split("</script>", 1)[0])["rows"]}
+
+    published = home / ".lavish/captain-asks.html"
+    log = home / "state/captain-asks-page.log"
+    first = add_ask(home, ledger, "refresh-first", "deploy-dev", "vantage", sha, health)
+    assert not published.exists() and not calls.exists(), "a change with no rendered page touched Lavish or drew a page"
+    ledger("page")
+    assert set(shown()) == {first}
+    second = add_ask(home, ledger, "refresh-second", "merge", "vantage", "Merge the fixture change")
+    assert set(shown()) == {first}, "a page whose session is not open was re-rendered"
+    listed.write_text(f"{published.resolve()}\n")
+    third = add_ask(home, ledger, "refresh-third", "deploy-prod", "vantage", sha)
+    assert set(shown()) == {first, second, third}, "an added ask did not reach the open page"
+    ledger("update", second, "--state", "blocked", "--evidence", "waiting on a dependency")
+    assert shown()[second]["state"] == "blocked", "an updated ask did not reach the open page"
+    assert shown()[first]["verifier"] == "unchecked"
+    assert json.loads(ledger("verify", first).stdout)["result"] == "mismatch"
+    assert shown()[first]["verifier"] == "mismatch", "a verifier result did not reach the open page"
+    ledger("archive", third, "--reason", "captain withdrew the ask")
+    assert set(shown()) == {first, second}, "an archived ask stayed on the open page"
+    ledger("captured-answers", "--source", "fixture refresh", stdin=f"captain-ask.{second}\taccept\t\n")
+    assert set(shown()) == {first}, "an accepted ask stayed on the open page"
+    edit(home, first, state="needs-evidence", next_check="2099-01-01T00:00:00Z")
+    replaced = published.stat().st_ino
+    ledger("sweep")
+    assert shown()[first]["state"] == "needs-evidence", "a sweep did not refresh the open page"
+    assert published.stat().st_ino != replaced, "the page was rewritten in place instead of replaced whole"
+    # A sweep that changes nothing on the ledger leaves the open page file alone, so Lavish does not reload it.
+    settled, before = published.stat().st_ino, published.read_text()
+    time.sleep(1.1)
+    ledger("sweep")
+    ledger("page")
+    assert published.stat().st_ino == settled and published.read_text() == before, "an unchanged ledger rewrote the page"
+    assert set(calls.read_text().splitlines()) == {"call:"}, "a refresh did more than list Lavish sessions"
+    assert not log.exists(), log.read_text()
+    # A failed refresh is logged with its source location and leaves the ledger command successful and silent.
+    before = published.read_text()
+    failed = ledger("update", first, "--state", "working", "--evidence", "driving again", LAVISH_FAKE_FAIL="1")
+    assert not failed.stdout and not failed.stderr, failed
+    assert row(ledger, first)["state"] == "working" and published.read_text() == before
+    entry = log.read_text().splitlines()
+    assert len(entry) == 1 and "ledger page refresh failed" in entry[0] and "listing refused" in entry[0], entry
+    assert any(part.rsplit(":", 1)[-1].isdigit() and part.startswith("fm-captain-asks.py:") for part in entry[0].split()), entry
+    assert not ledger("sweep", LAVISH_FAKE_FAIL="1").stdout.strip(), "a failed refresh surfaced as a sweep alert"
 
 # A slow row check holds neither the ledger lock nor a second sweep slot, and an invalid config is visible.
 with tempfile.TemporaryDirectory() as temp:
