@@ -27,9 +27,10 @@
 #     gate parked, so a worker still writing its report is not raced. One alert
 #     is raised per quiet episode, and a captain-held lane is exempt.
 #   ci-pipeline-stale  a GitLab pipeline the worker waits on is still created,
-#     waiting_for_resource, preparing, pending or running, every job in it
-#     reports a status, none is one a runner can still advance (pending,
-#     running, preparing, waiting_for_resource, scheduled, canceling), and that
+#     waiting_for_resource, preparing, pending or running, every job and
+#     trigger (bridge) job in it reports a status, none is one a runner or
+#     downstream pipeline can still advance (pending, running, preparing,
+#     waiting_for_resource, scheduled, canceling), and that
 #     has held for FM_CREW_LEDGER_PIPELINE_STALE_SECS since the later of its
 #     newest job finish and the pipeline's own last update. That is a pipeline
 #     the forge stopped processing, not one still running. The pipeline is the
@@ -148,15 +149,22 @@ ledger_pipeline_url_parse() {  # <url>
   PIPELINE_HOST=${BASH_REMATCH[1]} PIPELINE_PATH=${BASH_REMATCH[2]} PIPELINE_ID=${BASH_REMATCH[3]}
 }
 
-# One pipeline's job census, for the stale classification the header owns.
-# A job with no status string is left unclassified, so a response that cannot
-# say what its jobs are doing never reads as a pipeline with nothing running.
-ledger_pipeline_evidence() {  # <subject-url> <pipeline-object-json> <jobs-pages-json>
-  printf '%s\n' "$3" | jq -sc --arg subject "$1" --argjson pipeline "$2" "$JQ_FORGE_EPOCH"'
+# One pipeline's census of its jobs and trigger (bridge) jobs, for the stale
+# classification the header owns. A job with no status string is left
+# unclassified, so a response that cannot say what its jobs are doing never
+# reads as a pipeline with nothing running.
+ledger_pipeline_evidence() {  # <subject-url> <pipeline-object-json> <jobs-pages-json> <bridges-pages-json>
+  local jobs bridges
+  jobs=$(printf '%s\n' "$3" | jq -sc '.' 2>/dev/null) || return 1
+  bridges=$(printf '%s\n' "$4" | jq -sc '.' 2>/dev/null) || return 1
+  jq -nc --arg subject "$1" --argjson pipeline "$2" --argjson jobs "$jobs" \
+    --argjson bridges "$bridges" "$JQ_FORGE_EPOCH"'
+    def pages_valid: length > 0 and all(.[]; type == "array");
     if ($pipeline | type) != "object" or ($pipeline.id | type) != "number" or
-       ($pipeline.status | type) != "string" or (all(.[]; type == "array") | not)
+       ($pipeline.status | type) != "string" or ($jobs | pages_valid | not) or
+       ($bridges | pages_valid | not)
     then error("invalid pipeline evidence")
-    else [ .[][] ] as $jobs
+    else [ $jobs[][], $bridges[][] ] as $jobs
     | [ $jobs[] | select((.finished_at // "") != "") ] as $finished
     | {subject:$subject, pipeline_id:$pipeline.id, pipeline_status:$pipeline.status,
        pipeline_updated_at:(($pipeline.updated_at // $pipeline.created_at) | forge_epoch),
@@ -171,8 +179,19 @@ ledger_pipeline_evidence() {  # <subject-url> <pipeline-object-json> <jobs-pages
     end' 2>/dev/null
 }
 
-# Read one GitLab pipeline and its jobs. <reference> is `merge_requests/<n>`,
-# whose head pipeline is read, or `pipelines/<id>`.
+# Read a pipeline's trigger (bridge) jobs and build its census from the
+# already-read pipeline object and jobs pages.
+ledger_pipeline_census() {  # <subject-url> <host> <project-path> <pipeline-object-json> <jobs-pages-json>
+  local encoded pipeline_id bridges
+  encoded=$(jq -rn --arg path "$3" '$path | @uri') || return 1
+  pipeline_id=$(printf '%s\n' "$4" | jq -re '.id | numbers' 2>/dev/null) || return 1
+  bridges=$(fm_run_timed "$CI_TIMEOUT" "$GLAB_BIN" api --hostname "$2" \
+    --paginate "projects/$encoded/pipelines/$pipeline_id/bridges?per_page=100" 2>/dev/null) || return 1
+  ledger_pipeline_evidence "$1" "$4" "$5" "$bridges"
+}
+
+# Read one GitLab pipeline, its jobs and its trigger jobs. <reference> is
+# `merge_requests/<n>`, whose head pipeline is read, or `pipelines/<id>`.
 ledger_pipeline_read() {  # <subject-url> <host> <project-path> <reference>
   local subject=$1 host=$2 encoded reference=$4 raw pipeline pipeline_id jobs
   encoded=$(jq -rn --arg path "$3" '$path | @uri') || return 1
@@ -185,7 +204,7 @@ ledger_pipeline_read() {  # <subject-url> <host> <project-path> <reference>
   pipeline_id=$(printf '%s\n' "$pipeline" | jq -re '.id | numbers' 2>/dev/null) || return 1
   jobs=$(fm_run_timed "$CI_TIMEOUT" "$GLAB_BIN" api --hostname "$host" \
     --paginate "projects/$encoded/pipelines/$pipeline_id/jobs?per_page=100" 2>/dev/null) || return 1
-  ledger_pipeline_evidence "$subject" "$pipeline" "$jobs"
+  ledger_pipeline_census "$subject" "$host" "$3" "$pipeline" "$jobs"
 }
 
 while IFS= read -r meta <&3; do
@@ -388,7 +407,7 @@ while IFS= read -r meta <&3; do
     if [ -n "$pipeline_ref" ] && [ "$ci_candidate" = true ] && [ "$pipeline_url" = "$run_pr" ]; then
       # The CI read above already fetched this merge request and its jobs.
       [ -z "$ci_raw" ] || [ -z "$jobs_raw" ] ||
-        pipeline=$(ledger_pipeline_evidence "$pipeline_url" \
+        pipeline=$(ledger_pipeline_census "$pipeline_url" "$pipeline_host" "$pipeline_path" \
           "$(jq -c '.head_pipeline' <<< "$ci_raw" 2>/dev/null)" "$jobs_raw") || pipeline=null
     elif [ -n "$pipeline_ref" ]; then
       pipeline=$(ledger_pipeline_read "$pipeline_url" "$pipeline_host" "$pipeline_path" "$pipeline_ref") || {

@@ -66,6 +66,7 @@ cat > "$home/fakebin/glab" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
   *'/jobs?'*) cat "$FM_HOME/mr-jobs" ;;
+  *'/bridges?'*) printf '[]\n' ;;
   *) cat "$FM_HOME/mr-snapshot" ;;
 esac
 SH
@@ -507,6 +508,7 @@ printf '%s %s\n' "$host" "$path" >> "$FM_HOME/glab.log"
 project=${path#projects/}; project=${project%%/*}
 case "$path" in
   */jobs\?*) cat "$FM_HOME/glab/$project/jobs" ;;
+  */bridges\?*) cat "$FM_HOME/glab/$project/bridges" ;;
   */merge_requests/*) cat "$FM_HOME/glab/$project/mr" ;;
   */pipelines/*) cat "$FM_HOME/glab/$project/pipeline" ;;
   *) exit 1 ;;
@@ -613,7 +615,8 @@ forge_time() {
   { date -u -r "$shifted" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "@$shifted" +%Y-%m-%dT%H:%M:%S; } \
     | sed 's/$/.000-08:00/'
 }
-# forge <project> <pipeline-id> <pipeline-status> <updated-epoch> <jobs-json>
+# forge <project> <pipeline-id> <pipeline-status> <updated-epoch> <jobs-json>:
+# a pipeline with no trigger jobs.
 forge() {
   local dir="$home/glab/group%2F$1"
   mkdir -p "$dir"
@@ -621,6 +624,10 @@ forge() {
     '{id:$id,sha:("0" * 40),status:$status,created_at:$at,updated_at:$at}' > "$dir/pipeline"
   jq -cn --slurpfile pipeline "$dir/pipeline" '{sha:("0" * 40),head_pipeline:$pipeline[0]}' > "$dir/mr"
   printf '%s\n' "$5" > "$dir/jobs"
+  printf '[]\n' > "$dir/bridges"
+}
+bridges() {  # <project> <bridges-json>: the pipeline's trigger jobs
+  printf '%s\n' "$2" > "$home/glab/group%2F$1/bridges"
 }
 ci_step() {  # <id>: a run whose CI step is active on that worker's merge request
   printf 'state: working · source: run-step · validating (running)\nrun-step: running/running\nrun-pr: https://gitlab.example.com/group/%s/-/merge_requests/7\n' \
@@ -671,6 +678,29 @@ printf 'working [at=60000]: CI monitor running\n' > "$home/state/pipe-busy.statu
 ci_step pipe-busy
 forge pipe-busy 900007 running 59000 \
   "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59000)\"}]"
+# Healthy: every listed job finished long ago, but a trigger job still runs a
+# downstream pipeline, which the jobs list never shows.
+worker pipe-bridge codex
+printf 'working [at=60000]: CI monitor running\n' > "$home/state/pipe-bridge.status"
+ci_step pipe-bridge
+forge pipe-bridge 900008 running 50000 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 50000)\"}]"
+bridges pipe-bridge '[{"id":2,"status":"running","finished_at":null,"downstream_pipeline":{"id":900108,"status":"running"}}]'
+# Unknown: the trigger jobs of a stopped-looking pipeline cannot be read.
+worker pipe-nobridges claude idle 'pr=https://gitlab.example.com/group/pipe-nobridges/-/merge_requests/4'
+printf 'paused [at=60000]: waiting on https://gitlab.example.com/group/pipe-nobridges/-/pipelines/900009\n' \
+  > "$home/state/pipe-nobridges.status"
+printf 'state: paused · source: status-log · waiting\n' > "$home/crew-state/pipe-nobridges"
+forge pipe-nobridges 900009 running 50000 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 50000)\"}]"
+rm "$home/glab/group%2Fpipe-nobridges/bridges"
+# Never started: the only trigger job is still created, like every job.
+worker pipe-trigger claude idle 'pr=https://gitlab.example.com/group/pipe-trigger/-/merge_requests/6'
+printf 'paused [at=60000]: waiting on https://gitlab.example.com/group/pipe-trigger/-/pipelines/900010\n' \
+  > "$home/state/pipe-trigger.status"
+printf 'state: paused · source: status-log · waiting\n' > "$home/crew-state/pipe-trigger"
+forge pipe-trigger 900010 created 60000 '[{"id":1,"status":"created","finished_at":null}]'
+bridges pipe-trigger '[{"id":2,"status":"created","finished_at":null,"downstream_pipeline":null}]'
 
 quiet=
 out=$(tick 60100) || fail 'first pipeline tick failed'
@@ -687,6 +717,11 @@ row pipe-opaque '.pipeline.classified_count == 0 and .pipeline.stale_since == nu
   'jobs with no status were read as nothing running'
 row pipe-foreign '.pipeline == null' 'a pipeline on a foreign host was read'
 row pipe-busy '.pipeline == null' 'a busy worker had its pipeline read'
+row pipe-bridge '.pipeline.job_count == 2 and .pipeline.active_count == 1 and .pipeline.stale_since == null' \
+  'a pipeline with a running trigger job was classified stale'
+row pipe-nobridges '.pipeline == null' 'a pipeline whose trigger jobs are unreadable was classified from its jobs alone'
+row pipe-trigger '.pipeline.job_count == 2 and .pipeline.active_count == 0 and .pipeline.stale_since == 60000' \
+  'a created trigger job hid a never-started pipeline'
 quiet="$quiet$out"
 out=$(tick 60299) || fail 'pipeline tick below the bound failed'
 assert_not_contains "$out" 'ci-pipeline-stale' 'a stopped pipeline one second inside its bound raises nothing'
@@ -696,6 +731,8 @@ assert_contains "$out" 'check: crew-ledger pipe-run ci-pipeline-stale; pane=unkn
   'a running pipeline whose jobs all finished is raised with its classification'
 assert_contains "$out" 'check: crew-ledger pipe-wait ci-pipeline-stale; pane=idle; status=paused; run-step=none; stale pipeline 900002 at https://gitlab.example.com/group/pipe-wait/-/pipelines/900002: status=created with no job a runner can advance; jobs-finished=0/2; stale-since=60000; ' \
   'a created pipeline that never started a job is raised for the worker waiting on it'
+assert_contains "$out" 'check: crew-ledger pipe-trigger ci-pipeline-stale; pane=idle; status=paused; run-step=none; stale pipeline 900010 at https://gitlab.example.com/group/pipe-trigger/-/pipelines/900010: status=created with no job a runner can advance; jobs-finished=0/2; stale-since=60000; ' \
+  'a never-started pipeline whose only trigger job is created is raised'
 quiet="$quiet$out"
 out=$(tick 60360) || fail 'pipeline repeat tick failed'
 assert_not_contains "$out" 'ci-pipeline-stale' 'an unchanged stopped pipeline is raised once'
@@ -713,9 +750,11 @@ assert_not_contains "$out" 'pipe-run' 'the second stall gets its own bound'
 out=$(tick 60800) || fail 'second stall tick failed'
 assert_contains "$out" 'pipe-run ci-pipeline-stale' 'a pipeline that stops again is raised again'
 assert_contains "$out" 'jobs-finished=3/3; stale-since=60500' 'the second episode carries its own evidence'
-for id in pipe-between pipe-manual pipe-opaque pipe-foreign pipe-busy; do
+for id in pipe-between pipe-manual pipe-opaque pipe-foreign pipe-busy pipe-bridge pipe-nobridges; do
   assert_not_contains "$quiet" "$id ci-pipeline-stale" "$id was raised as a stopped pipeline"
 done
+grep -Fx -- 'gitlab.example.com projects/group%2Fpipe-bridge/pipelines/900008/bridges?per_page=100' "$home/glab.log" >/dev/null \
+  || fail 'the trigger jobs of the CI step pipeline were not read'
 grep -Fx -- 'gitlab.example.com projects/group%2Fpipe-wait/pipelines/900002' "$home/glab.log" >/dev/null \
   || fail 'the pipeline a wait names was not read by its own id'
 grep -Fx -- 'gitlab.example.com projects/group%2Fpipe-manual/merge_requests/5' "$home/glab.log" >/dev/null \
