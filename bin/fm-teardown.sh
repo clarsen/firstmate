@@ -4530,6 +4530,7 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.polytoken-busy.sh" "$STATE/$ID.pr-register-refused" \
   "$STATE/$ID.review-park" "$STATE/.review-park-closed-$ID" \
   "$STATE/$ID.pr-register-timed-out" \
+  "$STATE/$ID.wait-expiry" "$STATE/$ID.handoff-steered" \
   "$STATE/.$ID.branch-outcome-index" \
   "$STATE/.secondmate-relaunch-$ID" "$STATE/.secondmate-relaunch-bound-$ID"
 # kiro's per-task home is a directory (its relocated KIRO_HOME holds the hook

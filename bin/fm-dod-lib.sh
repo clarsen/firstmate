@@ -1190,7 +1190,7 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       no-mistakes|direct-PR)
         if [ -z "$(fm_dod_meta_value "$meta" "$own_pr_key")" ] \
           && ! fm_dod_pr_url_from_done_note "$(status_line_note "$line")" >/dev/null; then
-          printf '%s\n' "done declared without a PR/MR URL; complete the $mode delivery path"
+          printf '%s\n' "$FM_DOD_DONE_NEEDS_PR; complete the $mode delivery path"
           return 1
         fi
         ;;
