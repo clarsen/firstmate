@@ -51,5 +51,6 @@ test_recorded_slot_is_refused() {
 test_recorded_slot_is_refused legacy absent
 test_recorded_slot_is_refused claimed present
 test_recorded_slot_is_refused member absent member.notes.worktree
+test_recorded_slot_is_refused home absent home
 
 echo '# all fm-spawn-pool-recorded-slot tests passed'

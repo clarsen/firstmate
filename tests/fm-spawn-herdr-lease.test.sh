@@ -340,10 +340,28 @@ test_lease_from_another_clone_is_refused() {
   pass "Herdr refuses a leased copy belonging to another clone of the same origin"
 }
 
+test_lease_recorded_by_another_task_is_kept() {
+  local id=lease-recorded old=lease-recorded-owner dir out status before
+  dir=$(make_lease_case "$id" polytoken)
+  : > "$dir/fake/session-lockable"
+  printf 'worktree=%s\nproject=%s\nkind=ship\n' "$dir/slot" "$dir/project" > "$dir/home/state/$old.meta"
+  before=$(git -C "$dir/slot" rev-parse HEAD)
+  out=$(run_lease_spawn "$dir" "$id" --model zai/glm-5.3-flash --effort low); status=$?
+  [ "$status" -ne 0 ] || fail "Herdr launched into a copy another task records"$'\n'"$out"
+  assert_contains "$out" "which task $old still records as its worktree; refusing to launch or return that slot" \
+    "refusal did not name the recording task"$'\n'"$out"
+  [ ! -e "$dir/fake/launched-command" ] || fail "Herdr launched in another task's recorded copy"
+  [ ! -e "$dir/home/state/$id.meta" ] || fail "Herdr recorded another task's copy"
+  [ ! -e "$dir/fake/returned" ] || fail "the abort returned a copy another task still records"
+  [ "$(git -C "$dir/slot" rev-parse HEAD)" = "$before" ] || fail "spawn changed the recording task's HEAD"
+  pass "Herdr refuses a leased copy another task records and keeps its lease"
+}
+
 test_delayed_worktree_entry
 test_dropped_worktree_entry
 test_never_moving_worktree_entry
 test_lease_from_another_clone_is_refused
+test_lease_recorded_by_another_task_is_kept
 
 test_fresh_spawn_leases_and_moves_the_top_level_shell
 test_main_home_leases_from_treehouses_own_root

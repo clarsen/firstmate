@@ -5123,7 +5123,7 @@ spawn_recorded_slot_owner() { # <worktree>; success means another task records i
     [ "$other_id" != "$ID" ] || continue
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in
-        worktree=*|member.*.worktree=*) other_path=${line#*=} ;;
+        worktree=*|home=*|member.*.worktree=*) other_path=${line#*=} ;;
         *) continue ;;
       esac
       [ -n "$other_path" ] || continue
@@ -5167,7 +5167,11 @@ validate_spawn_worktree() { # <source> <inspect-target>
         # A durable lease taken by this attempt must not be returned over the
         # older record on abort. Leave it for inspection instead.
         HERDR_LEASED=0
-        echo "error: $source gave $WT, which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to launch or return that slot. Inspect target $inspect_target" >&2
+        if [ "$source" = "treehouse get --lease" ]; then
+          echo "error: $source gave $WT, which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to launch or return that slot. Inspect target $inspect_target" >&2
+        else
+          echo "error: $source gave $WT, which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to launch in that slot. Inspect target $inspect_target" >&2
+        fi
         exit 1
       fi
       ;;
