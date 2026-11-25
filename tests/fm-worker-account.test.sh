@@ -98,6 +98,9 @@ signed_in_claude_root() {
 spawn_ship() {
   local id=$1
   shift
+  # The fake pool hands every spawn the same copy; retire earlier tasks'
+  # records as their teardown would, so the copy is free for this spawn.
+  rm -f "$HOME_DIR/state/"*.meta
   fm_test_spawn_brief "$HOME_DIR" "$id"
   signed_in_claude_root "$CASE/ambient-claude"
   : > "$CASE/launch.log"
