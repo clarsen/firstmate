@@ -5,8 +5,8 @@ The fm-captain-asks.v1 store is data/captain-asks.json. An absent store is empty
 Use --help for commands. sweep is the watcher entry point; it appends a durable
 check wake through fm-wake-lib.sh before remembering an alert. Verification is
 read-only. A passing predicate or captured captain acceptance closes an ask.
-Every ledger change and every sweep re-renders the ledger page in place while
-its Lavish session is open; a refresh failure is logged to
+Every ledger change and every sweep re-renders the ledger page while its Lavish
+session is open, replacing the file only when the open asks it shows changed; a refresh failure is logged to
 state/captain-asks-page.log and never fails the command.
 """
 
@@ -167,12 +167,15 @@ def load(path):
 
 def save(path, doc):
     validate(doc)
+    replace_text(path, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+
+
+def replace_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, staged = tempfile.mkstemp(prefix=".captain-asks.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as out:
-            json.dump(doc, out, ensure_ascii=False, indent=2)
-            out.write("\n")
+            out.write(text)
             out.flush()
             os.fsync(out.fileno())
         os.replace(staged, path)
@@ -509,7 +512,9 @@ def sweep(home, path, now):
 
 
 def render_page(doc, home, output):
-    now = utcnow()
+    """Write the ledger page, leaving the file untouched when only its Updated stamp would change."""
+    if output.is_symlink():
+        raise ValueError("captain asks page is a symlink")
     rows = []
     for row in doc["asks"]:
         if row["state"] not in OPEN:
@@ -528,12 +533,12 @@ def render_page(doc, home, output):
                      "verifier_detail": (row.get("verification") or {}).get("detail", ""),
                      "priority": idle, "owner": "Captain" if row["state"] == "awaiting-approval"
                      or row.get("waiting_question") else "Firstmate",
-                     "age": max(0, int((now - parse_time(row["created"])).total_seconds() // 60))})
+                     "created": row["created"]})
     rows.sort(key=lambda item: (item["project"].casefold(), item["owner"], item["title"].casefold()))
     payload = {"schema": "fm-decision-page.v1", "questions": [{"key": row["key"]} for row in rows],
-               "rows": rows, "generated": stamp(now)}
+               "rows": rows}
     data = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
-    content = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    head = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Outstanding asks</title>
 <style>
 :root{font-family:system-ui,sans-serif;color:#172a36;background:#f5f7f6;color-scheme:light;
@@ -586,7 +591,8 @@ button:focus-visible,input:focus-visible{outline:3px solid #b17631;outline-offse
 .asks .age{text-align:left}.act{width:40px;height:40px}.act+.act{margin-left:10px}
 .asks tr.decide-row{display:block;margin-top:6px}.asks tr.decide-row td{border:1px solid var(--edge);border-radius:12px;padding:12px 14px}}
 </style></head><body><main><h1>Outstanding asks</h1>
-<p class="sub"><span class="count" id="count"></span> open · Updated <span id="updated"></span></p>
+<p class="sub"><span class="count" id="count"></span> open · Updated <span id="updated">'''
+    tail = '''</span></p>
 <div class="table-wrap" id="ledger"><table class="asks" aria-label="Open asks"><colgroup><col style="width:132px"><col><col style="width:128px">
 <col style="width:146px"><col style="width:116px"><col style="width:96px"><col style="width:94px"><col style="width:52px"><col style="width:84px"></colgroup>
 <thead><tr><th scope="col">Project</th><th scope="col">Ask</th><th scope="col">Kind</th><th scope="col">State</th><th scope="col">Verifier</th>
@@ -627,18 +633,18 @@ const cell=function(label,cls,text){const td=el('td',cls,text);td.dataset.label=
 const status=function(label,value){const td=cell(label);
 if(value)td.appendChild(el('span','st'+(ATTN.includes(value)?' attn':OK.includes(value)?' ok':''),value));return td};
 const age=function(minutes){return minutes<60?minutes+'m':minutes<2880?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d'};
-document.getElementById("count").textContent=data.rows.length;document.getElementById("updated").textContent=data.generated;
+document.getElementById("count").textContent=data.rows.length;
 const ledger=document.getElementById("ledger");
 if(!data.rows.length){ledger.replaceWith(el('p','empty','No open asks.'));return}
-const body=document.getElementById("rows");let project=null;data.rows.forEach(function(row,index){
+const body=document.getElementById("rows"),ages=[];let project=null;data.rows.forEach(function(row,index){
 const tr=el('tr','ask');tr.appendChild(cell('Project','project'+(row.project===project?' repeat':''),row.project));project=row.project;
 const title=cell('Ask','title');title.appendChild(el('div','ask-title',row.title));
 let coverage=cap(row.priority);const details=[];if(row.verifier_detail)details.push('Verifier detail: '+row.verifier_detail);
 if(coverage.startsWith('Unavailable')){details.push('Priority coverage u'+coverage.slice(1));coverage='Unavailable'}
 for(const text of details)title.appendChild(el('div','detail',text));
 tr.append(title,cell('Kind','',KIND[row.kind]||row.kind),status('State',STATE[row.state]||cap(row.state)),status('Verifier',cap(row.verifier)),
-status('Priority coverage',coverage),cell('Waiting on','owner'+(row.owner==='Captain'?' captain':''),row.owner),cell('Age','age',age(row.age)));
-tr.lastChild.title=row.age+' minutes';
+status('Priority coverage',coverage),cell('Waiting on','owner'+(row.owner==='Captain'?' captain':''),row.owner),cell('Age','age'));
+ages.push({cell:tr.lastChild,created:Date.parse(row.created)});
 const decide=cell('Decide','decide'),panel=el('tr','decide-row'),holder=el('td'),form=el('form');panel.hidden=true;holder.colSpan=9;
 form.noValidate=true;form.id='decide-'+index;form.setAttribute('data-lavish-question',row.key);
 const label=el('label','note-label'),note=el('input','note'),send=el('button','send'),cancel=el('button','cancel','Cancel'),error=el('div','error');
@@ -668,13 +674,20 @@ const fit=function(){for(const node of body.querySelectorAll('.detail')){const o
 const tag=open||node.scrollWidth>node.clientWidth?'button':'div';if(node.localName===tag)continue;const next=el(tag,'detail',node.textContent);
 if(tag==='button'){next.type='button';next.title='Show or hide the full detail';next.setAttribute('aria-expanded','false');
 next.addEventListener('click',function(){next.setAttribute('aria-expanded',String(next.getAttribute('aria-expanded')!=='true'))})}
-node.replaceWith(next)}};fit();window.addEventListener('resize',fit)
+node.replaceWith(next)}};fit();window.addEventListener('resize',fit);
+const tick=function(){const now=Date.now();for(const item of ages){const minutes=Math.max(0,Math.floor((now-item.created)/60000));
+item.cell.textContent=age(minutes);item.cell.title=minutes+' minutes'}};tick();window.addEventListener('focus',tick);
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')tick()})
 })();
 </script></body></html>'''
-    if output.is_symlink():
-        raise ValueError("captain asks page is a symlink")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(content, encoding="utf-8")
+    generated = stamp(utcnow())
+    try:
+        current = output.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        current = ""
+    if current[:len(head)] == head and current[len(head) + len(generated):] == tail:
+        return
+    replace_text(output, head + generated + tail)
 
 
 def listed_open(listing, output):

@@ -1277,7 +1277,9 @@ A missing file means the defaults; an invalid file fails the sweep with that sca
 The priority-project detector wakes when no project worker in `state/*.meta` is `working` according to `bin/fm-crew-state.sh`, the configured backlog read through `bin/fm-tasks-axi.sh` has no startable queued row, and neither a `hold-kind: captain` hold nor the linked open `waiting_question` exists.
 Priority projects are opt-in `project-priority` items in the private ledger; no project roster is shipped in tracked files.
 `page --publish` renders the open ledger to `.lavish/captain-asks.html`, opens a Lavish session, binds its captured-answer source, and arms the existing process-event listener.
-While that session is open, every ledger change (`add`, `update`, `verify`, `archive`, a captured Accept or Rework) and every `sweep` re-renders the page file in place, and Lavish reloads the open page from the changed file; no timer or polling loop keeps the page fresh.
+While that session is open, every ledger change (`add`, `update`, `verify`, `archive`, a captured Accept or Rework) and every `sweep` re-renders the page, and Lavish reloads the open page from the changed file; no timer or polling loop keeps the page fresh.
+The page file is replaced atomically and only when the open asks it shows changed, so a sweep that changes nothing leaves the open page, and any note being typed into it, untouched.
+Each row's age is computed in the page from the ask's creation time, when the page loads and again whenever it regains focus or becomes visible.
 A refresh never opens or reopens a session: when the page was never rendered or its session is not listed open, it does nothing.
 A refresh failure is appended to `state/captain-asks-page.log` with its source file and line, and never fails the ledger command or adds output to it.
 The page is one table with a row per open ask, sorted by project and then by whether the captain or firstmate currently owns the wait.

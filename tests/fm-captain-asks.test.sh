@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python3 - "$ROOT/bin/fm-captain-asks.py" <<'PY'
+import datetime as dt
 from html.parser import HTMLParser
 import http.server
 import json
@@ -102,12 +103,14 @@ node = shutil.which("node")
 if node is None:
     print("skip: node not found; the ledger page's rendered rows and decisions are not checked")
 
-def rendered(page, actions=()):
-    """Run the built page's own script, driving the given row decisions; None without node."""
+def rendered(page, actions=(), later=0):
+    """Run the built page's own script, driving the given row decisions; None without node.
+
+    With later, the page regains focus that many minutes after it loaded before its rows are read."""
     if node is None:
         return None
     harness = Path(cli).parent.parent / "tests/assets/asks-page-harness.mjs"
-    result = subprocess.run([node, str(harness), str(page), json.dumps(list(actions))], text=True, capture_output=True)
+    result = subprocess.run([node, str(harness), str(page), json.dumps(list(actions)), str(later)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -495,6 +498,15 @@ with tempfile.TemporaryDirectory() as temp:
         assert first["cells"]["State"] == "Waiting" and first["tones"]["State"] == "attn", first
         assert second["cells"]["Waiting on"] == "Firstmate" and second["tones"]["State"] == "", second
         assert second["cells"]["Verifier"] == "Unchecked" and not second["details"], second
+    # Age counts from the ask's creation in the open page itself: minutes under an hour, hours under two days,
+    # then days, refreshed when the page regains focus rather than by rewriting the page.
+    created = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3, minutes=1)
+    edit(home, approval, created=created.isoformat(timespec="seconds").replace("+00:00", "Z"))
+    run("page", "--output", str(page))
+    view = rendered(page)
+    if view is not None:
+        assert view["rows"][0]["cells"]["Age"] == "3h", view["rows"][0]
+        assert rendered(page, later=48 * 60)["rows"][0]["cells"]["Age"] == "2d"
 
 # Every ledger change and every sweep re-renders the published page in place while its Lavish session is
 # open, reusing that session; with no rendered page or no open session nothing is rendered or opened.
@@ -547,8 +559,16 @@ with tempfile.TemporaryDirectory() as temp:
     ledger("captured-answers", "--source", "fixture refresh", stdin=f"captain-ask.{second}\taccept\t\n")
     assert set(shown()) == {first}, "an accepted ask stayed on the open page"
     edit(home, first, state="needs-evidence", next_check="2099-01-01T00:00:00Z")
+    replaced = published.stat().st_ino
     ledger("sweep")
     assert shown()[first]["state"] == "needs-evidence", "a sweep did not refresh the open page"
+    assert published.stat().st_ino != replaced, "the page was rewritten in place instead of replaced whole"
+    # A sweep that changes nothing on the ledger leaves the open page file alone, so Lavish does not reload it.
+    settled, before = published.stat().st_ino, published.read_text()
+    time.sleep(1.1)
+    ledger("sweep")
+    ledger("page")
+    assert published.stat().st_ino == settled and published.read_text() == before, "an unchanged ledger rewrote the page"
     assert set(calls.read_text().splitlines()) == {"call:"}, "a refresh did more than list Lavish sessions"
     assert not log.exists(), log.read_text()
     # A failed refresh is logged with its source location and leaves the ledger command successful and silent.

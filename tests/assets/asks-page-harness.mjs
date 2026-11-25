@@ -3,10 +3,11 @@
 // page actually produced, so the ledger table and its Accept/Rework capture
 // are asserted through the real page rather than by reading its source.
 //
-// Usage: node asks-page-harness.mjs <built-page.html> [actions-json]
+// Usage: node asks-page-harness.mjs <built-page.html> [actions-json] [later-minutes]
 // actions-json is a list of {key, choose: "accept"|"rework", note?, cancel?};
 // each opens the decision strip of the row with that question key, types the note, and sends it (or
-// cancels instead when `cancel` is true).
+// cancels instead when `cancel` is true). With later-minutes, the clock then moves
+// that far ahead and the window regains focus before the rows are read.
 // Prints one JSON document:
 //   { count, empty,
 //     rows: [{ key, cells: {<column label>: text}, tones: {<column label>: tone},
@@ -20,6 +21,7 @@ import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
 const actions = JSON.parse(process.argv[3] || "[]");
+const laterMinutes = Number(process.argv[4] || 0);
 
 class Node {
   constructor(tag) {
@@ -83,9 +85,12 @@ globalThis.document = {
     if (!byId.has(id)) byId.set(id, new Node("div").appendChild(new Node("div")));
     return byId.get(id);
   },
-};
-globalThis.window = {
+  visibilityState: "visible",
   addEventListener() {},
+};
+const windowListeners = {};
+globalThis.window = {
+  addEventListener: (type, fn) => (windowListeners[type] ||= []).push(fn),
   lavish: {
     queuePrompt: (prompt, opts) => queued.push({
       prompt, tag: opts.tag, text: opts.text,
@@ -110,6 +115,12 @@ for (const action of actions) {
   form.children.find((c) => c.localName === "input").value = action.note || "";
   if (action.cancel) form.children.find((c) => c.hasClass("cancel")).fire("click");
   else form.fire("submit");
+}
+
+if (laterMinutes) {
+  const real = Date.now;
+  Date.now = () => real() + laterMinutes * 60000;
+  (windowListeners.focus || []).forEach((fn) => fn({}));
 }
 
 const rows = asks().map((tr) => {
