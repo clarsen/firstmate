@@ -496,6 +496,71 @@ with tempfile.TemporaryDirectory() as temp:
         assert second["cells"]["Waiting on"] == "Firstmate" and second["tones"]["State"] == "", second
         assert second["cells"]["Verifier"] == "Unchecked" and not second["details"], second
 
+# Every ledger change and every sweep re-renders the published page in place while its Lavish session is
+# open, reusing that session; with no rendered page or no open session nothing is rendered or opened.
+with tempfile.TemporaryDirectory() as temp:
+    home = fresh_home(temp)
+    fakebin, calls, listed = home / "fakebin", home / "lavish-calls", home / "lavish-open"
+    fakebin.mkdir()
+    # Stands in for lavish-axi: a bare call lists the sessions named in lavish-open, as the real listing
+    # does (`<file>,<status>,"<url>",<pending>`); every call is recorded so an opened session would show.
+    (fakebin / "lavish-axi").write_text(
+        '#!/usr/bin/env bash\n'
+        'printf \'call:%s\\n\' "$*" >> "$LAVISH_FAKE_CALLS"\n'
+        '[ -z "${LAVISH_FAKE_FAIL-}" ] || { echo "listing refused" >&2; exit 3; }\n'
+        'printf \'sessions[1]{file,status,url,pending_prompts}:\\n\'\n'
+        'while IFS= read -r listed; do printf \'  %s,open,"http://127.0.0.1:4387/session/0123456789abcdef",0\\n\' "$listed"; done'
+        ' < "$LAVISH_FAKE_OPEN"\n')
+    (fakebin / "lavish-axi").chmod(0o755)
+    listed.write_text("")
+    live_env = {**os.environ, "FM_HOME": str(home), "PATH": f"{fakebin}{os.pathsep}{os.environ['PATH']}",
+                "LAVISH_FAKE_CALLS": str(calls), "LAVISH_FAKE_OPEN": str(listed)}
+
+    def ledger(*args, stdin=None, **extra):
+        result = subprocess.run([sys.executable, cli, *args], env={**live_env, **extra}, input=stdin,
+                                text=True, capture_output=True)
+        assert result.returncode == 0, f"{args}: {result.stderr}"
+        return result
+
+    def shown():
+        embedded = published.read_text().split('<script id="decision-page-data" type="application/json">', 1)[1]
+        return {r["key"].removeprefix("captain-ask."): r for r in json.loads(embedded.split("</script>", 1)[0])["rows"]}
+
+    published = home / ".lavish/captain-asks.html"
+    log = home / "state/captain-asks-page.log"
+    first = add_ask(home, ledger, "refresh-first", "deploy-dev", "vantage", sha, health)
+    assert not published.exists() and not calls.exists(), "a change with no rendered page touched Lavish or drew a page"
+    ledger("page")
+    assert set(shown()) == {first}
+    second = add_ask(home, ledger, "refresh-second", "merge", "vantage", "Merge the fixture change")
+    assert set(shown()) == {first}, "a page whose session is not open was re-rendered"
+    listed.write_text(f"{published.resolve()}\n")
+    third = add_ask(home, ledger, "refresh-third", "deploy-prod", "vantage", sha)
+    assert set(shown()) == {first, second, third}, "an added ask did not reach the open page"
+    ledger("update", second, "--state", "blocked", "--evidence", "waiting on a dependency")
+    assert shown()[second]["state"] == "blocked", "an updated ask did not reach the open page"
+    assert shown()[first]["verifier"] == "unchecked"
+    assert json.loads(ledger("verify", first).stdout)["result"] == "mismatch"
+    assert shown()[first]["verifier"] == "mismatch", "a verifier result did not reach the open page"
+    ledger("archive", third, "--reason", "captain withdrew the ask")
+    assert set(shown()) == {first, second}, "an archived ask stayed on the open page"
+    ledger("captured-answers", "--source", "fixture refresh", stdin=f"captain-ask.{second}\taccept\t\n")
+    assert set(shown()) == {first}, "an accepted ask stayed on the open page"
+    edit(home, first, state="needs-evidence", next_check="2099-01-01T00:00:00Z")
+    ledger("sweep")
+    assert shown()[first]["state"] == "needs-evidence", "a sweep did not refresh the open page"
+    assert set(calls.read_text().splitlines()) == {"call:"}, "a refresh did more than list Lavish sessions"
+    assert not log.exists(), log.read_text()
+    # A failed refresh is logged with its source location and leaves the ledger command successful and silent.
+    before = published.read_text()
+    failed = ledger("update", first, "--state", "working", "--evidence", "driving again", LAVISH_FAKE_FAIL="1")
+    assert not failed.stdout and not failed.stderr, failed
+    assert row(ledger, first)["state"] == "working" and published.read_text() == before
+    entry = log.read_text().splitlines()
+    assert len(entry) == 1 and "ledger page refresh failed" in entry[0] and "listing refused" in entry[0], entry
+    assert any(part.rsplit(":", 1)[-1].isdigit() and part.startswith("fm-captain-asks.py:") for part in entry[0].split()), entry
+    assert not ledger("sweep", LAVISH_FAKE_FAIL="1").stdout.strip(), "a failed refresh surfaced as a sweep alert"
+
 # A slow row check holds neither the ledger lock nor a second sweep slot, and an invalid config is visible.
 with tempfile.TemporaryDirectory() as temp:
     home = fresh_home(temp)

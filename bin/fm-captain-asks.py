@@ -5,6 +5,9 @@ The fm-captain-asks.v1 store is data/captain-asks.json. An absent store is empty
 Use --help for commands. sweep is the watcher entry point; it appends a durable
 check wake through fm-wake-lib.sh before remembering an alert. Verification is
 read-only. A passing predicate or captured captain acceptance closes an ask.
+Every ledger change and every sweep re-renders the ledger page in place while
+its Lavish session is open; a refresh failure is logged to
+state/captain-asks-page.log and never fails the command.
 """
 
 import argparse
@@ -13,9 +16,12 @@ import contextlib
 import datetime as dt
 import fcntl
 import json
+import logging
+import logging.handlers
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +38,7 @@ DELIVERY = KINDS[:3]
 MAX_SWEEP = 12
 SWEEP_BUSY = 75
 SWEEP_INPUTS = ("state", "verifier", "target", "linked_task", "waiting_question", "due")
+PAGE = ".lavish/captain-asks.html"
 
 
 def utcnow():
@@ -326,7 +333,8 @@ def record_verification(row, entry):
 
 
 def captured_answers(home, path, source):
-    """Apply choices already extracted from a bound Lavish result."""
+    """Apply choices already extracted from a bound Lavish result; return how many changed the ledger."""
+    applied = 0
     for line in sys.stdin:
         fields = line.rstrip("\n").split("\t")
         if len(fields) != 3 or not fields[0].startswith("captain-ask."):
@@ -356,6 +364,8 @@ def captured_answers(home, path, source):
                         f"check: captain ask {ask_id} ({row['project']}): captain {selection}"
                         + (f" - {note[:160]}" if selection == "rework" else ""))
             save(path, doc)
+            applied += 1
+    return applied
 
 
 def worker_live(home, task_id):
@@ -667,15 +677,56 @@ node.replaceWith(next)}};fit();window.addEventListener('resize',fit)
     output.write_text(content, encoding="utf-8")
 
 
-def publish_page(home, output):
+def listed_open(listing, output):
+    """Whether a Lavish session listing shows this page's session as live; only a live one is listed open."""
     real = str(output.resolve())
+    return any(line.strip().startswith(real + ",open,") for line in listing.splitlines())
+
+
+def page_log(home):
+    log = logging.getLogger("fm-captain-asks.page")
+    if not log.handlers:
+        # A refresh must stay silent on stderr: the watcher rings a sweep's first output line as a wake.
+        logging.raiseExceptions = False
+        target = home / "state/captain-asks-page.log"
+        handler = (logging.NullHandler() if target.is_symlink() else
+                   logging.handlers.RotatingFileHandler(target, maxBytes=1048576, backupCount=1, delay=True))
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(message)s"))
+        log.addHandler(handler)
+        log.propagate = False
+    return log
+
+
+def refresh_page(home):
+    """Re-render the home's published ledger page in place after a ledger change or sweep.
+
+    Lavish reloads an open session from its changed file, so this never opens or
+    reopens a session: with no rendered page or no live session it does nothing.
+    A failure is logged and never raised, so it cannot fail the ledger command.
+    """
+    output = home / PAGE
+    try:
+        if not output.is_file() or shutil.which("lavish-axi") is None:
+            return
+        listing = subprocess.run(["lavish-axi"], capture_output=True, text=True, timeout=15)
+        if listing.returncode:
+            raise ValueError(f"Lavish session listing failed: {listing.stderr.strip()[:200]}")
+        if not listed_open(listing.stdout, output):
+            return
+        with locked(output):
+            render_page(load(home / "data/captain-asks.json"), home, output)
+    except (ValueError, OSError, KeyError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:
+        page_log(home).error("ledger page refresh failed: %s", error)
+
+
+def publish_page(home, output):
     command = ["lavish-axi", str(output)]
     for attempt in range(2):
         result = subprocess.run(command + (["--reopen"] if attempt else []), capture_output=True, text=True)
         if result.returncode:
             raise ValueError(f"Lavish publish failed: {result.stderr.strip()[:200]}")
         listing = subprocess.run(["lavish-axi"], capture_output=True, text=True)
-        if listing.returncode == 0 and any(line.strip().startswith(real + ",open,") for line in listing.stdout.splitlines()):
+        if listing.returncode == 0 and listed_open(listing.stdout, output):
             env = {**os.environ, "FM_HOME": str(home)}
             adapter = str(ROOT / "bin/fm-procevent-lavish.sh")
             source = subprocess.run([adapter, "source-id", str(output)], env=env,
@@ -748,8 +799,12 @@ def main():
         if args.command == "page":
             if args.publish and args.output:
                 raise ValueError("published captain asks page uses the home-local page path")
-            output = Path(args.output) if args.output else home / ".lavish/captain-asks.html"
-            render_page(doc, home, output)
+            output = Path(args.output) if args.output else home / PAGE
+            if args.output:
+                render_page(doc, home, output)
+            else:
+                with locked(output):
+                    render_page(load(path), home, output)
             print(output)
             if args.publish:
                 publish_page(home, output)
@@ -776,9 +831,11 @@ def main():
                 sys.exit(SWEEP_BUSY)
             for reason in sweep(home, path, utcnow()):
                 print(reason)
+            refresh_page(home)
         return
     if args.command == "captured-answers":
-        captured_answers(home, path, args.source)
+        if captured_answers(home, path, args.source):
+            refresh_page(home)
         return
     with locked(path):
         doc = load(path)
@@ -844,6 +901,7 @@ def main():
                 row["archive_reason"] = args.reason
                 row["evidence"].append({"at": stamp(now), "result": "archive", "detail": args.reason, "url": None})
             save(path, doc)
+    refresh_page(home)
 
 
 if __name__ == "__main__":
