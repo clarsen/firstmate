@@ -348,8 +348,10 @@ test_lease_recorded_by_another_task_is_kept() {
   before=$(git -C "$dir/slot" rev-parse HEAD)
   out=$(run_lease_spawn "$dir" "$id" --model zai/glm-5.3-flash --effort low); status=$?
   [ "$status" -ne 0 ] || fail "Herdr launched into a copy another task records"$'\n'"$out"
-  assert_contains "$out" "which task $old still records as its worktree; refusing to launch or return that slot" \
+  assert_contains "$out" "which task $old still records as its worktree" \
     "refusal did not name the recording task"$'\n'"$out"
+  assert_contains "$out" "refusing to launch or return that slot" \
+    "refusal did not say the durable lease is kept"$'\n'"$out"
   [ ! -e "$dir/fake/launched-command" ] || fail "Herdr launched in another task's recorded copy"
   [ ! -e "$dir/home/state/$id.meta" ] || fail "Herdr recorded another task's copy"
   [ ! -e "$dir/fake/returned" ] || fail "the abort returned a copy another task still records"

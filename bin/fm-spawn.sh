@@ -1963,7 +1963,7 @@ spawn_member_rollback() {
     if [ "$held" = 1 ]; then
       fm_treehouse_slot_owner_release "$wt" "$ID" || true
       if spawn_recorded_slot_owner "$wt"; then
-        echo "warning: member copy $wt is still recorded by task $SPAWN_RECORDED_SLOT_OWNER; leaving its lease for inspection after the aborted spawn of $ID" >&2
+        echo "warning: member copy $wt, $SPAWN_RECORDED_SLOT_REASON; leaving its lease for inspection after the aborted spawn of $ID" >&2
       elif fm_member_return "$project" "$wt" "$lease"; then
         echo "spawn aborted: returned member copy $wt to its pool" >&2
       else
@@ -5108,30 +5108,38 @@ spawn_worktree_of_project() { # <path> <project>
 }
 
 # A task record can predate slot-owner claims, and Treehouse's process lease
-# can lapse while that record still owns the copy. Check all task records in
-# this home under the project lock before a newly acquired slot is refreshed
-# or claimed. A member copy is a recorded worktree too.
-SPAWN_RECORDED_SLOT_OWNER=
-spawn_recorded_slot_owner() { # <worktree>; success means another task records it
-  local slot=$1 slot_real meta other_id line other_path
-  SPAWN_RECORDED_SLOT_OWNER=
+# can lapse while that record still owns the copy. Check the task records of
+# every local Firstmate home (they share machine-local pools) under the project
+# lock before a newly acquired slot is refreshed, claimed, or returned. A member
+# copy and a secondmate home are recorded worktrees too. An unreadable home
+# cannot be ruled out, so it holds the slot as well.
+SPAWN_RECORDED_SLOT_REASON=
+spawn_recorded_slot_owner() { # <worktree>; success means a record may own it
+  local slot=$1 slot_real state_dir meta other_id line other_path
+  SPAWN_RECORDED_SLOT_REASON=
+  if ! fm_local_firstmate_state_dirs "$STATE"; then
+    SPAWN_RECORDED_SLOT_REASON="but $FM_LOCAL_FIRSTMATE_ERROR, so no task record naming it can be ruled out"
+    return 0
+  fi
   slot_real=$(real_path_or_raw "$slot")
-  for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
-    other_id=${meta##*/}
-    other_id=${other_id%.meta}
-    [ "$other_id" != "$ID" ] || continue
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in
-        worktree=*|home=*|member.*.worktree=*) other_path=${line#*=} ;;
-        *) continue ;;
-      esac
-      [ -n "$other_path" ] || continue
-      if [ "$(real_path_or_raw "$other_path")" = "$slot_real" ]; then
-        SPAWN_RECORDED_SLOT_OWNER=$other_id
-        return 0
-      fi
-    done < "$meta"
+  for state_dir in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
+    for meta in "$state_dir"/*.meta; do
+      [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+      [ "${meta##*/}" = "$ID.meta" ] && [ "$meta" -ef "$STATE/$ID.meta" ] && continue
+      other_id=${meta##*/}
+      other_id=${other_id%.meta}
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          worktree=*|home=*|member.*.worktree=*) other_path=${line#*=} ;;
+          *) continue ;;
+        esac
+        [ -n "$other_path" ] || continue
+        if [ "$(real_path_or_raw "$other_path")" = "$slot_real" ]; then
+          SPAWN_RECORDED_SLOT_REASON="which task $other_id still records as its worktree (in $state_dir)"
+          return 0
+        fi
+      done < "$meta"
+    done
   done
   return 1
 }
@@ -5168,9 +5176,9 @@ validate_spawn_worktree() { # <source> <inspect-target>
         # older record on abort. Leave it for inspection instead.
         HERDR_LEASED=0
         if [ "$source" = "treehouse get --lease" ]; then
-          echo "error: $source gave $WT, which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to launch or return that slot. Inspect target $inspect_target" >&2
+          echo "error: $source gave $WT, $SPAWN_RECORDED_SLOT_REASON; refusing to launch or return that slot. Inspect target $inspect_target" >&2
         else
-          echo "error: $source gave $WT, which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to launch in that slot. Inspect target $inspect_target" >&2
+          echo "error: $source gave $WT, $SPAWN_RECORDED_SLOT_REASON; refusing to launch in that slot. Inspect target $inspect_target" >&2
         fi
         exit 1
       fi
@@ -5337,7 +5345,7 @@ spawn_member_allocate() { # <index>
   SPAWN_MEMBER_LEASED_IDS+=("$lease")
   SPAWN_MEMBER_LEASED_BASES+=("")
   if spawn_recorded_slot_owner "$wt"; then
-    echo "error: member $name: Treehouse leased '$wt', which task $SPAWN_RECORDED_SLOT_OWNER still records as its worktree; refusing to reuse that slot" >&2
+    echo "error: member $name: Treehouse leased '$wt', $SPAWN_RECORDED_SLOT_REASON; refusing to reuse that slot" >&2
     return 1
   fi
   if ! spawn_worktree_isolated "$wt" "$project" || ! spawn_worktree_of_project "$wt" "$project"; then
