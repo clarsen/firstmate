@@ -547,23 +547,30 @@ test_live_paused_until_controls_recheck_time() {
     "$state/.wake-queue" 2>/dev/null || echo 0)
   [ "$wakes" -eq 0 ] || fail "a live worker produced $wakes wakes before its declared time"
 
-  past=$(iso_utc_at "$(( $(date +%s) - 120 ))")
+  # Past the declared time the worker itself is rung first (the expiry tick in
+  # bin/fm-watch.sh); firstmate hears once, only because the line never changed.
+  past=$(iso_utc_at "$(( $(date +%s) - 180 ))")
   printf 'paused: rate limit until %s\n' "$past" >> "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
   printf 'parked, elapsed 3s' > "$capture_file"
-  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
-    || fail "a live worker did not wake when its declared time passed"
+  FM_HOME="$dir" FM_WAIT_EXPIRY_GRACE_SECS=3 \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a live worker's passed declared time never reached firstmate"
+  [ "$(find "$state/parked.inbox" -name '*.msg' 2>/dev/null | wc -l | tr -d ' ')" -eq 1 ] \
+    || fail "a live worker was not rung exactly once when its declared time passed"
   wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
     "$state/.wake-queue" 2>/dev/null || echo 0)
-  [ "$wakes" -eq 1 ] || fail "a passed declared time produced $wakes wakes instead of one"
-  ack_stopped_cycle "$state" || fail "could not acknowledge the due declared-time recheck"
+  [ "$wakes" -eq 0 ] || fail "a passed declared time also raised $wakes pane-staleness wakes"
+  wakes=$(awk -F '\t' '$3 == "check" && $4 == "wait-expiry:parked" { n++ } END { print n + 0 }' \
+    "$state/.wake-queue" 2>/dev/null || echo 0)
+  [ "$wakes" -eq 1 ] || fail "an unchanged passed declared time produced $wakes reports instead of one"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the declared-time report"
   printf 'parked, elapsed 4s' > "$capture_file"
-  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
-    || fail "a due declared time bypassed the reset long cadence"
-  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
-    "$state/.wake-queue" 2>/dev/null || echo 0)
-  [ "$wakes" -eq 0 ] || fail "a due declared time rechecked again inside the long cadence"
-  pass "a live paused worker stays absorbed until its declared time, then rechecks"
+  FM_HOME="$dir" FM_WAIT_EXPIRY_GRACE_SECS=3 \
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "a reported declared time was raised again inside the long cadence"
+  [ ! -s "$state/.wake-queue" ] || fail "a reported declared time queued another wake: $(cat "$state/.wake-queue")"
+  pass "a live paused worker stays absorbed until its declared time, then is rung and reported once"
 }
 
 
@@ -1766,8 +1773,8 @@ test_silent_recheck_flag_on_wakes_when_declared_time_is_due() {
 # the wait should be over. Without `until`, the first-sight alert spends the
 # declaration's re-surface throttle and every later sight - including the one
 # after the job ended - is held for PAUSE_RESURFACE_SECS. Naming the job's
-# start plus its timeout as `until` gives that same declaration one recheck once
-# the job can no longer be running.
+# start plus its timeout as `until` gets the worker rung once the job can no
+# longer be running, and firstmate told once if its line still does not change.
 bg_job_paused_case() {  # <name> <status-line> -> dir
   local dir state window key
   dir=$(make_case "$1"); state="$dir/state"; window="test:fm-parked"
@@ -1811,25 +1818,25 @@ test_paused_bg_job_until_timeout_rechecks_after_the_job_ends() {
   parked_watch_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-parked absorb \
     || fail "a worker paused on its running background job woke before the job's timeout"
   [ "$(bg_job_stale_wakes "$state")" -eq 0 ] || fail "the running job surfaced before its timeout"
-  started=$(( $(date +%s) - 180 ))
+  started=$(( $(date +%s) - 300 ))
   dir=$(bg_job_paused_case bg-job-until \
     "paused [key=nightly-build] [at=$started]: nightly build (background job, 120s timeout); resume when it ends, until $(iso_utc_at "$(( started + 120 ))")")
   state="$dir/state"
   printf '[bg failed] nightly build - Exited with code 1' > "$dir/pane.txt"
-  parked_watch_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-parked exit \
-    || fail "the job's timeout passed without a recheck of the worker paused on it"
-  [ "$(bg_job_stale_wakes "$state")" -eq 1 ] || fail "the passed timeout queued the wrong number of rechecks"
-  awk -F '\t' '$3 == "stale" && $5 == "stale: test:fm-parked" { found = 1 } END { exit !found }' \
-    "$state/.wake-queue" || fail "the recheck carried an unexpected reason: $(cat "$state/.wake-queue")"
-  case "$(cat "$state/.paused-resurfaced-$(watch_window_key test:fm-parked)" 2>/dev/null)" in
-    *:due) ;;
-    *) fail "the recheck was not recorded as the passed declared time" ;;
-  esac
-  ack_stopped_cycle "$state" || fail "could not acknowledge the due recheck"
+  FM_HOME="$dir" FM_WAIT_EXPIRY_GRACE_SECS=3 \
+    parked_watch_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-parked exit \
+    || fail "the job's timeout passed and the worker paused on it never reached firstmate"
+  grep -l 'until time in your paused: line passed' "$state/parked.inbox"/*.msg >/dev/null 2>&1 \
+    || fail "the worker was not rung once its job's timeout had passed"
+  [ "$(bg_job_stale_wakes "$state")" -eq 0 ] || fail "the passed timeout also raised a pane-staleness wake"
+  awk -F '\t' '$3 == "check" && $4 == "wait-expiry:parked" { n++ } END { exit n != 1 }' \
+    "$state/.wake-queue" || fail "the unchanged wait was not reported exactly once: $(cat "$state/.wake-queue")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the expired-wait report"
   printf '[bg failed] nightly build - Exited with code 1 (idle)' > "$dir/pane.txt"
-  parked_watch_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-parked absorb \
-    || fail "the due recheck repeated instead of returning to the cadence"
-  pass "until set to a background job's timeout rechecks the worker paused on it once the job must have ended"
+  FM_HOME="$dir" FM_WAIT_EXPIRY_GRACE_SECS=3 \
+    parked_watch_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-parked absorb \
+    || fail "the expired wait was reported again instead of returning to the cadence"
+  pass "until set to a background job's timeout rings the worker paused on it once the job must have ended, then reports it once"
 }
 
 test_required_captain_hold_tests_fail_without_tasks_axi() {

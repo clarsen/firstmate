@@ -476,3 +476,251 @@ jq -e '.crew[] | select(.id == "never-read") | .current_state.observed_at == nul
 out=$(tick 32361 2>/dev/null) || fail 'never-read repeat failed'
 assert_not_contains "$out" 'never-read' 'an unchanged never-read crew wakes only once'
 pass 'crew ledger flags the observed paused and idle CI stall once per unchanged episode'
+
+# --- evidence outside the pane: parked gates and stopped pipelines -----------
+# Reproduced from a live fleet. A run parked at a gate only a human can answer
+# sat unanswered because nothing re-raised it after the worker's one status
+# line, and workers waited on GitLab pipelines the forge had stopped processing
+# after a background-job outage. Neither may depend on the pane: most of that
+# fleet ran a harness whose busy state is unreadable, where every other
+# condition stays silent, and the forge rendered every time in a local zone.
+home=$(fm_test_tmproot fm-crew-ledger-evidence)/home
+mkdir -p "$home/state" "$home/projects/task" "$home/fakebin" "$home/crew-state" "$home/glab"
+cat > "$home/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) printf 'fm-task\n' ;;
+  capture-pane) printf 'Finished turn\n> \n' ;;
+  display-message) printf '%%1\n' ;;
+esac
+SH
+cat > "$home/fakebin/crew-state" <<'SH'
+#!/usr/bin/env bash
+cat "$FM_HOME/crew-state/$1" 2>/dev/null || printf 'state: unknown · source: none · no run\n'
+SH
+# `api --hostname <host> [--paginate] <path>`: log the call, then serve the
+# fixture recorded for that project and kind of path.
+cat > "$home/fakebin/glab" <<'SH'
+#!/usr/bin/env bash
+host=$3 path=${*: -1}
+printf '%s %s\n' "$host" "$path" >> "$FM_HOME/glab.log"
+project=${path#projects/}; project=${project%%/*}
+case "$path" in
+  */jobs\?*) cat "$FM_HOME/glab/$project/jobs" ;;
+  */merge_requests/*) cat "$FM_HOME/glab/$project/mr" ;;
+  */pipelines/*) cat "$FM_HOME/glab/$project/pipeline" ;;
+  *) exit 1 ;;
+esac
+SH
+printf '#!/usr/bin/env bash\nexit 1\n' > "$home/fakebin/gh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$home/fakebin/tasks-axi"
+chmod +x "$home/fakebin/tmux" "$home/fakebin/crew-state" "$home/fakebin/glab" "$home/fakebin/gh" "$home/fakebin/tasks-axi"
+: > "$home/glab.log"
+
+# worker <id> <harness> [busy|idle|''] [meta key=val...]: one local ship. A
+# codex worker's busy state is unreadable; a claude worker's is set from its
+# events.
+worker() {
+  local id=$1 harness=$2 busy=${3:-} gen event=stop
+  shift 2
+  [ "$#" -eq 0 ] || shift
+  case "$busy" in ''|busy|idle) ;; *) fail "worker $id: unknown busy state $busy" ;; esac
+  fm_write_meta "$home/state/$id.meta" \
+    'kind=ship' "harness=$harness" 'backend=tmux' "window=firstmate:fm-$id" \
+    "worktree=$home/projects/task" 'spawn_gen=one' "$@"
+  [ -n "$busy" ] || return 0
+  [ "$busy" = idle ] || event=user-prompt-submit
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" "$id")
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" "$id" "$busy" --gen "$gen" \
+    --source claude-hook --event "$event"
+}
+row() {  # <id> <jq filter> <message>
+  jq -e --arg id "$1" ".crew[] | select(.id == \$id) | $2" "$home/state/crew-ledger.json" >/dev/null \
+    || fail "$3: $(jq -c --arg id "$1" '.crew[] | select(.id == $id)' "$home/state/crew-ledger.json")"
+}
+human_gate() {  # <id> <run>
+  printf 'state: parked · source: run-step · parked at awaiting_approval: 2 finding(s) · ask-user: authority decision · run: %s\nrun-step: awaiting_approval\n' \
+    "$2" > "$home/crew-state/$1"
+}
+
+# A reported gate on an unreadable harness, an unreported gate, and the lanes
+# that must stay quiet: a busy worker, a gate the worker answers itself, and a
+# lane the captain already holds.
+worker gate-reported codex
+printf 'working [at=49000]: validating\nneeds-decision [at=50000] [key=nm-01RUNGATE-review]: ask-user findings=f1 file=/fixture/findings.txt\n' \
+  > "$home/state/gate-reported.status"
+human_gate gate-reported 01RUNGATE
+worker gate-unreported claude idle
+printf 'working [at=49000]: validating\n' > "$home/state/gate-unreported.status"
+human_gate gate-unreported 01RUNQUIET
+worker gate-busy claude busy
+printf 'working [at=49000]: validating\n' > "$home/state/gate-busy.status"
+human_gate gate-busy 01RUNBUSY
+worker gate-own codex
+printf 'working [at=49000]: validating\n' > "$home/state/gate-own.status"
+printf 'state: parked · source: run-step · parked at fix_review: 1 finding(s) · run: 01RUNOWN\nrun-step: fix_review\n' \
+  > "$home/crew-state/gate-own"
+worker gate-held codex
+printf 'needs-decision [at=49500] [key=nm-01RUNHELD-review]: ask-user findings=f2 file=/fixture/held.txt\ncaptain-held [at=50000] [key=nm-01RUNHELD-review]: awaiting the captain\n' \
+  > "$home/state/gate-held.status"
+human_gate gate-held 01RUNHELD
+
+quiet=
+out=$(tick 50100) || fail 'first gate tick failed'
+assert_equals '' "$out" 'a gate inside its bound raises nothing'
+row gate-reported '.harness.state == "unknown" and .gate.run == "01RUNGATE" and .gate.reported == true and .gate.quiet_since == 50000' \
+  'a reported gate is not aged from its report'
+row gate-unreported '.gate.reported == false and .gate.since == 50100 and .gate.quiet_since == 50100' \
+  'an unreported gate is not aged from the first tick that read it'
+out=$(tick 50599) || fail 'gate tick below the bound failed'
+assert_equals '' "$out" 'a reported gate one second inside its bound raises nothing'
+out=$(tick 50600) || fail 'gate tick at the bound failed'
+assert_contains "$out" 'check: crew-ledger gate-reported gate-awaiting-decision; pane=unknown; status=needs-decision; run-step=awaiting_approval; gate=parked at awaiting_approval: 2 finding(s) · ask-user: authority decision · run: 01RUNGATE; reported=yes; quiet-since=50000; last-checked=50600; decide the gate, or have the worker report it' \
+  'a reported gate still unanswered at the bound is raised, on an unreadable harness'
+assert_not_contains "$out" 'gate-unreported' 'an unreported gate keeps its own later clock'
+quiet="$quiet$out"
+out=$(tick 50660) || fail 'gate repeat tick failed'
+assert_equals '' "$out" 'an unchanged gate is raised once'
+out=$(tick 50700) || fail 'unreported gate tick failed'
+assert_contains "$out" 'check: crew-ledger gate-unreported gate-awaiting-decision; pane=idle; status=working; ' \
+  'a gate the worker never reported is raised from the first tick that read it'
+assert_contains "$out" 'reported=no; quiet-since=50100' 'the wake says the gate was never reported'
+assert_not_contains "$out" 'gate-reported' 'the reported gate does not repeat'
+quiet="$quiet$out"
+# An answer restarts the clock; a gate still parked a whole bound later is a
+# stuck lane and is raised again, and a gate that cleared is raised no more.
+printf 'resolved [at=50800] [key=nm-01RUNGATE-review]: answered: apply the fix\n' >> "$home/state/gate-reported.status"
+out=$(tick 51399) || fail 'answered gate tick failed'
+assert_equals '' "$out" 'an answered gate gets a fresh bound'
+out=$(tick 51400) || fail 'stuck answered gate tick failed'
+assert_contains "$out" 'gate-reported gate-awaiting-decision; pane=unknown; status=resolved; ' \
+  'a gate still parked a whole bound after its answer is raised again'
+assert_contains "$out" 'quiet-since=50800' 'the second episode is aged from the answer'
+quiet="$quiet$out"
+printf 'state: working · source: run-step · validating (running)\nrun-step: running\n' > "$home/crew-state/gate-reported"
+out=$(tick 52100) || fail 'cleared gate tick failed'
+assert_equals '' "$out" 'a cleared gate raises nothing'
+row gate-reported '.gate == null and .alert == null' 'a cleared gate kept its evidence'
+assert_not_contains "$quiet" 'gate-busy' 'a busy worker at a gate was raised'
+assert_not_contains "$quiet" 'gate-own' 'a gate the worker answers itself was raised as a human decision'
+assert_not_contains "$quiet" 'gate-held' 'a gate the captain already holds was raised'
+[ ! -s "$home/glab.log" ] || fail "a gate read the forge: $(cat "$home/glab.log")"
+pass 'a gate awaiting a human decision is raised once per quiet episode, whatever the harness'
+
+# A GitLab-style time for <epoch> in a -08:00 instance zone.
+forge_time() {
+  local shifted=$(( $1 - 28800 ))
+  { date -u -r "$shifted" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "@$shifted" +%Y-%m-%dT%H:%M:%S; } \
+    | sed 's/$/.000-08:00/'
+}
+# forge <project> <pipeline-id> <pipeline-status> <updated-epoch> <jobs-json>
+forge() {
+  local dir="$home/glab/group%2F$1"
+  mkdir -p "$dir"
+  jq -cn --argjson id "$2" --arg status "$3" --arg at "$(forge_time "$4")" \
+    '{id:$id,sha:("0" * 40),status:$status,created_at:$at,updated_at:$at}' > "$dir/pipeline"
+  jq -cn --slurpfile pipeline "$dir/pipeline" '{sha:("0" * 40),head_pipeline:$pipeline[0]}' > "$dir/mr"
+  printf '%s\n' "$5" > "$dir/jobs"
+}
+ci_step() {  # <id>: a run whose CI step is active on that worker's merge request
+  printf 'state: working · source: run-step · validating (running)\nrun-step: running/running\nrun-pr: https://gitlab.example.com/group/%s/-/merge_requests/7\n' \
+    "$1" > "$home/crew-state/$1"
+}
+
+# Every job finished, pipeline still running: the run's own CI step, on an
+# unreadable harness.
+worker pipe-run codex
+printf 'working [at=60000]: CI monitor running\n' > "$home/state/pipe-run.status"
+ci_step pipe-run
+forge pipe-run 900001 running 59900 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59950)\"},{\"id\":2,\"status\":\"failed\",\"finished_at\":\"$(forge_time 60000)\"}]"
+# Never started: the pipeline a declared wait names, all jobs still created.
+worker pipe-wait claude idle 'pr=https://gitlab.example.com/group/pipe-wait/-/merge_requests/3'
+printf 'paused [at=60000]: merged main pipeline https://gitlab.example.com/group/pipe-wait/-/pipelines/900002; resume when it is green\n' \
+  > "$home/state/pipe-wait.status"
+printf 'state: paused · source: status-log · waiting\n' > "$home/crew-state/pipe-wait"
+forge pipe-wait 900002 created 60000 \
+  '[{"id":1,"status":"created","finished_at":null},{"id":2,"status":"created","finished_at":null}]'
+# Healthy: a later stage is queued, so a runner can still advance the pipeline.
+worker pipe-between claude idle
+printf 'working [at=60000]: CI monitor running\n' > "$home/state/pipe-between.status"
+ci_step pipe-between
+forge pipe-between 900003 running 59000 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59000)\"},{\"id\":2,\"status\":\"pending\",\"finished_at\":null},{\"id\":3,\"status\":\"created\",\"finished_at\":null}]"
+# Healthy: blocked on a manual job, read through the merge request a wait names.
+worker pipe-manual claude idle 'pr=https://gitlab.example.com/group/pipe-manual/-/merge_requests/5'
+printf 'paused [at=60000]: watching https://gitlab.example.com/group/pipe-manual/-/merge_requests/5 pipeline 900004 until green\n' \
+  > "$home/state/pipe-manual.status"
+printf 'state: paused · source: status-log · waiting\n' > "$home/crew-state/pipe-manual"
+forge pipe-manual 900004 manual 59000 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59000)\"},{\"id\":2,\"status\":\"manual\",\"finished_at\":null}]"
+# Unreadable: a response that does not say what its jobs are doing.
+worker pipe-opaque codex
+printf 'working [at=60000]: CI monitor running\n' > "$home/state/pipe-opaque.status"
+ci_step pipe-opaque
+forge pipe-opaque 900005 running 59000 "[{\"id\":1,\"finished_at\":\"$(forge_time 59000)\"}]"
+# A wait naming a pipeline on a host that is not the task's own forge.
+worker pipe-foreign codex '' 'pr=https://gitlab.example.com/group/pipe-foreign/-/merge_requests/9'
+printf 'paused [at=60000]: waiting on https://other.example.net/group/pipe-foreign/-/pipelines/900006\n' \
+  > "$home/state/pipe-foreign.status"
+printf 'state: paused · source: status-log · waiting\n' > "$home/crew-state/pipe-foreign"
+forge pipe-foreign 900006 running 59000 '[]'
+# A busy worker is watching its own pipeline.
+worker pipe-busy claude busy
+printf 'working [at=60000]: CI monitor running\n' > "$home/state/pipe-busy.status"
+ci_step pipe-busy
+forge pipe-busy 900007 running 59000 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59000)\"}]"
+
+quiet=
+out=$(tick 60100) || fail 'first pipeline tick failed'
+assert_not_contains "$out" 'ci-pipeline-stale' 'a pipeline inside its bound raises nothing'
+row pipe-run '.harness.state == "unknown" and .pipeline.pipeline_status == "running" and .pipeline.job_count == 2 and .pipeline.finished_count == 2 and .pipeline.active_count == 0 and .pipeline.latest_finished_at == 60000 and .pipeline.stale_since == 60000' \
+  'a finished-jobs pipeline was not classified from zone-offset times'
+row pipe-wait '.pipeline.pipeline_id == 900002 and .pipeline.pipeline_status == "created" and .pipeline.finished_count == 0 and .pipeline.stale_since == 60000' \
+  'a never-started pipeline named by a wait was not classified'
+row pipe-between '.pipeline.active_count == 1 and .pipeline.stale_since == null and .ci_progress.latest_completed_at == 59000' \
+  'a pipeline with a queued job was classified stale, or its progress was not read'
+row pipe-manual '.pipeline.pipeline_status == "manual" and .pipeline.stale_since == null' \
+  'a pipeline blocked on a manual job was classified stale'
+row pipe-opaque '.pipeline.classified_count == 0 and .pipeline.stale_since == null' \
+  'jobs with no status were read as nothing running'
+row pipe-foreign '.pipeline == null' 'a pipeline on a foreign host was read'
+row pipe-busy '.pipeline == null' 'a busy worker had its pipeline read'
+quiet="$quiet$out"
+out=$(tick 60299) || fail 'pipeline tick below the bound failed'
+assert_not_contains "$out" 'ci-pipeline-stale' 'a stopped pipeline one second inside its bound raises nothing'
+quiet="$quiet$out"
+out=$(tick 60300) || fail 'pipeline tick at the bound failed'
+assert_contains "$out" 'check: crew-ledger pipe-run ci-pipeline-stale; pane=unknown; status=working; run-step=running/running; stale pipeline 900001 at https://gitlab.example.com/group/pipe-run/-/merge_requests/7: status=running with no job a runner can advance; jobs-finished=2/2; stale-since=60000; last-checked=60300; inspect the pipeline on the forge; nothing was cancelled or retried' \
+  'a running pipeline whose jobs all finished is raised with its classification'
+assert_contains "$out" 'check: crew-ledger pipe-wait ci-pipeline-stale; pane=idle; status=paused; run-step=none; stale pipeline 900002 at https://gitlab.example.com/group/pipe-wait/-/pipelines/900002: status=created with no job a runner can advance; jobs-finished=0/2; stale-since=60000; ' \
+  'a created pipeline that never started a job is raised for the worker waiting on it'
+quiet="$quiet$out"
+out=$(tick 60360) || fail 'pipeline repeat tick failed'
+assert_not_contains "$out" 'ci-pipeline-stale' 'an unchanged stopped pipeline is raised once'
+quiet="$quiet$out"
+# The forge resumes, then stops again later: a new episode with its own clock.
+forge pipe-run 900001 running 60400 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59950)\"},{\"id\":2,\"status\":\"failed\",\"finished_at\":\"$(forge_time 60000)\"},{\"id\":3,\"status\":\"running\",\"finished_at\":null}]"
+out=$(tick 60420) || fail 'resumed pipeline tick failed'
+assert_not_contains "$out" 'pipe-run' 'a pipeline that resumed raises nothing'
+row pipe-run '.alert == null and .pipeline.active_count == 1' 'a resumed pipeline kept its alert'
+forge pipe-run 900001 running 60400 \
+  "[{\"id\":1,\"status\":\"success\",\"finished_at\":\"$(forge_time 59950)\"},{\"id\":2,\"status\":\"failed\",\"finished_at\":\"$(forge_time 60000)\"},{\"id\":3,\"status\":\"success\",\"finished_at\":\"$(forge_time 60500)\"}]"
+out=$(tick 60799) || fail 'second stall tick below the bound failed'
+assert_not_contains "$out" 'pipe-run' 'the second stall gets its own bound'
+out=$(tick 60800) || fail 'second stall tick failed'
+assert_contains "$out" 'pipe-run ci-pipeline-stale' 'a pipeline that stops again is raised again'
+assert_contains "$out" 'jobs-finished=3/3; stale-since=60500' 'the second episode carries its own evidence'
+for id in pipe-between pipe-manual pipe-opaque pipe-foreign pipe-busy; do
+  assert_not_contains "$quiet" "$id ci-pipeline-stale" "$id was raised as a stopped pipeline"
+done
+grep -Fx -- 'gitlab.example.com projects/group%2Fpipe-wait/pipelines/900002' "$home/glab.log" >/dev/null \
+  || fail 'the pipeline a wait names was not read by its own id'
+grep -Fx -- 'gitlab.example.com projects/group%2Fpipe-manual/merge_requests/5' "$home/glab.log" >/dev/null \
+  || fail 'the merge request a wait names was not read'
+assert_no_regex 'other\.example\.net|pipe-foreign|pipe-busy' "$home/glab.log" \
+  'a forge credential was sent for a foreign host or a busy worker'
+assert_no_regex '(cancel|retry|play)' "$home/glab.log" 'the observer changed a pipeline'
+pass 'a pipeline the forge stopped processing is raised with its classification and nothing is cancelled'

@@ -12,7 +12,8 @@
 # separate idle absorb case and re-surfaces only on its long bounded cadence,
 # although its initial no-verb status signal still surfaces in normal mode.
 # That cadence is hours long and condition-aware: a paused: line naming
-# `until <UTC ISO 8601>` is rechecked when that time passes, but a declared time
+# `until <UTC ISO 8601>` is rechecked when that time passes (a local worker is
+# steered to recheck it first; declared_wait_expiry_tick), but a declared time
 # beyond FM_PAUSE_RESURFACE_SECS cannot extend the ordinary recheck cadence, and
 # while an away record (state/.afk-contract, never quiet mode's) exists an
 # item held for the captain is never rechecked at all, in either posture.
@@ -131,6 +132,15 @@
 #                          opt-in config/open-decision-reminders record-age
 #                          backstop, independent of pane and branch state;
 #                          open_decision_reminder_tick owns its bounded repeats
+#   check: declared wait expired: <task> until passed <seconds>s ago; ...
+#                          a local worker's `paused: ... until <t>` time passed,
+#                          the worker was steered to recheck it, and the same
+#                          line still stands after the grace, independent of pane
+#                          state; declared_wait_expiry_tick owns the bounds
+#   check: delivery handoff stalled: <task> declared done with no PR/MR, ...
+#                          a PR/MR-mode ship was steered to finish its delivery
+#                          path and still reads refused after the grace;
+#                          delivery_handoff_tick owns the bounds
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
 #                          and has not been surfaced yet; reported once per
@@ -2583,7 +2593,12 @@ handle_paused_stale() {  # <window> <task> <hash>
       reason="paused ${age}s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds"
     else
       # The declared time has passed: recheck now, once per declaration, then
-      # hold the cadence.
+      # hold the cadence - unless the expiry tick owns this declaration, which
+      # rings the worker first and tells firstmate itself.
+      if wait_expiry_owns "$task" "$last"; then
+        triage_log "absorbed stale (paused, declared time reached, owned by the expiry tick): $win"
+        return 0
+      fi
       detail="paused, declared time reached"
       reason="paused ${age}s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared"
       declaration="$declaration:due"
@@ -3030,6 +3045,302 @@ EOF
   fi
 }
 
+# --- Record-driven worker resume ticks ---------------------------------------
+# Two stalls need no pane evidence at all, only a status record and a clock: a
+# declared wait whose own `until` time has passed, and a ship that declared its
+# implementation done and is idle at the delivery handoff. The pane-staleness
+# loop is the wrong owner for either: it is the last scan in a cycle, every wake
+# before it exits the cycle, a wake inside it skips every later window, and it
+# needs a stable non-busy pane hash, so in a busy fleet a window can go hours
+# unsampled. Both ticks therefore run near the top of a cycle, ahead of the
+# checks, the signal scan and that loop, and both steer the WORKER first, because the worker is the one actor that can
+# read its own condition or take its own next delivery step; firstmate is woken
+# only when the same record still holds the lane a grace period after the steer.
+# The steer is an ordinary bin/fm-send.sh inbox record plus doorbell, so its
+# delivery, re-ring ladder, lease guard and dead-endpoint handling are that
+# script's. FM_WATCH_SEND_BIN lets tests stub the send.
+# Secondmates and remote endpoints are out of scope: a mate's steer is a marked
+# request that expects a reply, and a remote endpoint's busy state is not
+# readable here. Both keep the existing cadences.
+CREW_RESUME_SEND_TIMEOUT=30
+# A steer that could not be recorded is tried again no sooner than this.
+CREW_RESUME_RETRY_SECS=60
+# Bound on the one current-state read the handoff tick takes per candidate.
+CREW_RESUME_STATE_TIMEOUT=12
+
+crew_resume_send() {  # <task> <text>
+  fm_run_timed "$CREW_RESUME_SEND_TIMEOUT" env "FM_HOME=$FM_HOME" \
+    "FM_STATE_OVERRIDE=$STATE" "FM_CONFIG_OVERRIDE=$CONFIG" \
+    "${FM_WATCH_SEND_BIN:-$SCRIPT_DIR/fm-send.sh}" "$1" "$2" >/dev/null 2>&1
+}
+
+# The task's authoritative current-state line, or nothing when it cannot be read
+# inside the bound. May make a bounded no-mistakes call (bin/fm-crew-state.sh).
+crew_resume_state_line() {  # <task>
+  fm_run_timed "$CREW_RESUME_STATE_TIMEOUT" env "FM_HOME=$FM_HOME" "FM_STATE_OVERRIDE=$STATE" \
+    "$FM_CREW_STATE_BIN" "$1" 2>/dev/null | head -1 || true
+}
+
+# 0 when the worker's own endpoint reads busy right now, so a steer would land
+# in a turn that is already under way.
+crew_resume_worker_busy() {  # <meta> <task> <window>
+  local meta=$1 task=$2 win=$3
+  watcher_capture "$(fm_backend_of_meta "$meta")" "$win" 40 "fm-$task" || WATCHER_CAPTURE=
+  window_is_busy "$win" "$WATCHER_CAPTURE"
+}
+
+# A resume marker holds `<stage> <epoch>` on its first line and, on its second,
+# the status line the stage was recorded for, so a different line starts over.
+crew_resume_marker_read() {  # <marker> <line> -> sets CREW_RESUME_STAGE, CREW_RESUME_AT
+  local recorded=''
+  CREW_RESUME_STAGE=
+  CREW_RESUME_AT=0
+  [ -f "$1" ] && [ ! -L "$1" ] || return 0
+  {
+    IFS=' ' read -r CREW_RESUME_STAGE CREW_RESUME_AT || :
+    IFS= read -r recorded || :
+  } < "$1"
+  if [ "$recorded" != "$2" ]; then
+    CREW_RESUME_STAGE=
+    CREW_RESUME_AT=0
+    return 0
+  fi
+  case "$CREW_RESUME_AT" in ''|*[!0-9]*) CREW_RESUME_AT=0 ;; esac
+  [ "${#CREW_RESUME_AT}" -le 12 ] || CREW_RESUME_AT=0
+  CREW_RESUME_AT=$((10#$CREW_RESUME_AT))
+}
+
+crew_resume_marker_write() {  # <marker> <stage> <epoch> <line>
+  local tmp
+  tmp=$(mktemp "$1.XXXXXX") || return 1
+  if ! printf '%s %s\n%s\n' "$2" "$3" "$4" > "$tmp" || ! mv -f "$tmp" "$1"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+crew_resume_setting() {  # <value> -> 0 when a canonical non-negative integer of at most nine digits
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#1}" -le 9 ]
+}
+
+# 0, printing the endpoint, when the expiry tick below acts for this task: a
+# local ship or scout with a recorded endpoint.
+wait_expiry_target() {  # <meta> -> endpoint on stdout
+  local win
+  [ "$(fm_meta_get "$1" kind)" != secondmate ] || return 1
+  [ -z "$(fm_meta_get "$1" remote_host)" ] || return 1
+  win=$(fm_backend_target_of_meta "$1")
+  [ -n "$win" ] || return 1
+  printf '%s\n' "$win"
+}
+
+# 0 while the expiry tick below owns the at-the-declared-time recheck for this
+# exact wait line, so the pane-staleness paths do not raise the same expiry a
+# second time: through the tick's slack, and from its recorded steer on.
+# They take the lane back when the slack ends with no steer recorded (stage
+# unsent included), and once the status log has been unchanged for a whole
+# PAUSE_RESURFACE_SECS, which keeps the long cadence as the repeat.
+wait_expiry_owns() {  # <task> <wait-line>
+  local marker="$STATE/$1.wait-expiry" slack=${FM_WAIT_EXPIRY_SLACK_SECS:-120} until mtime now
+  [ -n "$1" ] || return 1
+  wait_expiry_target "$STATE/$1.meta" >/dev/null || return 1
+  until=$(status_paused_until "$2") || return 1
+  now=$(date +%s)
+  crew_resume_marker_read "$marker" "$2"
+  if [ -z "$CREW_RESUME_STAGE" ] || [ "$CREW_RESUME_STAGE" = unsent ]; then
+    crew_resume_setting "$slack" && [ "$now" -lt "$((until + slack))" ]
+    return
+  fi
+  mtime=$(stat_mtime "$STATE/$1.status")
+  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$((now - mtime))" -lt "$PAUSE_RESURFACE_SECS" ]
+}
+
+# Declared-wait expiry. A `paused: ... until <t>` line is the worker's own
+# statement of when its wait clears (status_paused_until in fm-classify-lib.sh),
+# and the brief tells it that naming the time buys a recheck at that time.
+# Once per declaration - the wait line itself, time tag included - and
+# FM_WAIT_EXPIRY_SLACK_SECS (default 120) after that time, a worker whose
+# endpoint does not read busy is steered to check the condition and resume. The
+# slack leaves a worker whose own bounded command ends at that time room to
+# report it first. If the same line still holds the lane
+# FM_WAIT_EXPIRY_GRACE_SECS (default 300) after the steer and the endpoint still
+# does not read busy, one `check: declared wait expired: ...` wake is queued for
+# firstmate. A steer that cannot be recorded is retried every
+# CREW_RESUME_RETRY_SECS and leaves the pane-staleness recheck in charge
+# meanwhile. STATE/<task>.wait-expiry records the stage, so a watcher restart
+# neither steers nor wakes twice; any other wait line, or none, removes it.
+# Sets WAIT_EXPIRY_REMINDER to the first reason queued by this call.
+declared_wait_expiry_tick() {  # [now-epoch], for deterministic clock callers
+  local now=${1:-} slack=${FM_WAIT_EXPIRY_SLACK_SECS:-120} grace=${FM_WAIT_EXPIRY_GRACE_SECS:-300}
+  local meta task statusf marker last until win reason
+  WAIT_EXPIRY_REMINDER=
+  if ! crew_resume_setting "$slack" || ! crew_resume_setting "$grace"; then
+    echo 'watcher: invalid declared-wait expiry settings' >&2
+    return 1
+  fi
+  [ -n "$now" ] || fm_epoch_seconds_to now
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    task=${meta##*/}; task=${task%.meta}
+    marker="$STATE/$task.wait-expiry"
+    statusf="$STATE/$task.status"
+    last=
+    ! win=$(wait_expiry_target "$meta") || last=$(status_declared_wait_line "$statusf")
+    if ! until=$(status_paused_until "$last") || [ "$now" -lt "$((until + slack))" ]; then
+      [ ! -e "$marker" ] || rm -f -- "$marker"
+      continue
+    fi
+    crew_resume_marker_read "$marker" "$last"
+    case "$CREW_RESUME_STAGE" in
+      escalated) ;;
+      rung)
+        [ "$((now - CREW_RESUME_AT))" -ge "$grace" ] || continue
+        ! crew_resume_worker_busy "$meta" "$task" "$win" || continue
+        reason="check: declared wait expired: $task until passed $((now - until))s ago; the worker was rung $((now - CREW_RESUME_AT))s ago and its status is unchanged - inspect it, then resume it or release the wait"
+        fm_wake_append check "wait-expiry:$task" "$reason" || return 1
+        crew_resume_marker_write "$marker" escalated "$now" "$last" || return 1
+        [ -n "$WAIT_EXPIRY_REMINDER" ] || WAIT_EXPIRY_REMINDER=$reason
+        ;;
+      *)
+        [ "$CREW_RESUME_STAGE" != unsent ] \
+          || [ "$((now - CREW_RESUME_AT))" -ge "$CREW_RESUME_RETRY_SECS" ] || continue
+        ! crew_resume_worker_busy "$meta" "$task" "$win" || continue
+        if crew_resume_send "$task" "Automatic watcher notice: the until time in your paused: line passed $((now - until))s ago and your status has not changed. Check the condition you were waiting on now and resume the task. If the wait has not cleared, append a new paused: line with a new until time, or a blocked: line if you need firstmate. Firstmate is told if your status stays unchanged."; then
+          crew_resume_marker_write "$marker" rung "$now" "$last" || return 1
+          triage_log "declared wait expired $((now - until))s ago: rang $task"
+        else
+          [ "$CREW_RESUME_STAGE" = unsent ] \
+            || triage_log "declared wait expired $((now - until))s ago: steer to $task was not recorded; retrying every ${CREW_RESUME_RETRY_SECS}s"
+          crew_resume_marker_write "$marker" unsent "$now" "$last" || return 1
+        fi
+        ;;
+    esac
+  done
+}
+
+# Delivery handoff. A PR/MR-mode ship whose newest event is a `done:` naming no
+# PR/MR has not delivered: bin/fm-dod-lib.sh refuses that done, and for a
+# no-mistakes ship it is the brief's own handoff, where the worker stops and
+# waits to be told to validate. That instruction needs no judgement, so it is
+# sent here rather than left to whichever turn next notices the refusal.
+# Once per done line, FM_HANDOFF_SETTLE_SECS (default 120) after it, the worker
+# is steered to finish its delivery path when the authoritative current state is
+# exactly that refusal (crew_done_awaits_delivery in fm-classify-lib.sh, so an
+# attributed run or a later event is never steered over), the task has no open
+# captain call and no unread instruction already in its inbox, and its endpoint
+# does not read busy. A ship's done closes its own earlier decisions (the status
+# fold's terminal rule), so none can be open here. The settle gives a supervisor
+# that reads the done line first room to steer first. If the same refusal still
+# holds FM_HANDOFF_GRACE_SECS (default 600) after the steer, one
+# `check: delivery handoff stalled: ...` wake is queued for firstmate.
+# A done line is one episode: the first current-state read that is not the
+# refusal, or that finds the captain holding the task, closes it, so a lane
+# that moved on is never steered and never read again for that line.
+# STATE/<task>.handoff-steered records the stage; a lane that cannot be judged
+# yet (unread instruction, busy endpoint, unreadable state) is retried, and the
+# costly current-state read is taken at most once per FM_HANDOFF_RECHECK_SECS
+# (default 60) per candidate.
+# Sets HANDOFF_REMINDER to the first reason queued by this call.
+delivery_handoff_tick() {  # [now-epoch], for deterministic clock callers
+  local now=${1:-} settle=${FM_HANDOFF_SETTLE_SECS:-120} grace=${FM_HANDOFF_GRACE_SECS:-600}
+  local recheck=${FM_HANDOFF_RECHECK_SECS:-60}
+  local meta task statusf marker kind last at win line mode reason text
+  HANDOFF_REMINDER=
+  if ! crew_resume_setting "$settle" || ! crew_resume_setting "$grace" || ! crew_resume_setting "$recheck"; then
+    echo 'watcher: invalid delivery-handoff settings' >&2
+    return 1
+  fi
+  [ -n "$now" ] || fm_epoch_seconds_to now
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    task=${meta##*/}; task=${task%.meta}
+    marker="$STATE/$task.handoff-steered"
+    statusf="$STATE/$task.status"
+    kind=$(fm_meta_get "$meta" kind)
+    last=
+    case "${kind:-ship}:$(fm_meta_get "$meta" mode)" in
+      ship:|ship:no-mistakes|ship:direct-PR)
+        [ -n "$(fm_meta_get "$meta" remote_host)" ] || last=$(last_status_line "$statusf")
+        ;;
+    esac
+    if [ "$(status_line_verb "$last")" != "done" ]; then
+      [ ! -e "$marker" ] || rm -f -- "$marker"
+      continue
+    fi
+    win=$(fm_backend_target_of_meta "$meta")
+    [ -n "$win" ] || continue
+    crew_resume_marker_read "$marker" "$last"
+    case "$CREW_RESUME_STAGE" in
+      escalated|closed) continue ;;
+      steered|overdue)
+        # One steer per done line. At the grace the lane either moved on, which
+        # closes this line's episode, or it still holds the refusal and
+        # firstmate is told once. A busy endpoint is acting on something, so it
+        # is asked again next cycle rather than judged; an unreadable state is
+        # retried on the recheck interval (stage overdue).
+        if [ "$CREW_RESUME_STAGE" = steered ]; then
+          [ "$((now - CREW_RESUME_AT))" -ge "$grace" ] || continue
+        else
+          [ "$((now - CREW_RESUME_AT))" -ge "$recheck" ] || continue
+        fi
+        ! crew_resume_worker_busy "$meta" "$task" "$win" || continue
+        line=$(crew_resume_state_line "$task")
+        case "$line" in
+          state:*) ;;
+          *) crew_resume_marker_write "$marker" overdue "$now" "$last" || return 1; continue ;;
+        esac
+        if ! mode=$(crew_done_awaits_delivery "$task" "$line"); then
+          crew_resume_marker_write "$marker" closed "$now" "$last" || return 1
+          continue
+        fi
+        reason="check: delivery handoff stalled: $task declared done with no PR/MR, was steered to finish its $mode delivery, and still reads refused after the ${grace}s grace - inspect the worker"
+        fm_wake_append check "handoff:$task" "$reason" || return 1
+        crew_resume_marker_write "$marker" escalated "$now" "$last" || return 1
+        [ -n "$HANDOFF_REMINDER" ] || HANDOFF_REMINDER=$reason
+        continue
+        ;;
+      checked) [ "$((now - CREW_RESUME_AT))" -ge "$recheck" ] || continue ;;
+      *)
+        at=$(status_line_at_epoch "$last") || at=$(stat_mtime "$statusf")
+        case "$at" in ''|*[!0-9]*) at=$now ;; esac
+        [ "$((now - at))" -ge "$settle" ] || continue
+        ;;
+    esac
+    # Cheapest evidence first; the current-state read may make a bounded
+    # no-mistakes call, so it runs only for a lane every file read admits.
+    mode=
+    if ! fm_task_inbox_oldest_unhandled "$STATE" "$task" >/dev/null \
+      && ! crew_resume_worker_busy "$meta" "$task" "$win"; then
+      line=$(crew_resume_state_line "$task")
+      case "$line" in
+        state:*)
+          if ! mode=$(crew_done_awaits_delivery "$task" "$line") || task_captain_call_open "$task"; then
+            crew_resume_marker_write "$marker" closed "$now" "$last" || return 1
+            continue
+          fi
+          ;;
+      esac
+    fi
+    if [ -z "$mode" ]; then
+      crew_resume_marker_write "$marker" checked "$now" "$last" || return 1
+      continue
+    fi
+    case "$mode" in
+      no-mistakes) text="Automatic watcher notice: your done: line names no PR/MR, so it is the delivery handoff, not completion. A local commit is not done. Invoke your no-mistakes skill now and validate your committed branch exactly as your brief's Definition of done describes (pass --intent as it specifies, never --yes), drive the run to an open PR/MR with CI green, then report done with the PR/MR URL." ;;
+      *) text="Automatic watcher notice: your done: line names no PR/MR, so the $mode delivery is not finished. A local commit is not done. Push your branch and open the PR/MR as your brief's Definition of done describes, then report done with the PR/MR URL." ;;
+    esac
+    if crew_resume_send "$task" "$text"; then
+      crew_resume_marker_write "$marker" steered "$now" "$last" || return 1
+      triage_log "delivery handoff: steered $task to finish its $mode delivery"
+    else
+      crew_resume_marker_write "$marker" checked "$now" "$last" || return 1
+      triage_log "delivery handoff: steer to $task was not recorded; retrying"
+    fi
+  done
+}
+
 # The identity a re-surface throttle is bound to: the task's whole status-log
 # signature. Any new status event - a replacement wait, a fresh delivery, a
 # blocker - changes it and so starts its own window instead of inheriting the
@@ -3155,6 +3466,8 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
       else
         STALE_WAIT_DECLARATION="$STALE_WAIT_DECLARATION:due"
         stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+        # The expiry tick owns this declaration (wait_expiry_owns).
+        ! wait_expiry_owns "$task" "$last" || throttled=0
       fi
     elif stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" \
       || paused_recheck_silent "$win" "$STATE/$task.status" "$key" "$STALE_WAIT_DECLARATION" \
@@ -4241,6 +4554,21 @@ EOF
     exit 1
   }
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
+
+  # Record-driven worker resume: ring a worker whose declared wait expired, and
+  # steer a ship idle at its delivery handoff. Both run ahead of the checks, the
+  # signal scan and the pane-staleness scan, because that last scan, which
+  # would otherwise notice either, is the most easily starved one in a cycle.
+  declared_wait_expiry_tick || {
+    echo 'watcher: declared-wait expiry check failed' >&2
+    exit 1
+  }
+  [ -z "$WAIT_EXPIRY_REMINDER" ] || wake "$WAIT_EXPIRY_REMINDER"
+  delivery_handoff_tick || {
+    echo 'watcher: delivery-handoff check failed' >&2
+    exit 1
+  }
+  [ -z "$HANDOFF_REMINDER" ] || wake "$HANDOFF_REMINDER"
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing secondmate endpoint is relaunched here on a bounded cadence, which
